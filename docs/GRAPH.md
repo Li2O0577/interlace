@@ -19,7 +19,9 @@
 
 工具入口为 `graph.draft/view/confirm/change/approve/apply/save_state/submit/send/release/return/end/wake/review_inputs/retry/request_helpers/approve_helpers/deny_helpers` 与 `access.request/decide/revoke`。`confirm/approve` 仅操作者；`release/apply` 仅内部 lead。文件工具和这些接口检查权限，但不构成 OS 隔离。自动文件模式暂映射 `autonomy=full`，为可替换假设。
 
-运行中变更的最小处理【假设、待验证设计】：受影响活实例先保存 state、由主控明确结束，再应用操作者获批修改；不结束无关实例。受影响交付保留历史、标为 invalidated，并暂停新启动，待 human/lead 复核新一轮执行。未实现强制结束活实例或自动重建全图。网页入口、通用运行时抽取和独立 MCP 外壳仍待完成；测试使用 FakeProvider + 实际引擎线程，未调用外部模型。
+运行中变更的最小处理【假设、待验证设计】：受影响活实例先保存 state、由主控明确结束，再应用操作者获批修改；不结束无关实例。受影响交付保留历史、标为 invalidated，并暂停新启动，待 human/lead 复核新一轮执行。未实现强制结束活实例或自动重建全图。
+
+网页已增加“图编排任务”入口：节点/边/块表单、图概要、具体摘要确认、实例与交付、消息、文件决策、助手批次和人工改图审批。创建/编辑草稿不启动，图面板只向内部主控请求验收，不代替主控放行。通用运行时抽取和独立 MCP 外壳仍待完成；测试使用 FakeProvider + 实际引擎线程，未调用外部模型。全量 Windows 回归尚有原实验、TeX 和路径兼容失败，详见实施记录。
 
 **最终交付目标【已定】**：面向各种任务的通用编排核心，分别承载建模工作台和开放通用 MCP 框架工具。沿用现有自由任务的可配置目标、阶段与工作区；比赛的题目、证明、逐问求解、论文和辩论要求只属于建模预设。实施计划第 7、8 项明确覆盖解耦和独立 MCP 交付，不以网页中的 MCP 桥接替代通用框架产品。
 
