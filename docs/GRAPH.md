@@ -13,6 +13,12 @@
 >
 > 第 13 节汇总所有需要操作者拍板的问题。
 
+### 实现状态（2026-11-09）
+
+实施清单见 [逐项实施计划](superpowers/plans/2026-11-09-graph-harness.md)。目前已实现并测试 `graph/model.py`、`store.py`、`scheduler.py`、`run.py`：图校验、操作者确认、改图申请审批、启动预留、轮次、交付摘要、主控放行和输入更新阻塞。尚未接入 AgentManager、工具或网页，不能从该状态推断已有真实模型执行。
+
+当前实现把计划和运行控制状态存进同一个原子快照 `state/graph.json`：顶层包含 `schema/version/status/confirmed_hash/plan/changes/run`；下文节点、边、块的定义位于 `plan`，运行记录位于 `run`。这是对下文草案拆文件方式的最小实现调整，避免计划与运行状态跨文件半更新；沿用现有 `events.jsonl` 记录事件。线程锁只覆盖单服务进程，不声称提供跨进程或 OS 级隔离。审批 actor 的真实性由后续宿主工具入口负责验证。
+
 ---
 
 ## 0. 我对目标的理解
