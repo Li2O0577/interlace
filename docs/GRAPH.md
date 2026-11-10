@@ -1,5 +1,7 @@
 # 流程图驱动的通用 harness：设计文档（草案 v1）
 
+2026-11-10 增补：节点编辑现提供模型和思考强度，块编辑提供次主控协调者。新增实现和权限见下方；本文后面的旧设计建议仍保留原标记。当前只操作 harness 分支，不管理其他分支或 Release。
+
 > 状态：2026-11-09 已确认下列决定；其余【假设】与【建议】仍未确认，不得视为授权。已实现部分见下方实现状态，本文不是真实模型实测记录。
 >
 > 已确认：使用工作台内部主控；工作 Agent 由引擎通过现有 API/CLI 运行时创建和管理（方案 A），不采用外部调用对话代建的路线。自动模式才启用文件处理机制并创建项目级只读文件模型；非自动模式不启用。任务块只有主控明确放行才解锁；所有已确认计划的修改都须操作者批准。图外子 Agent 需先向主控按批申请，尽量一次说明数量与分工。上游成果更新后，受影响节点的新启动先阻止，待操作者或主控明确确认。
@@ -30,6 +32,52 @@
 已停止模型的恢复补充【假设、可替换】：`graph.close_interrupted` 只接受已停止且执行退出的模型及助手，由 lead 核查并记录恢复材料，明确标为主控记录及中断收尾，旧交付作废；不会自动验收、放行或唤醒。随后单独 `graph.wake` 才创建新实例。此机制不强制终止活模型，也不把主控自己的 state 恢复改成必需。
 
 **最终交付目标【已定】**：面向各种任务的通用编排核心，分别承载建模工作台和开放通用 MCP 框架工具。沿用现有自由任务的可配置目标、阶段与工作区；比赛的题目、证明、逐问求解、论文和辩论要求只属于建模预设。实施计划第 7、8 项明确覆盖解耦和独立 MCP 交付，不以网页中的 MCP 桥接替代通用框架产品。
+
+### 节点模型、思考强度与次主控协调
+
+节点可选 `model`（提供器 ID:模型 ID）和 `thinking`（`default/low/medium/high`）。不填写表示继承既有角色/运行设置；显式 `default` 表示模型默认。界面只列使用者配置的 API/CLI 模型，并保留已保存但当前未列出的 ID。内部主控通过 `graph.models` 获得同一目录和强度选项，不读取提供器密钥或命令。程序检查数据类型，实际能力由既有提供器适配器决定；未做真实模型能力实测。
+
+工作节点每轮创建前绑定配置，新轮次从现行计划恢复。内部 lead 仍只有一个；已存在主控在下一轮调用开始时应用获批配置，不修改正在执行的模型调用。跨模型时清除不兼容 CLI session，保留落盘消息和文件；未指定配置不会覆盖操作者原有选择。获批助手批次的每个分工也可填写 model/thinking，仍继承原工具/文件边界和预算。
+
+任务块可选 `coordinator`，必须引用图内 `role=sublead` 的节点。同一协调者可以负责多个块，且必须保持当前实例有效；图节点本身仍属于一个任务块。不新增子图或任意派生机制。
+
+| 操作 | 次主控协调者 | 总主控 |
+|---|---|---|
+| 查看所负责块的节点进度 | `graph.block_status`，只返回状态元数据 | 可查看所有块 |
+| 沟通、读取正式交付 | 仍须信息边和有效文件授权 | 沿原主控机制 |
+| 汇总并申请验收 | 保存 state、正式 submit；`graph.request_review` | 独立核对当前成果 |
+| 块放行、让其他实例返工或结束 | 不授予 | 沿原工具明确操作 |
+| 改图/改变协调范围 | 向总主控反馈 | 提出申请，操作者批准后应用 |
+
+成员提交会触发协调者进度通知；未启动的协调者仍须先满足自身启动条件。协调者申请验收不会改变块放行状态，申请记录绑定计划版本、块轮次和协调实例，保留历史。请求中的 `all_submitted` 是申请时快照，总主控必须复核当前状态。协调者应在正式提交前申请，或将申请与提交放在同一批工具调用；提交后模型会等审查。
+
+完整小型定义（模型名可按实际配置填入节点的 model）：
+
+```json
+{
+  "task":"整理代码并核对说明",
+  "nodes":[
+    {"id":"lead","name":"总主控","summary":"统筹验收","role":"lead","thinking":"high"},
+    {"id":"worker","name":"执行","summary":"整理代码","role":"worker","block":"work","duty":"整理工作文件并说明改动","accept":"文件可核查","thinking":"medium"},
+    {"id":"inspector","name":"检查","summary":"核对交付","role":"reviewer","block":"work","duty":"核查执行交付","accept":"给出依据及问题"},
+    {"id":"coordinator","name":"次主控","summary":"协调执行检查","role":"sublead","block":"work","duty":"跟踪进度并汇总执行与检查结论，申请总主控验收","accept":"汇总依据及未决事项","thinking":"medium"},
+    {"id":"delivery","name":"整理交付","summary":"整理最终成果","role":"writer","block":"delivery","duty":"按协调汇总整理最终交付","accept":"完整一致"}
+  ],
+  "edges":[
+    {"id":"check","from":"worker","to":"inspector","kind":"deliverable","start":true,"label":"执行成果"},
+    {"id":"worker_summary","from":"worker","to":"coordinator","kind":"deliverable","start":false,"label":"执行交付"},
+    {"id":"review_summary","from":"inspector","to":"coordinator","kind":"review","start":false,"label":"检查结论"},
+    {"id":"coordinate","from":"coordinator","to":"worker","kind":"feedback","start":false,"label":"协调意见"},
+    {"id":"report","from":"coordinator","to":"lead","kind":"review","start":false,"label":"协调汇总"},
+    {"id":"pack","from":"coordinator","to":"delivery","kind":"deliverable","start":true,"label":"正式汇总"},
+    {"id":"result","from":"delivery","to":"lead","kind":"deliverable","start":false,"label":"最终成果"}
+  ],
+  "blocks":[
+    {"id":"work","name":"执行检查","after":[],"coordinator":"coordinator"},
+    {"id":"delivery","name":"整理交付","after":["work"]}
+  ]
+}
+```
 
 当前实现把计划和运行控制状态存进同一个原子快照 `state/graph.json`：顶层包含 `schema/version/status/confirmed_hash/plan/changes/run`；下文节点、边、块的定义位于 `plan`，运行记录位于 `run`。这是对下文草案拆文件方式的最小实现调整，避免计划与运行状态跨文件半更新；沿用现有 `events.jsonl` 记录事件。读写锁覆盖单服务进程，另用 OS 工作区所有权锁阻止网页和独立 MCP 两个协调器同时运行；不提供多写者事务或节点 OS 级隔离。操作者本地队列与模型工具分开，但同等磁盘/shell 权限仍可能访问，独立身份认证尚未接入。
 

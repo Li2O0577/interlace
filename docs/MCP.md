@@ -54,6 +54,8 @@ Windows 使用虚拟环境的 `Scripts/mch-harness.exe`。只提供说明，不�
 
 没有通用工具执行器，没有对外的 `graph.confirm/approve/release` 或 `approval.resolve`。申请返工、结束、唤醒、改图等意图统一用 `operation.request`；内部主控判断后调用自己的受控工具。`proposal` 不会自动写入计划。二进制/大文件留给操作者本地查看。
 
+图定义支持每节点 `model` 与 `thinking`（default/low/medium/high），任务块支持 `coordinator` 指向图内次主控。内部协调者获得 `graph.block_status` 和 `graph.request_review`，外部 MCP 工具清单仍为上表 8 个；不会因外部连接而取得协调者或总主控身份。完整示例和边界见 [GRAPH.md](GRAPH.md)。
+
 `request_id` 是调用方提供的稳定 ID（最长 256 字符）。同 ID、同参数重试返回已持久化结果；同 ID 不同参数拒绝。执行前预留、返回前记录结果；中断时尚无确定结果的预留拒绝自动重放，先检查现有项目与 `.harness-requests/` 记录。此机制防止自动重试重复创建，**不承诺跨文件事务、模型消息恰好执行一次或在外部命令崩溃后自动回滚**。
 
 ## 操作者确认和审批
@@ -71,6 +73,8 @@ mch-harness --workspace /absolute/workspace resume PROJECT AGENT_ID --reason "�
 ```
 
 `pending` 展示草稿或改图的前后定义、原因、受影响节点和成果处理，并列出工具审批。确认必须匹配当前 SHA256。写命令返回本地记录 `id`、`status=pending`；随后用 `result ID` 查看 `done/failed/uncertain`，**入队不等于批准已经生效**。服务未运行时保持待处理。`message` 只回复内部 lead；`resume` 只恢复已有暂停会话，不能复活已结束图实例。
+
+自动模式（当前映射 autonomy=full）的一般工具操作自动执行，不需要操作者逐次用 CLI 处理。助手批次由内部总主控批准；额外文件由只读 keeper 独立决定。初始计划确认和改图批准仍由操作者完成，原有安装软件等强制人工事项仍保留。块协调者申请验收不等于最终放行。
 
 改图批准后仍由内部 lead 应用；块结束仍须 lead 的独立 `graph.release(block,round,note)`。操作者 CLI 也没有“代替 lead 放行”命令。遇到中断的本地操作标记 uncertain，不自动重试。记录最小格式：
 
