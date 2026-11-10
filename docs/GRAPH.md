@@ -1,6 +1,6 @@
 # 流程图驱动的通用 harness：设计文档（草案 v1）
 
-2026-11-10 增补：节点编辑现提供模型和思考强度，块编辑提供次主控协调者。新增实现和权限见下方；本文后面的旧设计建议仍保留原标记。当前只操作 harness 分支，不管理其他分支或 Release。
+2026-11-10 增补：节点编辑现提供模型和思考强度，块编辑提供次主控协调者。新增实现和权限见下方；本文后面的旧设计建议仍保留原标记。当前只操作 harness 分支，不管理其他分支或 Release。后续独立拆包由接手者实施，当前仅更新[内核抽离交接计划](superpowers/plans/2026-11-10-kernel-extraction-handoff.md)，没有执行代码拆分。
 
 > 状态：2026-11-09 已确认下列决定；其余【假设】与【建议】仍未确认，不得视为授权。已实现部分见下方实现状态，本文不是真实模型实测记录。
 >
@@ -483,28 +483,31 @@ nodes/<node>/r<round>/
 
 ### 11.2 模块边界
 
-现在的耦合（实际查过 import 关系）：`agents/` 直接 import 了 `questions`、`goals`、`discussions`、`fidelity`、`scope`（比赛的逐问边界）等比赛专用模块，`team.py` 里有次主控派题检查，`tooling.py` 里有交付前辩论和表述核对的检查。`core/projects.py` 依赖 `workflow` 和 `requirements`。所以“核心不 import 预设”今天不成立，需要分步做到。
+以下以功能基线 b6019eb 为准：执行运行时已通过 `Hooks` / `CompetitionHooks` 分离比赛策略，图机制和通用运行路径可不加载比赛预设与 FastAPI。旧文档里“agents 仍直接导入逐问/辩论门禁”的状态已经过期，不应重做该迁移。
+
+仍需处理的耦合包括：`core/projects.py` 的 workflow/requirements 初始化、通用与比赛 layout 混合、文件工具的 lineage/layout、Agent 的应用 views、默认建模技能资源与角色目录，以及 roles/protocol 中旧兼容入口的延迟反向导入。当前只有一个发行包，安装依赖和资源还未拆分。准确的导入清单与处理顺序见交接计划第 0—4 节。
 
 **目标划分**：
 
 | 层 | 模块 |
 |---|---|
-| 核心引擎 | `core/`（events、jsonfile、locks、git、settings_store、sandbox、layout 的通用部分）、`agents/`（去掉比赛钩子后）、`graph/`、`scope.py` 的通用 `Boundary`、`lineage.py`、`tools/registry.py`、通用工具（fs、code.run、exp、git、view、lineage、skill） |
+| 核心引擎 | `graph/`、`agents/` 通用运行时、events/jsonfile/locks/ownership/git/sandbox、通用项目/设置存储、工具注册与 fs/code、显式注入的策略/技能等服务；实际图文件边界已在 `graph/boundary.py` |
 | 建模比赛预设 | `questions.py`、`goals.py`、`discussions.py`、`fidelity.py`、`candidates.py`、`methods.py`、`solving.py`、`paper*.py`、`submission.py`、`figs/`、`ideation/`、`workflow/catalog.py` 的比赛阶段、`knowledge/`、`templates/`、比赛相关工具、`graph/presets/competition.py` |
 | 网页外壳 | `app.py`、`delivery_routes.py`、`setup/`、`views.py`、`dashboards.py`、`frontend/`、`__main__.py` |
-| MCP 外壳 | `mcp/`（新增） |
+| MCP 外壳 | 已实现的 `mcp/` stdio 服务、操作队列与 CLI；拟随独立内核包交付 |
 
 **怎么做到**：
 
-1. 这次 PR：新增的 `graph/` 只 import 核心模块。加一个测试，用 AST 扫描 `mch/graph/**`（预设子目录除外），发现 import 了预设或外壳模块就失败。
-2. 下一个 PR：在 `agents/` 里加一个很小的钩子注册表（`before_spawn`、`before_tool`、`before_report`、`prompt_sections`），把 `_check_sublead`、`_check_lead_spawn`、`_sublead_delivery`、`_formulation_gate`、`_check_objections`、问题边界这几处搬进 `presets/competition/`，由网页外壳启动时注册。行为不变，现有测试照旧通过。然后把导入检查扩大到 `core/`、`agents/`、`graph/`。
-3. 每一步网页应用都照常可用。
+1. **已完成：** 图模块导入边界测试、通用策略与比赛 Hooks 分离、独立通用任务和 stdio 测试。
+2. **待实施：** 剩余项目/文件/视图/资源依赖清理，迁移唯一运行时到独立模块，应用通过声明依赖与适配器使用它。
+3. **待实施：** 只安装核心 wheel 的仓库外验证、两个包的安装验证、第三方自定义任务与工具示例。不能用当前含应用依赖的安装冒烟代替。
+4. 每一步保留网页、原建模/自由任务与旧项目行为；不借拆包改写授权或生命周期规则。
 
 ### 11.3 MCP 外壳
 
 **主控来源。【已定】** 沿用工作台内部 `lead`，不把调用 Skill 或 MCP 的外部宿主会话自动设为主控。外部入口只负责连接工作台、展示状态或转达请求，不能因持有 MCP 连接就取得内部主控或操作者的批准权限。调用后自动打开浏览器、把调用对话绑定为主控的 Hyper Plan 原型路线不再作为此分支的目标。
 
-**对外暴露的工具。【假设】** 下表是待接入的能力清单，名字用 `__` 代替点（沿用 `mcp_bridge.api_name`）。外部连接可以读状态、提交意图；改变运行状态的请求交给内部主控处理，不直接以主控身份执行。尤其 `graph.release` 必须由内部主控明确调用，不能把外部工具调用当成主控放行。最终暴露的工具名和转达协议仍需在 MCP 接入时落实：
+**对外暴露的工具。【历史候选清单】** 当前已实现的外部接口是 [MCP.md](MCP.md) 所列 8 个点号命名工具，下表保留旧设计候选，不代表已实现，也不是本次抽包必须扩大实现的清单。外部连接只能读状态、成果或提交意图；主控操作由内部 lead 判断并执行，不能把外部调用当成主控放行：
 
 | 工具 | 作用 |
 |---|---|
@@ -525,12 +528,16 @@ nodes/<node>/r<round>/
 **工作 Agent 怎么跑。【已定】** 采用方案 A：由引擎通过使用者配置的 API（OpenAI 兼容、Anthropic）或本机 `claude` / `codex` 命令行创建和管理，复用现有 `AgentManager`。本次不实现“外部宿主会话代开子 Agent”的协作模式。权限和审批由工具入口检查，但读取隔离仍有第 6.5 节所述限制，不因采用引擎运行时就声称具备 OS 沙箱隔离。
 
 **审批怎么交给操作者。【建议】**
+
+当前采用独立本地 CLI 操作队列，实际命令见 MCP.md；下列 elicitation/approval_channel 为尚未实施的旧建议，不属于本次拆包范围。自动模式普通操作不需要逐次人工 CLI 审批，但初始计划/改图仍须操作者确认。
 - 引擎自己维护审批队列（就是现有的 `state/approvals.json`）。
 - 宿主客户端声明支持 MCP 的交互请求（elicitation）时，引擎用它把审批直接弹给操作者；不支持时，引擎提示操作者在网页或终端处理。命令行 `mch-harness approvals` / `approve <id>` / `deny <id>` 不通过 MCP 暴露，但这不等于技术上证明只有人能执行：拥有同等 shell 或磁盘权限的 Agent 仍可能调用它。操作者身份认证与独立凭据/受控审批入口需由宿主落实，不能仅凭“没有 MCP 工具”声称实现强制隔离。
 - 能否只信任交互请求：交互请求的回答来自宿主客户端，引擎无法验证真是人点的。所以加一个设置 `approval_channel`：`auto`（支持就用交互请求，否则命令行）或 `cli_only`（只认命令行）。各宿主对交互请求的支持情况要实测确认，我不在这里下结论。
 - 无论哪种，宿主不支持时都只会“卡在待审批”，不会跳过审批。
 
 **状态存在哪里、怎么续接。【建议】**
+
+当前已实现进程内 stdio，关闭连接停止本进程工作、重连按落盘状态续接，并通过工作区锁限制单引擎。下列常驻进程方案保留作历史建议，本次不要求实施，也不能宣称已经后台常驻。
 - 状态就是项目文件夹（和网页版同一套布局），默认放在 `~/.mch/workspace/`（`MCH_WORKSPACE` 可改）。网页版和 MCP 版可以指向同一个工作区，同一个项目两边都能看。
 - 进程模型二选一（第 13 节问题 7）：
   - **常驻进程（建议）**：`mch-harness serve` 在本机后台运行引擎（无前端，只监听 127.0.0.1，带 token），MCP 服务器只是一个薄的 stdio 转发层，第一次连接时自动拉起常驻进程。宿主会话关掉，工作 Agent 照常跑；下次会话 `project.open` 就接上。这正是现有 `mcp_bridge.py` 转发到工作台的结构。
@@ -538,23 +545,18 @@ nodes/<node>/r<round>/
 - 主控是引擎管理的内部 `lead`，其对话和恢复沿用现有运行时。外部宿主换会话只改变连接，不替换或接管主控；服务重启时按既有恢复机制恢复。额外增加主控 state 仍是第 9 节的可选项。
 
 **API key 怎么配置。【假设】**
+
+当前使用现有 settings.json 提供器配置，目录可通过 MCH_HOME/MCH_WORKSPACE 指定；下列新增密钥环境变量是旧建议，尚未作为实际配置能力实现，不是本次依赖清理的附加需求。
 - 环境变量（例如 `MCH_ANTHROPIC_API_KEY`、`MCH_OPENAI_API_KEY`、`MCH_OPENAI_BASE_URL`），或者配置文件 `~/.mch/settings.json`（现有的设置文件，0600 权限，读出时打码）。
 - 不写进项目文件夹，不写进事件和日志（现有 `mask_key` 打码；工具参数记事件前过一遍密钥过滤）；跑代码的子进程不继承带 key 的环境变量（现有 `core/sandbox.py` 已经这样做）。
 
-### 11.4 发布
+### 11.4 独立包交付（待实施，仅计划交接）
 
-**【建议】** 分两步，不急着拆仓库：
+当前已完成一个 mch 包的两个启动入口。下一步在同一仓库拟拆出 mch-harness 发行包和 mch_harness 模块，让 mch 应用声明依赖它；这些名称及布局是交接计划建议，尚未真正建立。
 
-- **第一步（这次和下一个 PR）**：仍是一个 Python 包 `mch`，增加入口 `mch-harness`（MCP 服务器和常驻引擎、审批命令）。MCP 服务器沿用 `mcp_bridge.py` 的写法，只用标准库，不加 MCP SDK 依赖。
-- **第二步（模块边界做干净以后）**：同一个仓库里两个发布包：
-  - `mch-harness`：核心引擎 + MCP 外壳，不依赖 FastAPI 和前端，可以 `uvx mch-harness` 一行启动（常驻进程的本地 HTTP 用标准库实现，或者接受 FastAPI 依赖，第 13 节问题 8）。
-  - `mch`（建模任务应用）：依赖 `mch-harness`，加上网页外壳、前端、建模预设和科学计算可选依赖；发布物是带前端的 wheel，外加一个附带启动脚本的压缩包。
-- **版本号**：两边共用一个版本源（`mch/__init__.py` 的 `__version__`），打标签分开：`app-v0.2.0` 触发应用的发布流程，`mcp-v0.2.0` 触发 MCP 的发布流程，版本可以同步也可以只发一边。
-- **CI**：现有 `ci.yml` 保留（全量测试 + 前端语法 + 浏览器冒烟），新增：
-  - 导入边界检查（11.2）；
-  - MCP 冒烟测试：用 stdio 启动 `mch-harness`，发 `initialize`、`tools/list`，用假模型建图、确认（测试里模拟操作者）、提交、放行，检查事件；
-  - 两个发布工作流（`release-app.yml`、`release-mcp.yml`），各自构建、在干净环境里安装后跑冒烟，再上传到 GitHub Release。
-- **说明文档**：`README.md` 讲网页应用（安装、启动、建模比赛预设、流程图任务）；`docs/MCP.md` 讲 MCP 工具（安装、在 Claude Code / Codex 里的配置片段、API key、审批命令、状态位置、哪些边界强制哪些不强制）。
+验收重点是依赖方向、唯一运行时、干净安装和第三方扩展，不是改名或多一个命令。保留一个版本源；内核不携带 FastAPI、PDF/Excel、网页和建模资源。原应用资源仍正常打包，原状态格式和导入兼容不得静默破坏。
+
+操作者已明确本次只维护 harness 分支；Release、索引发布、自动打标签、后台服务和 Skill 安装均不在范围。核心尚未发布时只验证本地 wheel，不声称 uvx 已经可用。实施步骤、测试与交付门槛统一见[交接计划](superpowers/plans/2026-11-10-kernel-extraction-handoff.md)。
 
 ---
 
