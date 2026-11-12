@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from indeterminate.base import Delivery, Firing, GraphBuilder, GraphError, Port, Protocol
+from indeterminate.base import Firing, GraphBuilder, GraphError, Port
 from indeterminate.engine import Engine, RunError
 from indeterminate.methods import Chain
 from indeterminate.nodes import FunctionNode
@@ -179,26 +179,13 @@ def test_envelopes_record_where_they_came_from():
     assert second.body == 2 and len(second.digest) == 64 and second.seq == 1
 
 
-def test_latest_delivery_keeps_only_the_newest_and_unsupported_deliveries_are_refused():
-    class Latest(Protocol):
-        name = 'latest'
-        delivery = Delivery.LATEST
-
-    class Stream(Protocol):
-        name = 'stream'
-        delivery = Delivery.STREAM
-    protocols = DEFAULT.copy()
-    protocols.register(Latest())
-    protocols.register(Stream())
-
+def test_latest_delivery_keeps_only_the_newest():
     def burst(ctx):
         for i in range(5):
             ctx.emit('y', i)
-    build = lambda protocol: GraphBuilder().add(fn('a', burst, inputs=(), context=True), fn('b', lambda x: x)) \
-        .connect('a.y', 'b.x', protocol).output('out', 'b.y').compile(protocols)   # noqa: E731
-    assert Engine(build('latest'), protocols).run().outputs['out'] == [4]
-    with pytest.raises(RunError, match='does not have yet'):
-        Engine(build('stream'), protocols)
+    graph = GraphBuilder().add(fn('a', burst, inputs=(), context=True), fn('b', lambda x: x)) \
+        .connect('a.y', 'b.x', 'latest').output('out', 'b.y').compile(DEFAULT)
+    assert Engine(graph, DEFAULT).run().outputs['out'] == [4]
 
 
 def test_layers_above_the_abstractions_import_only_what_is_below_them():

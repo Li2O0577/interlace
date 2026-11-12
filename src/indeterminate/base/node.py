@@ -40,6 +40,10 @@ class Context(ABC):
         """Send ``payload`` out of an output port now (a node may emit many times during one activation)."""
 
     @abstractmethod
+    def call(self, port: str, payload: Any) -> Any:
+        """Send ``payload`` out of an output port whose edge is a call, wait, and return the other node's answer."""
+
+    @abstractmethod
     def stopping(self) -> bool:
         """True once the run is being stopped: a long activation should return soon."""
 

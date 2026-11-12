@@ -16,14 +16,17 @@ class PortError(ValueError):
 @dataclass(frozen=True)
 class Port:
     """``required``: an input the node cannot start without. ``many``: an input several edges may feed.
-
     Both only matter on inputs; an output can always feed any number of edges.
+
+    ``call``: an output through which the node asks and waits for an answer (``ctx.call``) instead of sending.
+    Its one edge must be a call.
     """
 
     name: str
     schema: Schema = ANY
     required: bool = True
     many: bool = False
+    call: bool = False
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not NAME.fullmatch(self.name):
@@ -31,4 +34,5 @@ class Port:
         object.__setattr__(self, "schema", as_schema(self.schema))
 
     def describe(self) -> dict:
-        return {"name": self.name, "schema": self.schema.describe(), "required": self.required, "many": self.many}
+        return {"name": self.name, "schema": self.schema.describe(), "required": self.required, "many": self.many,
+                "call": self.call}

@@ -10,7 +10,7 @@ Rules checked by ``compile``:
 * every edge joins an existing output port to an existing input port, under a registered protocol that
   accepts the pair;
 * an input that is not ``many`` has at most one forward feed (an edge or a graph input); back edges may
-  feed it as well, since they only arrive in later rounds;
+  feed it as well, since they only arrive in later rounds, and so may any number of calls;
 * a required input has a forward feed, otherwise its node could never start;
 * without its back edges the graph has no cycle, and every back edge really closes a loop. With the
   ``max_rounds`` every back edge carries, no run can go on for ever.
@@ -24,7 +24,7 @@ from typing import Iterable, Mapping
 from .canonical import digest
 from .edge import Edge, EdgeError, Endpoint
 from .node import Firing, Node
-from .protocol import ProtocolError, Protocols
+from .protocol import Delivery, ProtocolError, Protocols
 
 
 class GraphError(ValueError):
@@ -152,6 +152,7 @@ class GraphBuilder:
         out_index = {n.id: {port: [] for port in n.outputs} for n in nodes}
         in_index = {n.id: {port: [] for port in n.inputs} for n in nodes}
         fed: dict[Endpoint, int] = {}           # forward feeds of each input port
+        called: set[Endpoint] = set()           # input ports that are the target of a call
         for edge in edges:
             source, target = self._port(edge.source, "outputs", edge), self._port(edge.target, "inputs", edge)
             protocol = protocols.get(edge.protocol)
@@ -163,7 +164,9 @@ class GraphBuilder:
                 raise GraphError(f"edge {edge.id}: {exc}") from None
             out_index[edge.source.node][edge.source.port].append(edge)
             in_index[edge.target.node][edge.target.port].append(edge)
-            if not edge.back:
+            if protocol.delivery is Delivery.CALL:
+                called.add(edge.target)       # any number of callers may ask the same port
+            elif not edge.back:
                 fed[edge.target] = fed.get(edge.target, 0) + 1
         for name, end in self._inputs.items():
             self._port(end, "inputs", f"graph input {name}")
@@ -178,7 +181,7 @@ class GraphBuilder:
                 if feeds > 1 and not port.many:
                     raise GraphError(f"{node.id}.{port.name} takes one feed, {feeds} are connected")
                 if port.required:
-                    if not feeds:
+                    if not feeds and Endpoint(node.id, port.name) not in called:
                         raise GraphError(f"{node.id}.{port.name} is required and nothing feeds it")
                     count += 1
             if node.firing is Firing.ANY:

@@ -24,15 +24,20 @@ class Delivery(Enum):
     LATEST = "latest"   # only the newest envelope
     QUEUE = "queue"     # every envelope, in order
     STREAM = "stream"   # a sequence that is still being written while it is read
+    CALL = "call"       # a request answered within the sender's activation: the sender waits for the reply
 
 
 class Protocol(ABC):
     name: ClassVar[str] = ""
     delivery: ClassVar[Delivery] = Delivery.QUEUE
-    triggers: ClassVar[bool] = True    # an arrival counts toward starting the receiving node
+    triggers: ClassVar[bool] = True    # an arrival counts toward starting the receiving node; when false the
+                                       # node only finds the newest value there whenever something else starts it
 
     def check(self, source: Port, target: Port) -> None:
         """When a graph is built: may an edge with this protocol join these two ports?"""
+        if source.call != (self.delivery is Delivery.CALL):
+            raise ProtocolError(f"{source.name} is a call port and needs a call edge" if source.call else
+                                f"a call edge must leave a port declared with call=True, and {source.name} is not")
         if not target.schema.accepts(source.schema):
             raise ProtocolError(f"{target.name} does not accept what {source.name} produces")
 
