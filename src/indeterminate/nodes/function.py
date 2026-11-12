@@ -6,6 +6,11 @@ from typing import Any, Callable, Iterable, Mapping
 from ..base import Firing, Node, NodeError, Port
 
 
+def named(function: Callable) -> str:
+    """A function's dotted name, for a node's ``config``."""
+    return f"{getattr(function, '__module__', '')}.{getattr(function, '__qualname__', type(function).__qualname__)}"
+
+
 class FunctionNode(Node):
     """Calls ``function`` with the arrived inputs as keyword arguments, by port name.
 
@@ -25,9 +30,7 @@ class FunctionNode(Node):
         self.function, self.context = function, context
 
     def config(self) -> Mapping:
-        function = self.function
-        name = f"{getattr(function, '__module__', '')}.{getattr(function, '__qualname__', type(function).__qualname__)}"
-        return {"function": name, "context": self.context}
+        return {"function": named(self.function), "context": self.context}
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         result = self.function(ctx, **inputs) if self.context else self.function(**inputs)
