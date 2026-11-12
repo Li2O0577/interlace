@@ -104,6 +104,31 @@ class GraphBuilder:
         self._inputs: dict[str, Endpoint] = {}
         self._outputs: dict[str, Endpoint] = {}
 
+    @classmethod
+    def of(cls, graph: "Graph") -> "GraphBuilder":
+        """A builder holding everything ``graph`` has: the way to make a changed graph from an existing one."""
+        builder = cls()
+        builder._nodes = {node.id: node for node in graph.nodes}
+        builder._edges = {edge.id: edge for edge in graph.edges}
+        builder._inputs, builder._outputs = dict(graph.inputs), dict(graph.outputs)
+        return builder
+
+    def remove(self, node: str) -> "GraphBuilder":
+        """Take a node out, with every edge and graph port that touches it."""
+        if node not in self._nodes:
+            raise GraphError(f"no node {node!r}")
+        del self._nodes[node]
+        self._edges = {id: e for id, e in self._edges.items() if node not in (e.source.node, e.target.node)}
+        self._inputs = {name: end for name, end in self._inputs.items() if end.node != node}
+        self._outputs = {name: end for name, end in self._outputs.items() if end.node != node}
+        return self
+
+    def disconnect(self, edge: str) -> "GraphBuilder":
+        if edge not in self._edges:
+            raise GraphError(f"no edge {edge!r}")
+        del self._edges[edge]
+        return self
+
     def add(self, *nodes: Node) -> "GraphBuilder":
         for node in nodes:
             if not isinstance(node, Node):

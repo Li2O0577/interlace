@@ -33,6 +33,14 @@ of threads and only the bookkeeping is serialised.
 ``stopping`` is a function the engine asks before each activation; once it returns true the run stops as if
 ``stop`` had been called. A graph that runs inside a node of another graph is stopped this way.
 
+``journal`` makes the run durable: every finished activation is written to it in one piece, and ``resume``
+on a new engine with the same journal takes the run up where it stopped. What a finished activation did is
+never done again; an activation that was cut off runs again from its inputs, so a node may see the same
+input twice, and what it had already sent on is not delivered a second time to a node that has dealt with
+it. Everything that travels must then be plain data, a ``Ref`` or a stream of those. ``resume(change=True)``
+continues under a different graph: nodes and edges that are still there keep their state and their waiting
+envelopes, the rest is dropped.
+
 ``transport`` stands between sending and receiving: every envelope body passes through its ``carry``. Without
 one, bodies are handed over as they are. Streams and calls do not pass through it yet.
 """
@@ -44,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from ..base import Context, Delivery, Envelope, Firing, Graph, Node, NodeError, Protocols, Ref, digest
+from .journal import Journal, pack, pack_body, unpack_body
 from .stream import Stream
 from .transport import Transport
 
@@ -65,6 +74,7 @@ class Result:
     envelopes: int = 0
     rounds: dict[str, int] = field(default_factory=dict)     # how many times each node ran
     limited: tuple[str, ...] = ()                            # back edges that reached max_rounds and dropped an envelope
+    complete: bool = True                                    # False when the run was stopped with work left
 
     def last(self, name: str, default: Any = None) -> Any:
         values = self.outputs.get(name)
@@ -118,18 +128,32 @@ class _State:
         self.called: threading.Lock | None = None  # set when the node is the target of a call: one call at a time
 
 
-class _Context(Context):
-    __slots__ = ("node", "round", "_engine", "_state", "_cause")
+class _Act:
+    """What one activation did, for the journal."""
 
-    def __init__(self, engine, state, cause):
+    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps")
+
+    def __init__(self, node, round, took):
+        self.node, self.round, self.took = node, round, took
+        self.sent: list[Envelope] = []
+        self.out: list[tuple] = []
+        self.limited: list[str] = []
+        self.calls: list[str] = []
+        self.snaps: dict[str, Any] = {}
+
+
+class _Context(Context):
+    __slots__ = ("node", "round", "_engine", "_state", "_cause", "_act")
+
+    def __init__(self, engine, state, cause, act=None):
         self.node, self.round = state.node.id, state.round
-        self._engine, self._state, self._cause = engine, state, cause
+        self._engine, self._state, self._cause, self._act = engine, state, cause, act
 
     def emit(self, port: str, payload: Any) -> None:
-        self._engine._emit(self._state, port, payload, self.round, self._cause)
+        self._engine._emit(self._state, port, payload, self.round, self._cause, self._act)
 
     def call(self, port: str, payload: Any) -> Any:
-        return self._engine._call(self._state, port, payload)
+        return self._engine._call(self._state, port, payload, self._act)
 
     def stopping(self) -> bool:
         engine = self._engine
@@ -140,12 +164,15 @@ class Engine:
     """One run of one graph. Build a new Engine to run again."""
 
     def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0,
-                 stopping: Callable[[], bool] | None = None, transport: Transport | None = None):
+                 stopping: Callable[[], bool] | None = None, transport: Transport | None = None,
+                 journal: Journal | None = None):
         if workers < 0:
             raise ValueError("workers cannot be negative")
         self.graph, self.workers = graph, workers
         self._outer = stopping
         self._carry = transport.carry if transport is not None else None
+        self._journal = journal
+        self._orphans: set[str] = set()   # after a resume: envelopes already dealt with whose sender must run again
         self._lock = threading.Condition()
         self._ready: deque[_State] = deque()
         self._active = 0
@@ -182,6 +209,7 @@ class Engine:
             port = self._states[end.node].ports[end.port]
             feed = self._inputs[name] = _Feed(_INPUT + name, port, False, None, None)
             port.forward.append(feed)
+        self._feeds = {**feeds, **{feed.id: feed for feed in self._inputs.values()}}
         exposed: dict[tuple, list[str]] = {}
         for name, end in graph.outputs.items():
             exposed.setdefault(tuple(end), []).append(name)
@@ -210,25 +238,119 @@ class Engine:
 
     def run(self, inputs: Mapping[str, Any] | None = None) -> Result:
         """Feed the graph's inputs, run until nothing is left to do, and return what reached its outputs."""
-        if self._used:
-            raise RunError("this engine has already run; build a new one")
-        self._used = True
+        self._begin()
+        journal = self._journal
+        if journal is not None and journal.read():
+            raise RunError("the journal already holds a run: resume it, or use a new journal")
         inputs = dict(inputs or {})
         unknown = inputs.keys() - self._inputs.keys()
         if unknown:
             raise RunError(f"the graph has no input {sorted(unknown)}")
         with self._lock:
+            sent = []
             for name, payload in inputs.items():
                 feed = self._inputs[name]
                 try:
                     feed.port.port.schema.check(payload)
                 except ValueError as exc:
                     raise RunError(f"graph input {name}: {exc}") from None
-                self._deliver(feed, payload, 0, ())
+                sent.append(self._deliver(feed, payload, 0, ()))
+            if journal is not None:
+                try:
+                    journal.write({"kind": "run", "graph": self.graph.digest, "sent": [pack(e) for e in sent]})
+                except (TypeError, ValueError) as exc:
+                    raise RunError(f"the graph's inputs cannot be journaled: {exc}") from None
             for state in self._states.values():
                 self._consider(state)
+        return self._finish()
+
+    def resume(self, *, change: bool = False) -> Result:
+        """Take up the run in the journal where it stopped. ``change=True`` allows this engine's graph to
+        differ from the one the journal was written under."""
+        self._begin()
+        journal = self._journal
+        if journal is None:
+            raise RunError("resume needs a journal")
+        records = journal.read()
+        if not records:
+            raise RunError("the journal is empty: there is nothing to resume")
+        under = next(r["graph"] for r in reversed(records) if r["kind"] in ("run", "change"))
+        changed = under != self.graph.digest
+        if changed and not change:
+            raise RunError(f"the journal was written under another graph ({under[:12]}); "
+                           f"pass change=True to continue under this one ({self.graph.digest[:12]})")
+        ended = records[-1]["kind"] == "end" and not changed
+        with self._lock:
+            dropped = self._restore(records)
+            if changed:
+                journal.write({"kind": "change", "from": under, "graph": self.graph.digest, "dropped": dropped})
+            if not ended:
+                for state in self._states.values():
+                    self._consider(state)
+        return self._finish(ended)
+
+    def _begin(self) -> None:
+        if self._used:
+            raise RunError("this engine has already run; build a new one")
+        self._used = True
+
+    def _restore(self, records: list[dict]) -> int:
+        """Rebuild counters, node state and waiting envelopes from the journal. Returns how many waiting
+        envelopes were dropped because their edge is not in this graph."""
+        result, states = self._result, self._states
+        sent: dict[str, dict[int, list]] = {}
+        took: set[str] = set()
+        snaps: dict[str, Any] = {}
+        for record in records:
+            kind = record["kind"]
+            if kind == "act":
+                took.update(record["took"])
+                for name, body in record["out"]:
+                    if name in result.outputs:
+                        result.outputs[name].append(unpack_body(body))
+                for id in record["limited"]:
+                    if id in self._feeds:
+                        self._limited[id] = None
+                for id in (record["node"], *record["calls"]):
+                    state = states.get(id)
+                    if state is not None:
+                        state.round += 1
+                        state.started = True
+                        result.activations += 1
+                result.envelopes += len(record["calls"])
+                snaps.update(record["snaps"])
+            if kind in ("run", "act"):
+                for packed in record["sent"]:
+                    sent.setdefault(packed[0], {})[packed[1]] = packed
+        dropped = 0
+        self._orphans = took - {f"{feed}#{seq}" for feed, by_seq in sent.items() for seq in by_seq}
+        for id, by_seq in sent.items():
+            seqs = sorted(by_seq)
+            waiting = [seq for seq in seqs if f"{id}#{seq}" not in took]
+            feed = self._feeds.get(id)
+            if feed is None:
+                dropped += len(waiting)
+                continue
+            feed.sent = seqs[-1]
+            result.envelopes += len(seqs)
+            if feed.passive:
+                waiting = seqs[-1:]
+            elif feed.latest:
+                waiting = waiting[-1:] if waiting and waiting[-1] == seqs[-1] else []
+            for seq in waiting:
+                _, _, round, body, cause = by_seq[seq]
+                body = unpack_body(body, feed.protocol, feed.port.port)
+                self._place(feed, Envelope(f"{id}#{seq}", id, seq, round, body, "", tuple(cause)))
+        for id, snapshot in snaps.items():
+            if id in states:
+                states[id].node.restore(snapshot)
+        return dropped
+
+    def _finish(self, ended: bool = False) -> Result:
         try:
-            if self.workers:
+            if ended:
+                pass
+            elif self.workers:
                 threads = [threading.Thread(target=self._work, name=f"engine-{i}", daemon=True) for i in range(self.workers)]
                 for thread in threads:
                     thread.start()
@@ -238,11 +360,16 @@ class Engine:
                 self._work()
         finally:
             self._close()
+            if self._journal is not None:
+                if not ended and not self._stop and self._error is None:
+                    self._journal.write({"kind": "end"})
+                self._journal.close()
         if self._error:
             raise self._error
         result = self._result
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
         result.limited = tuple(self._limited)
+        result.complete = not self._stop
         return result
 
     def stop(self) -> None:
@@ -267,12 +394,13 @@ class Engine:
                 state.round += 1
                 self._active += 1
                 try:
-                    taken, cause = self._take(state)
+                    taken, cause, took = self._take(state)
                 except Exception as exc:   # noqa: BLE001 - a protocol's decode failed
                     self._fail(state, exc)
                     continue
                 self._result.activations += 1
-            node, ctx = state.node, _Context(self, state, cause)
+            act = _Act(state.node.id, state.round, took) if self._journal is not None else None
+            node, ctx = state.node, _Context(self, state, cause, act)
             try:
                 if not state.opened:
                     state.opened = True
@@ -282,13 +410,23 @@ class Engine:
                     if not isinstance(returned, Mapping):
                         raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
                     for port, payload in returned.items():
-                        self._emit(state, port, payload, state.round, cause)
+                        self._emit(state, port, payload, state.round, cause, act)
+                if act is not None:
+                    snapshot = node.snapshot()
+                    if snapshot:
+                        act.snaps[node.id] = dict(snapshot)
             except Exception as exc:   # noqa: BLE001 - whatever a node raises ends the run
                 with lock:
                     self._fail(state, exc)
                 continue
             with lock:
                 self._end_streams(state)
+                if act is not None:
+                    try:
+                        self._commit(act)
+                    except Exception as exc:   # noqa: BLE001 - something it sent is not plain data
+                        self._fail(state, RunError(f"cannot be journaled: {exc}"))
+                        continue
                 state.running = False
                 self._active -= 1
                 self._consider(state)
@@ -296,6 +434,12 @@ class Engine:
                     lock.notify_all()
                 elif self._ready:
                     lock.notify()
+
+    def _commit(self, act: _Act) -> None:
+        self._journal.write({"kind": "act", "node": act.node, "round": act.round, "took": list(act.took),
+                             "sent": [pack(e) for e in act.sent],
+                             "out": [[name, pack_body(payload)] for name, payload in act.out],
+                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps})
 
     def _end_streams(self, state: _State) -> None:
         if state.streams:
@@ -352,7 +496,12 @@ class Engine:
             else:
                 state.optional_ready += 1 if ready else -1
 
-    def _deliver(self, feed: _Feed, body: Any, round: int, cause: tuple) -> None:
+    def _deliver(self, feed: _Feed, body: Any, round: int, cause: tuple) -> Envelope:
+        envelope = self._envelope(feed, body, round, cause)
+        self._place(feed, envelope)
+        return envelope
+
+    def _envelope(self, feed: _Feed, body: Any, round: int, cause: tuple) -> Envelope:
         feed.sent += 1
         if isinstance(body, Ref):
             body_digest = body.digest
@@ -361,9 +510,12 @@ class Engine:
                 body_digest = digest(body)
             except (TypeError, ValueError):
                 body_digest = ""    # not plain data: it can travel inside the process, but it has no content hash
-        envelope = Envelope(f"{feed.id}#{feed.sent}", feed.id, feed.sent, round, body, body_digest, cause)
-        box, port = feed.box, feed.port
         self._result.envelopes += 1
+        return Envelope(f"{feed.id}#{feed.sent}", feed.id, feed.sent, round, body, body_digest, cause)
+
+    def _place(self, feed: _Feed, envelope: Envelope) -> None:
+        """Put an envelope in its feed's mailbox and see whether the receiving node can now run."""
+        box, port = feed.box, feed.port
         if feed.passive:
             box.clear()
             box.append(envelope)
@@ -395,7 +547,7 @@ class Engine:
         return envelope
 
     def _take(self, state: _State):
-        """The inputs of one activation, and the ids of the envelopes they came in."""
+        """The inputs of one activation, the ids of the envelopes they came in, and which of those were used up."""
         inputs: dict[str, Any] = {}
         cause: list[str] = []
 
@@ -420,6 +572,7 @@ class Engine:
                 else:
                     values = [read(next(feed for feed in port.back if feed.box))]
                 inputs[name] = values if port.port.many else values[0]
+        took = tuple(cause)
         for port in state.passive:      # the newest value of each edge that does not trigger: read, and left there
             values = []
             for feed in port.passive:
@@ -428,9 +581,9 @@ class Engine:
                     values.append(feed.protocol.decode(feed.box[0].body, port.port))
             if values:
                 inputs[port.port.name] = values if port.port.many else values[0]
-        return inputs, tuple(cause)
+        return inputs, tuple(cause), took
 
-    def _emit(self, state: _State, port: str, payload: Any, round: int, cause: tuple) -> None:
+    def _emit(self, state: _State, port: str, payload: Any, round: int, cause: tuple, act: _Act | None = None) -> None:
         try:
             feeds, names = state.outs[port]
         except KeyError:
@@ -446,27 +599,35 @@ class Engine:
         with self._lock:
             for name in names:
                 self._result.outputs[name].append(payload)
+                if act is not None:
+                    act.out.append((name, payload))
             for (feed, _), body in zip(feeds, bodies):
-                if feed.stream:
-                    if feed.id not in state.streams:     # the first chunk of this activation opens the stream
-                        if feed.limit is not None and feed.sent >= feed.limit:
-                            self._limited[feed.id] = None
-                            state.streams[feed.id] = None
-                        else:
-                            stream = state.streams[feed.id] = Stream(feed.protocol, feed.port.port)
-                            self._deliver(feed, stream, round, cause)
-                    stream = state.streams[feed.id]
-                    if stream is not None:
-                        stream._put(body)
+                if feed.stream and feed.id in state.streams:
+                    if state.streams[feed.id] is not None:
+                        state.streams[feed.id]._put(body)
                     continue
                 if feed.limit is not None and feed.sent >= feed.limit:
                     self._limited[feed.id] = None
+                    if act is not None and feed.id not in act.limited:
+                        act.limited.append(feed.id)
+                    if feed.stream:
+                        state.streams[feed.id] = None
                     continue
-                self._deliver(feed, body, round, cause)
+                if feed.stream:                          # the first chunk of this activation opens the stream
+                    stream = state.streams[feed.id] = Stream(feed.protocol, feed.port.port, keep=act is not None)
+                    stream._put(body)
+                    body = stream
+                envelope = self._envelope(feed, body, round, cause)
+                if act is not None:
+                    act.sent.append(envelope)
+                if envelope.id in self._orphans:         # its receiver dealt with it before the restart
+                    self._orphans.discard(envelope.id)
+                else:
+                    self._place(feed, envelope)
             if self._ready:
                 self._lock.notify()
 
-    def _call(self, state: _State, port: str, payload: Any) -> Any:
+    def _call(self, state: _State, port: str, payload: Any, act: _Act | None = None) -> Any:
         """Run the node at the other end of a call edge now, in this thread, and return its answer."""
         feed = state.calls.get(port)
         if feed is None:
@@ -482,19 +643,25 @@ class Engine:
                 target.round += 1
                 self._result.envelopes += 1
                 self._result.activations += 1
-                ctx = _Context(self, target, (f"{feed.id}#{feed.sent}",))
+                ctx = _Context(self, target, (f"{feed.id}#{feed.sent}",), act)
+                if act is not None:
+                    act.calls.append(node.id)
             try:
                 if not target.opened:
                     target.opened = True
                     node.open(ctx)
                 value = feed.protocol.decode(body, feed.port.port)
                 returned = node.run(ctx, {feed.port.port.name: [value] if feed.port.port.many else value})
+                if act is not None:
+                    snapshot = node.snapshot()
+                    if snapshot:
+                        act.snaps[node.id] = dict(snapshot)
                 if returned is None:
                     return None
                 if not isinstance(returned, Mapping):
                     raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
                 for name, item in returned.items():
-                    self._emit(target, name, item, ctx.round, ctx._cause)
+                    self._emit(target, name, item, ctx.round, ctx._cause, act)
                 return returned.get(feed.reply) if feed.reply is not None else None
             finally:
                 with self._lock:
