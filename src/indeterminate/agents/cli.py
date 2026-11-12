@@ -53,7 +53,7 @@ def bridge_server(url: str, project: str, agent: str, token: str) -> MCPServer:
     env={'MCH_BRIDGE_TOKEN':token,'PYTHONPATH':backend,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8'}
     if os.name=='nt' and os.environ.get('SystemRoot'):
         env['SystemRoot']=os.environ['SystemRoot']  # Required by Windows SSL initialization, not a credential.
-    return MCPServer(sys.executable, ["-m", "mch_harness.mcp_bridge", "--url", url, "--project", project, "--agent", agent],
+    return MCPServer(sys.executable, ["-m", "indeterminate.mcp_bridge", "--url", url, "--project", project, "--agent", agent],
                      env)
 
 

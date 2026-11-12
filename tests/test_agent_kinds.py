@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from mch_harness.agents import kinds
-from mch_harness.agents.kinds import (Agent, AgentKinds, Coordinator, KindError, Keeper, Lead, Reviewer, SubLead, Worker,
+from indeterminate.agents import kinds
+from indeterminate.agents.kinds import (Agent, AgentKinds, Coordinator, KindError, Keeper, Lead, Reviewer, SubLead, Worker,
                                       define)
-from mch_harness.extensions import Extension, ExtensionError, register
-from mch_harness.plan import GraphError, Plan
-from mch_harness.graph.templates import starter
+from indeterminate.extensions import Extension, ExtensionError, register
+from indeterminate.plan import GraphError, Plan
+from indeterminate.graph.templates import starter
 
-SRC = Path(__file__).resolve().parents[1] / 'src' / 'mch_harness'
+SRC = Path(__file__).resolve().parents[1] / 'src' / 'indeterminate'
 
 
 def test_hierarchy_matches_the_design():

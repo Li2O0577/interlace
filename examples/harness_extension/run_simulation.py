@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mch_harness import ChatResult, FakeProvider, Kernel  # noqa: E402
-from mch_harness.graph.recovery import STATE_TEMPLATE  # noqa: E402
+from indeterminate import ChatResult, FakeProvider, Kernel  # noqa: E402
+from indeterminate.graph.recovery import STATE_TEMPLATE  # noqa: E402
 
 import document_review  # noqa: E402
 

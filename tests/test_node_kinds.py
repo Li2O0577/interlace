@@ -8,12 +8,12 @@ import time
 
 import pytest
 
-from mch_harness.extensions import Extension, ExtensionError, TaskType
-from mch_harness.graph.model import GraphError, fingerprint
-from mch_harness.graph.nodes import AGENT, AgentNode, NodeKind, NodeKindError, NodeKinds
-from mch_harness.graph.recovery import STATE_TEMPLATE
-from mch_harness.mcp.daemon import Engine
-from mch_harness.plan import Plan
+from indeterminate.extensions import Extension, ExtensionError, TaskType
+from indeterminate.graph.model import GraphError, fingerprint
+from indeterminate.graph.nodes import AGENT, AgentNode, NodeKind, NodeKindError, NodeKinds
+from indeterminate.graph.recovery import STATE_TEMPLATE
+from indeterminate.mcp.daemon import Engine
+from indeterminate.plan import Plan
 
 
 def plan_with(kind):

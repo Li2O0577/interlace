@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from mch_harness.mcp.server import Server, serve, PROTOCOL
+from indeterminate.mcp.server import Server, serve, PROTOCOL
 
 
 class Engine:

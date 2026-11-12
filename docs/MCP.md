@@ -1,6 +1,6 @@
 # Hyperplan 独立 MCP 入口（初版）
 
-本仓库发布 `mch-harness`（模块 `mch_harness`），一个只用标准库的通用编排内核，带本页的 stdio MCP 服务。建模网页工作台在另一个仓库，依赖本包。内核的分层、智能体类、节点协议与第三方接入见 [内核说明](../README.md)，可运行示例在 `examples/harness_extension/`。
+本仓库发布 `1ndeterminate`（模块 `indeterminate`），一个只用标准库的通用编排内核，带本页的 stdio MCP 服务。建模网页工作台在另一个仓库，依赖本包。内核的分层、智能体类、节点协议与第三方接入见 [内核说明](../README.md)，可运行示例在 `examples/harness_extension/`。
 
 本页描述已经实现的最小默认。进程内 stdio、仅本地 CLI 审批、单工作区单引擎、协议版本、自动文件模式映射都属于可替换假设；不把它们写成操作者已确认的新规则。
 
@@ -10,7 +10,7 @@
 
 ```sh
 python -m pip install -e .
-mch-harness --workspace ./workspace --home ./.mch serve
+1ndeterminate --workspace ./workspace --home ./.mch serve
 # 或先构建 wheel：uv build -o dist，再在干净环境安装
 ```
 
@@ -20,12 +20,12 @@ mch-harness --workspace ./workspace --home ./.mch serve
 
 ```json
 {
-  "command": "/absolute/path/to/venv/bin/mch-harness",
+  "command": "/absolute/path/to/venv/bin/1ndeterminate",
   "args": ["--workspace", "/absolute/path/to/workspace", "--home", "/absolute/path/to/settings", "serve"]
 }
 ```
 
-Windows 使用虚拟环境的 `Scripts/mch-harness.exe`。只提供说明，不会为使用者安装或启用 Skill，也不会自动写宿主 MCP 配置。
+Windows 使用虚拟环境的 `Scripts/1ndeterminate.exe`。只提供说明，不会为使用者安装或启用 Skill，也不会自动写宿主 MCP 配置。
 
 `--home` 默认 `MCH_HOME` 或 `~/.mch`；`--workspace` 默认 `MCH_WORKSPACE` 或该 home 下的 `workspace/`。源码网页入口原默认工作区仍为仓库 `workspace/`；要共用项目，请给两个入口显式指定同一个绝对工作区，并先关闭原引擎。OS 文件锁阻止两个入口同时拥有该工作区；不是多进程协作数据库。
 
@@ -66,13 +66,13 @@ Windows 使用虚拟环境的 `Scripts/mch-harness.exe`。只提供说明，不�
 另开终端，使用与服务相同的 `--workspace`。以下命令不暴露为 MCP 工具：
 
 ```sh
-mch-harness --workspace /absolute/workspace pending
-mch-harness --workspace /absolute/workspace confirm PROJECT PLAN_SHA256
-mch-harness --workspace /absolute/workspace approve-change PROJECT CHANGE_ID NEW_PLAN_SHA256
-mch-harness --workspace /absolute/workspace decide-tool PROJECT APPROVAL_ID approve --reason "已核对"
-mch-harness --workspace /absolute/workspace decide-tool PROJECT APPROVAL_ID deny --reason "请改方案"
-mch-harness --workspace /absolute/workspace message PROJECT "操作者对主控问题的回答"
-mch-harness --workspace /absolute/workspace resume PROJECT AGENT_ID --reason "暂停原因已解决"
+1ndeterminate --workspace /absolute/workspace pending
+1ndeterminate --workspace /absolute/workspace confirm PROJECT PLAN_SHA256
+1ndeterminate --workspace /absolute/workspace approve-change PROJECT CHANGE_ID NEW_PLAN_SHA256
+1ndeterminate --workspace /absolute/workspace decide-tool PROJECT APPROVAL_ID approve --reason "已核对"
+1ndeterminate --workspace /absolute/workspace decide-tool PROJECT APPROVAL_ID deny --reason "请改方案"
+1ndeterminate --workspace /absolute/workspace message PROJECT "操作者对主控问题的回答"
+1ndeterminate --workspace /absolute/workspace resume PROJECT AGENT_ID --reason "暂停原因已解决"
 ```
 
 `pending` 展示草稿或改图的前后定义、原因、受影响节点和成果处理，并列出工具审批。确认必须匹配当前 SHA256。写命令返回本地记录 `id`、`status=pending`；随后用 `result ID` 查看 `done/failed/uncertain`，**入队不等于批准已经生效**。服务未运行时保持待处理。`message` 只回复内部 lead；`resume` 只恢复已有暂停会话，不能复活已结束图实例。
@@ -92,7 +92,7 @@ mch-harness --workspace /absolute/workspace resume PROJECT AGENT_ID --reason "�
 使用独立目录，不与真实提供器项目混用：
 
 ```sh
-uv run mch-harness --workspace ./.mch/demo-workspace --home ./.mch/demo-home serve --demo
+uv run 1ndeterminate --workspace ./.mch/demo-workspace --home ./.mch/demo-home serve --demo
 ```
 
 通过 MCP 客户端按协议初始化后：

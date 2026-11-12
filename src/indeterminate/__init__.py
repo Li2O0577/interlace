@@ -1,4 +1,4 @@
-"""mch-harness: a task-neutral multi-agent orchestration kernel.
+"""1ndeterminate: a task-neutral multi-agent orchestration kernel.
 
 A plan graph approved by the operator, a deterministic scheduler, per-node file
 boundaries, approvals, recoverable state and an audit log. The kernel constrains

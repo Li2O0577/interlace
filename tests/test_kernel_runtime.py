@@ -15,16 +15,16 @@ class Block(importlib.abc.MetaPathFinder):
             'mch','fastapi','uvicorn','pypdf','openpyxl','psutil')):
             raise RuntimeError('unexpected domain import: '+fullname)
 sys.meta_path.insert(0,Block())
-from mch_harness.agents.runtime import AgentManager
-from mch_harness.agents.providers import FakeProvider, ChatResult
-from mch_harness.core.projects import ProjectStore
-from mch_harness.core.settings_store import SettingsStore
-from mch_harness.core.events import EventLog
-from mch_harness.core.locks import ProjectLocks
-from mch_harness.tools import registry
-from mch_harness.tools.registry import ToolContext
-from mch_harness.graph.model import fingerprint
-from mch_harness.graph.recovery import STATE_TEMPLATE
+from indeterminate.agents.runtime import AgentManager
+from indeterminate.agents.providers import FakeProvider, ChatResult
+from indeterminate.core.projects import ProjectStore
+from indeterminate.core.settings_store import SettingsStore
+from indeterminate.core.events import EventLog
+from indeterminate.core.locks import ProjectLocks
+from indeterminate.tools import registry
+from indeterminate.tools.registry import ToolContext
+from indeterminate.graph.model import fingerprint
+from indeterminate.graph.recovery import STATE_TEMPLATE
 base,task=Path(sys.argv[1]),sys.argv[2]
 store=ProjectStore(base/'workspace')
 project=store.create(task,mode='graph',description=task)

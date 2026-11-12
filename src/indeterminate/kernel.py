@@ -2,7 +2,7 @@
 
 It assembles what already exists (project store, settings, event log, AgentManager with its API and CLI
 providers, the graph runtime, the operator's command queue) and owns their lifecycle. It adds no model
-loop. A host embeds it directly (this API), or runs it behind the stdio MCP server (``mch_harness.mcp``).
+loop. A host embeds it directly (this API), or runs it behind the stdio MCP server (``indeterminate.mcp``).
 
 Authority is fixed by which method is called, never by an argument: ``request`` carries an outside
 intent to the internal lead as data; only ``operator`` methods confirm a plan, approve a change or decide

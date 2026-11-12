@@ -1,4 +1,4 @@
-"""Dict-level plan functions kept for callers that hold a stored plan; the entities live in ``mch_harness.plan``."""
+"""Dict-level plan functions kept for callers that hold a stored plan; the entities live in ``indeterminate.plan``."""
 from __future__ import annotations
 
 import copy

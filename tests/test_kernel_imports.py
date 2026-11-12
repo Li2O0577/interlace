@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 SRC = Path(__file__).resolve().parents[1] / 'src'
-PACKAGE = SRC / 'mch_harness'
+PACKAGE = SRC / 'indeterminate'
 BLOCK = '''
 import importlib.abc, sys
 class Block(importlib.abc.MetaPathFinder):
@@ -37,7 +37,7 @@ def test_no_module_imports_the_application_or_a_third_party_package():
                 if level:
                     if level > depth:
                         failures.append(f'{path.relative_to(SRC)}:{line}: relative import leaves the package')
-                elif top and top != 'mch_harness' and top not in sys.stdlib_module_names:
+                elif top and top != 'indeterminate' and top not in sys.stdlib_module_names:
                     failures.append(f'{path.relative_to(SRC)}:{line}: imports {name}')
     assert not failures, '\n'.join(failures)
 
@@ -60,18 +60,18 @@ def run(script, cwd):
 
 def test_engine_imports_with_the_application_and_its_dependencies_blocked(tmp_path):
     result = run('''
-import mch_harness
-from mch_harness import Kernel, HostAdapters, Extension, TaskType
-from mch_harness.agents.runtime import AgentManager
-from mch_harness.mcp.daemon import Engine
-from mch_harness.mcp.server import Server
-from mch_harness.mcp import cli
-import mch_harness.mcp_bridge
-from mch_harness.tools import registry
+import indeterminate
+from indeterminate import Kernel, HostAdapters, Extension, TaskType
+from indeterminate.agents.runtime import AgentManager
+from indeterminate.mcp.daemon import Engine
+from indeterminate.mcp.server import Server
+from indeterminate.mcp import cli
+import indeterminate.mcp_bridge
+from indeterminate.tools import registry
 registry.load_generic()
 assert {'fs.read','fs.write','graph.view','graph.publish'} <= registry.TOOLS.keys()
 assert not [m for m in sys.modules if m == 'mch' or m.startswith('mch.')]
-print('kernel imported', mch_harness.__version__)
+print('kernel imported', indeterminate.__version__)
 ''', tmp_path)
     assert result.returncode == 0, result.stderr
     assert 'kernel imported' in result.stdout
@@ -79,8 +79,8 @@ print('kernel imported', mch_harness.__version__)
 
 def test_default_roles_and_tools_are_task_neutral(tmp_path):
     result = run('''
-from mch_harness.agents import role_catalog, specs
-from mch_harness.tools import registry
+from indeterminate.agents import role_catalog, specs
+from indeterminate.tools import registry
 registry.load_generic()
 roles = set(role_catalog.ROLE_TOOLS)
 assert roles == {'file_keeper','lead','worker','reviewer','coder','analyst','researcher','writer','sublead'}, roles

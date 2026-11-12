@@ -5,7 +5,7 @@ is forwarded to the running workbench (``/api/bridge/<project>/<agent>/…``),
 so the agent's permissions, the user's approvals, the project layout rules,
 the event timeline and the budget all apply exactly as for API-driven agents.
 
-    python -m mch_harness.mcp_bridge --url http://127.0.0.1:8765 --project P --agent A
+    python -m indeterminate.mcp_bridge --url http://127.0.0.1:8765 --project P --agent A
     (token in $MCH_BRIDGE_TOKEN)
 """
 
@@ -108,7 +108,7 @@ def serve(bridge: Bridge, stdin=None, stdout=None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="mch_harness.mcp_bridge")
+    parser = argparse.ArgumentParser(prog="indeterminate.mcp_bridge")
     parser.add_argument("--url", required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--agent", required=True)

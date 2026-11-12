@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / 'src' / 'mch_harness'
+SRC = Path(__file__).resolve().parents[1] / 'src' / 'indeterminate'
 
-# module -> the kernel modules it may import (anything else from mch_harness is a layer violation)
+# module -> the kernel modules it may import (anything else from indeterminate is a layer violation)
 ENTITIES = {
     'plan': {'agents.kinds'},
     'agents.kinds': set(),
@@ -38,8 +38,8 @@ def _imports(path):
                 base = package[:len(package) - (node.level - 1)] if node.level > 1 else package
                 target = '.'.join(base + ([node.module] if node.module else []))
                 targets = [target] if node.module else ['.'.join(base + [a.name]) for a in node.names]
-            elif node.module and node.module.startswith('mch_harness'):
-                targets = [node.module.removeprefix('mch_harness').lstrip('.')]
+            elif node.module and node.module.startswith('indeterminate'):
+                targets = [node.module.removeprefix('indeterminate').lstrip('.')]
             else:
                 continue
             for t in targets:
@@ -50,7 +50,7 @@ def _imports(path):
                 else:
                     found.add(t)
         elif isinstance(node, ast.Import):
-            found |= {a.name.removeprefix('mch_harness').lstrip('.') for a in node.names if a.name.startswith('mch_harness')}
+            found |= {a.name.removeprefix('indeterminate').lstrip('.') for a in node.names if a.name.startswith('indeterminate')}
     return {f for f in found if f}
 
 

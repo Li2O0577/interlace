@@ -4,12 +4,12 @@ import time
 
 import pytest
 
-from mch_harness.core.jsonfile import write
-from mch_harness.core.ownership import OwnershipError
-from mch_harness.graph.model import fingerprint, GraphError
-from mch_harness.mcp import control
-from mch_harness.mcp.daemon import Engine
-from mch_harness.mcp_bridge import Bridge
+from indeterminate.core.jsonfile import write
+from indeterminate.core.ownership import OwnershipError
+from indeterminate.graph.model import fingerprint, GraphError
+from indeterminate.mcp import control
+from indeterminate.mcp.daemon import Engine
+from indeterminate.mcp_bridge import Bridge
 
 
 @pytest.fixture

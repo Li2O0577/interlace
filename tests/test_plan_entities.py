@@ -3,9 +3,9 @@ import copy
 
 import pytest
 
-from mch_harness.graph import model
-from mch_harness.graph.templates import starter
-from mch_harness.plan import Block, Edge, GraphError, Node, Plan, fingerprint
+from indeterminate.graph import model
+from indeterminate.graph.templates import starter
+from indeterminate.plan import Block, Edge, GraphError, Node, Plan, fingerprint
 
 
 @pytest.fixture

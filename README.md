@@ -1,4 +1,4 @@
-# mch-harness
+# 1ndeterminate
 
 通用多智能体编排内核：操作者确认的计划图、确定性调度、节点文件边界、审批、可恢复状态和审计日志。内核只约束边界（谁能启动、读、写、通信、放行），不约束模型如何推理。只依赖 Python 标准库，外部程序只用 git。
 
@@ -11,7 +11,7 @@ pip install -e .            # 在源码目录安装（尚未发布到公共索�
 uv build -o dist            # 构建 wheel
 ```
 
-需要 Python 3.11 及以上。
+需要 Python 3.11 及以上。发布名和命令是 `1ndeterminate`，导入名是 `indeterminate`（Python 模块名不能以数字开头）。
 
 ## 分层
 
@@ -44,7 +44,7 @@ Agent
 ## 最小用法
 
 ```python
-from mch_harness import Kernel, Extension, TaskType, Worker
+from indeterminate import Kernel, Extension, TaskType, Worker
 
 ext = Extension("translation")
 
@@ -69,11 +69,11 @@ with Kernel("./workspace", "./settings", extensions=[ext]) as kernel:
 ## stdio MCP 服务
 
 ```sh
-mch-harness --workspace /abs/workspace --home /abs/settings serve           # 真实提供方
-mch-harness --workspace /abs/demo --home /abs/demo-home serve --demo         # 模拟，不调用模型
+1ndeterminate --workspace /abs/workspace --home /abs/settings serve           # 真实提供方
+1ndeterminate --workspace /abs/demo --home /abs/demo-home serve --demo         # 模拟，不调用模型
 ```
 
-对外 8 个工具：`project.create`、`project.list`、`project.open`、`graph.view`、`operation.request`、`events.read`、`artifact.list`、`artifact.read`。确认计划、批准改图、处理工具审批只能由操作者在另一终端用 `mch-harness confirm/approve-change/decide-tool/...` 完成，外部连接拿不到主控身份。协议与命令细节见 [docs/MCP.md](docs/MCP.md)，图引擎设计见 [docs/GRAPH.md](docs/GRAPH.md)。
+对外 8 个工具：`project.create`、`project.list`、`project.open`、`graph.view`、`operation.request`、`events.read`、`artifact.list`、`artifact.read`。确认计划、批准改图、处理工具审批只能由操作者在另一终端用 `1ndeterminate confirm/approve-change/decide-tool/...` 完成，外部连接拿不到主控身份。协议与命令细节见 [docs/MCP.md](docs/MCP.md)，图引擎设计见 [docs/GRAPH.md](docs/GRAPH.md)。
 
 ## 测试
 

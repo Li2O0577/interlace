@@ -1,6 +1,6 @@
-"""A third-party extension of mch-harness: document review.
+"""A third-party extension of 1ndeterminate: document review.
 
-It imports nothing but ``mch_harness`` and adds, for the one Kernel it is given to:
+It imports nothing but ``indeterminate`` and adds, for the one Kernel it is given to:
 
 * an agent kind, ``Proofreader``: a Reviewer that may also count lines;
 * a tool, ``review.count_lines``, with a path contract (it reads ``path`` and writes ``out``), so the kernel
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mch_harness import Extension, TaskType, Reviewer
+from indeterminate import Extension, TaskType, Reviewer
 
 ext = Extension("document_review")
 

@@ -14,9 +14,9 @@ import time
 
 import pytest
 
-from mch_harness.graph.model import GraphError, fingerprint
-from mch_harness.mcp import control
-from mch_harness.mcp.daemon import Engine
+from indeterminate.graph.model import GraphError, fingerprint
+from indeterminate.mcp import control
+from indeterminate.mcp.daemon import Engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_kernel_mcp import BASE, Client  # noqa: E402
@@ -33,7 +33,7 @@ def call(name, args, i=9):
 def serve_once(tmp_path, lines):
     data = b''.join((m if isinstance(m, bytes) else json.dumps(m).encode()) + b'\n' for m in INIT + lines)
     data += b'{"jsonrpc":"2.0","id":"last","method":"ping"}\n'
-    out = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'mch_harness.mcp.cli', '--workspace', str(tmp_path / 'w'),
+    out = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'indeterminate.mcp.cli', '--workspace', str(tmp_path / 'w'),
                           '--home', str(tmp_path / 'h'), 'serve', '--demo'], input=data, capture_output=True, timeout=60,
                          env={**os.environ, 'PYTHONPATH': str(BASE)})
     assert out.returncode == 0, out.stderr.decode('utf-8', 'replace')[-2000:]

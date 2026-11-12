@@ -1,4 +1,4 @@
-"""mch-harness: standalone stdio server and separate local operator commands."""
+"""1ndeterminate: standalone stdio server and separate local operator commands."""
 import argparse
 import json
 import os
@@ -12,7 +12,7 @@ def main(argv=None):
     for stream in (sys.stdin,sys.stdout,sys.stderr):
         if hasattr(stream,'reconfigure'):
             stream.reconfigure(encoding='utf-8')
-    parser=argparse.ArgumentParser(prog='mch-harness',description='Hyperplan 通用图任务引擎；stdio 连接关闭会停止本进程工作')
+    parser=argparse.ArgumentParser(prog='1ndeterminate',description='Hyperplan 通用图任务引擎；stdio 连接关闭会停止本进程工作')
     home=Path(os.environ.get('MCH_HOME',Path.home()/'.mch'))
     parser.add_argument('--home',type=Path,default=home,help='提供器设置目录，不放入项目')
     parser.add_argument('--workspace',type=Path,default=Path(os.environ.get('MCH_WORKSPACE',home/'workspace')))

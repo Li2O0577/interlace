@@ -1,4 +1,4 @@
-"""The third-party example in examples/harness_extension: imports only mch_harness, and its custom kind and
+"""The third-party example in examples/harness_extension: imports only indeterminate, and its custom kind and
 tool stay inside the node boundary. SIMULATION: scripted fake models, no model is called."""
 import json
 import os
@@ -31,7 +31,7 @@ def inspect(kernel, pid):
     w = 'nodes/proofreader/r1/work/'
     return {
         'kind': m.kind(st).__name__, 'bases': [c.__name__ for c in m.kind(st).__mro__],
-        'other_kernel_knows_role': 'proofreader' in __import__('mch_harness.agents.kinds', fromlist=['DEFAULT']).DEFAULT,
+        'other_kernel_knows_role': 'proofreader' in __import__('indeterminate.agents.kinds', fromlist=['DEFAULT']).DEFAULT,
         'refused_unlisted_input': attempt('review.count_lines', {'path': 'material/source.md', 'out': w + 'x.txt'}),
         'refused_write_elsewhere': attempt('review.count_lines', {'path': 'nodes/drafter/r1/work/summary.md', 'out': 'nodes/drafter/r1/work/x.txt'}),
         'refused_state_read': attempt('review.count_lines', {'path': 'state/graph.json', 'out': w + 'y.txt'}),

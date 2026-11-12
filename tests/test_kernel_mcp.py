@@ -16,7 +16,7 @@ BASE=Path(__file__).resolve().parents[1]/'src'
 class Client:
     def __init__(self,base):
         self.base=base
-        self.process=subprocess.Popen([sys.executable,'-X','utf8','-m','mch_harness.mcp.cli','--workspace',str(base/'work'),
+        self.process=subprocess.Popen([sys.executable,'-X','utf8','-m','indeterminate.mcp.cli','--workspace',str(base/'work'),
             '--home',str(base/'home'),'serve','--demo'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,text=True,encoding='utf-8',env={**os.environ,'PYTHONPATH':str(BASE)})
         self.lines=queue.Queue()
@@ -51,7 +51,7 @@ class Client:
         return json.loads(result['content'][0]['text'])
 
     def operator(self,*args):
-        result=subprocess.run([sys.executable,'-X','utf8','-m','mch_harness.mcp.cli','--workspace',str(self.base/'work'),
+        result=subprocess.run([sys.executable,'-X','utf8','-m','indeterminate.mcp.cli','--workspace',str(self.base/'work'),
             '--home',str(self.base/'home'),*args],capture_output=True,text=True,encoding='utf-8',
             env={**os.environ,'PYTHONPATH':str(BASE)},timeout=15)
         assert result.returncode==0,result.stderr

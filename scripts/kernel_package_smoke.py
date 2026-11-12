@@ -1,4 +1,4 @@
-"""Run with a clean environment's Python after installing ONLY the mch-harness wheel.
+"""Run with a clean environment's Python after installing ONLY the 1ndeterminate wheel.
 
 Checks that the kernel works without the application: no ``mch`` package, no FastAPI, no source checkout.
 SIMULATION only: the stdio demo and the example use scripted fake models.
@@ -17,16 +17,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--example', help='path to examples/harness_extension, to run it against the installed kernel')
     args = parser.parse_args()
-    import mch_harness
-    assert 'site-packages' in str(Path(mch_harness.__file__).resolve()), 'smoke must import the installed wheel'
+    import indeterminate
+    assert 'site-packages' in str(Path(indeterminate.__file__).resolve()), 'smoke must import the installed wheel'
     for absent in ('mch', 'fastapi', 'uvicorn'):
         assert importlib.util.find_spec(absent) is None, f'{absent} must not be installed with the kernel alone'
-    for name in mch_harness.__all__[1:]:
-        getattr(mch_harness, name)
+    for name in indeterminate.__all__[1:]:
+        getattr(indeterminate, name)
     env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
-    with tempfile.TemporaryDirectory(prefix='mch-harness-smoke-') as temp:
+    with tempfile.TemporaryDirectory(prefix='1ndeterminate-smoke-') as temp:
         base = Path(temp)
-        cli = subprocess.run([sys.executable, '-m', 'mch_harness.mcp.cli', '--help'], capture_output=True, text=True,
+        cli = subprocess.run([sys.executable, '-m', 'indeterminate.mcp.cli', '--help'], capture_output=True, text=True,
                              encoding='utf-8', cwd=base, env=env, timeout=20)
         assert cli.returncode == 0, cli.stderr
         requests = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-11-25',
@@ -35,7 +35,7 @@ def main():
                     {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'},
                     {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': 'project.create',
                      'arguments': {'request_id': 'kernel-smoke', 'name': 'Kernel smoke', 'task': 'Inspect material'}}}]
-        served = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'mch_harness.mcp.cli', '--workspace', str(base / 'w'),
+        served = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'indeterminate.mcp.cli', '--workspace', str(base / 'w'),
                                  '--home', str(base / 'h'), 'serve', '--demo'],
                                 input='\n'.join(json.dumps(r) for r in requests) + '\n', capture_output=True, text=True,
                                 encoding='utf-8', cwd=base, env=env, timeout=30)
