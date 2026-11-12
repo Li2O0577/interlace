@@ -19,7 +19,7 @@ from .agents import kinds as agent_kinds
 from .graph import nodes as graph_nodes
 from .tools.registry import Tool
 
-RESERVED = ("fs.", "code.", "graph.", "access.", "agent.", "tools.", "brainstorm.", "lineage.", "project.",
+RESERVED = ("fs.", "code.", "graph.", "access.", "agent.", "tools.", "lineage.", "project.",
             "operation.", "events.", "artifact.", "approval.")
 
 

@@ -1,11 +1,11 @@
-"""Limits for code that agents run on this machine (code.run, local experiments, notebooks).
+"""Limits for code that agents run on this machine (code.run and the processes it starts).
 
 This is a guard rail, not a container: it keeps ordinary analysis code from
 reaching outside the project by accident or by a model's mistake.
 
 - **Environment**: the child process does not inherit secrets (variables whose
   names look like keys, tokens or passwords), so code cannot read the API keys
-  the workbench was started with.
+  the engine was started with.
 - **Writes**: Python processes start with an audit hook (``sitecustomize``)
   that refuses to create, change or delete files outside the project folder
   and the temporary directory. Python child processes inherit it.
@@ -15,7 +15,7 @@ reaching outside the project by accident or by a model's mistake.
 - **Optional**: block network connections from the code, cap its memory.
 
 Commands that run on SSH hosts are not affected: those machines are the
-user's own servers, set up for experiments.
+user's own servers.
 
 Settings live under ``sandbox`` in the global settings.
 """
@@ -59,7 +59,7 @@ def env_for(root: Path, cfg: dict, base: dict | None = None, extra: dict | None 
     """Environment for a child process that runs project code."""
     env = dict(os.environ if base is None else base)
     env.update(PYTHONUTF8='1',PYTHONIOENCODING='utf-8')
-    # `python` in a shell command is the workbench's own interpreter, with its packages, not whatever is first on PATH.
+    # `python` in a shell command is the engine's own interpreter, with its packages, not whatever is first on PATH.
     bindir = str(Path(sys.executable).parent)
     if env.get("PATH", "").split(os.pathsep)[0] != bindir:
         env["PATH"] = os.pathsep.join([bindir, *([env["PATH"]] if env.get("PATH") else [])])
@@ -71,8 +71,8 @@ def env_for(root: Path, cfg: dict, base: dict | None = None, extra: dict | None 
     cache.mkdir(parents=True, exist_ok=True)
     allowed = [str(root), tempfile.gettempdir(), *cfg.get("extra_write_dirs", [])]
     env.update({
-        "MCH_SANDBOX_ROOTS": os.pathsep.join(allowed),
-        "MCH_SANDBOX_NET": "0" if cfg.get("block_network") else "1",
+        "INDETERMINATE_SANDBOX_ROOTS": os.pathsep.join(allowed),
+        "INDETERMINATE_SANDBOX_NET": "0" if cfg.get("block_network") else "1",
         "PYTHONPATH": os.pathsep.join([str(GUARD_DIR), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])]),
         "PYTHONDONTWRITEBYTECODE": "1",
         # tools that keep caches in the home folder write them inside the project instead

@@ -16,7 +16,7 @@ PROBE = r'''
 import importlib.abc, json, sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        if fullname.split('.')[0] in ('mch','fastapi','uvicorn','starlette','pypdf','openpyxl','psutil'):
+        if fullname.split('.')[0] in ('fastapi','uvicorn','starlette','pypdf','openpyxl','psutil'):
             raise RuntimeError('the example reached outside the kernel: '+fullname)
 sys.meta_path.insert(0, Block())
 sys.path.insert(0, sys.argv[1])

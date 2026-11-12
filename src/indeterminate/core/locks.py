@@ -1,6 +1,6 @@
 """Per-project re-entrant locks: git and workflow operations on one project
-never overlap, whether they come from a request, a tool or the experiment
-monitor."""
+never overlap, whether they come from a request, a tool or a
+background monitor."""
 
 from __future__ import annotations
 

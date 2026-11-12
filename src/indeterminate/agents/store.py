@@ -65,7 +65,7 @@ class StoreMixin:
         return self.settings.raw().get("defaults", {})
 
     def load(self, pid: str) -> None:
-        """Load a project's agents once. Agents that were working when the workbench stopped continue
+        """Load a project's agents once. Agents that were working when the engine stopped continue
         automatically (setting ``auto_resume_agents``) or come back paused; unread messages are kept."""
         resume = []
         with self.guard:
@@ -101,7 +101,7 @@ class StoreMixin:
                         resume.append(st)
                     else:
                         rec["status"] = "paused"
-                        rec["hold"] = {"by": "system", "reason": "工作台重启后暂停，恢复后继续"}
+                        rec["hold"] = {"by": "system", "reason": "引擎重启后暂停，恢复后继续"}
                     self._save(st)
                 self.states[(pid, rec["id"])] = st
             self._restore_approvals(pid)
@@ -120,7 +120,7 @@ class StoreMixin:
         missing = [c for c in last.get("tool_calls") or [] if c["id"] not in answered]
         for c in missing:
             self._append_message(st, {"role": "tool", "tool_call_id": c["id"], "name": c["name"], "error": True,
-                                      "content": "已中断：工作台在执行这一步时重启了，请检查结果后视情况重新执行。"})
+                                      "content": "已中断：引擎在执行这一步时重启了，请检查结果后视情况重新执行。"})
 
     def resume_all(self) -> None:
         """Load every project at startup so interrupted agents continue without waiting for a page visit."""

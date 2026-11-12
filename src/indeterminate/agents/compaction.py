@@ -31,7 +31,7 @@ SUMMARY_PROMPT = ("你负责压缩 Agent 的工作记录。保留：任务与上
                   "目标与当前最好结果、未完成的事项、遇到的问题和已经排除的做法。删去过程性细节和工具输出原文。用中文，条目式，不超过 1000 字。")
 MERGE_PROMPT = ("下面是同一个 Agent 前后几次压缩得到的工作摘要，按时间先后排列。把它们合并成一份：保留全部仍然有效的要求、决定、文件、数字和未完成事项，"
                 "后面的内容推翻前面时以后面为准，删去重复。用中文，条目式，不超过 1500 字。")
-CLI_SUMMARY_PROMPT = ("【系统通知】对话很长了，工作台要为你开一个新会话。请先不要调用任何工具，直接用中文写一份工作摘要作为这一轮的回复："
+CLI_SUMMARY_PROMPT = ("【系统通知】对话很长了，引擎要为你开一个新会话。请先不要调用任何工具，直接用中文写一份工作摘要作为这一轮的回复："
                       "任务与上级/用户的要求、已做的决定和理由、已产出的文件路径、关键数字与结论（带出处）、目标与当前最好结果、"
                       "未完成的事项和下一步、遇到的问题和已经排除的做法。条目式，不超过 1500 字。新会话会带着这份摘要继续。")
 
@@ -134,7 +134,7 @@ class CompactionMixin:
         state = st.rec.get("cli") or {}
         if not state.get("session"):
             return False
-        # The CLI's own context (tool output included) is larger than what the workbench records of the turns, so
+        # The CLI's own context (tool output included) is larger than what the engine records of the turns, so
         # the size its last request reported counts first.
         if int(state.get("context") or 0) > self._context_limit():
             return True
@@ -181,7 +181,7 @@ class CompactionMixin:
         from . import cli
         if isinstance(runner, cli.CLIRunner):
             if not self.bridge_url:
-                raise AgentError("工作台没有提供 MCP 桥接地址")
+                raise AgentError("引擎没有提供 MCP 桥接地址")
             import secrets
 
             def server():

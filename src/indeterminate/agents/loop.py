@@ -61,7 +61,7 @@ class LoopMixin(KindLookup):
 
     @staticmethod
     def _actionable(st: AgentState) -> bool:
-        """System notices wait for the next real message (except a finished experiment); anything else needs attention."""
+        """System notices wait for the next real message (except a finished background run); anything else needs attention."""
         return any(i["channel"] != "system" or i.get("kind") in WAKING_NOTICES for i in st.inbox)
 
     def _after_idle(self, st: AgentState) -> None:
@@ -163,14 +163,14 @@ class LoopMixin(KindLookup):
 
     def _cli_turn(self, st: AgentState, runner: "cli.CLIRunner") -> None:
         """One CLI process per turn; the CLI keeps its own conversation (resumed by session id),
-        and acts only through the workbench tools (MCP bridge → _execute)."""
+        and acts only through the engine's tools (MCP bridge → _execute)."""
         pid = st.project_id
         state = st.rec.setdefault("cli", {"session": None, "sent": 0, "kind": runner.kind})
         while st.pending_turn:
             if not self._wait_if_paused(st) or not self._check_budget(st):
                 return
             if not self.bridge_url:
-                raise ProviderError("工作台没有提供 MCP 桥接地址，CLI Agent 无法使用工具")
+                raise ProviderError("引擎没有提供 MCP 桥接地址，CLI Agent 无法使用工具")
             if st.rec.pop("compact_requested", False) or self._cli_needs_fresh_session(st):
                 def server_for():
                     st.bridge_token = secrets.token_urlsafe(24)
@@ -242,7 +242,7 @@ class LoopMixin(KindLookup):
                 return
             if out.error and not out.text and resumed and len(st.messages) == before:
                 # The CLI could not resume its conversation (its session files are gone, e.g. on another machine or
-                # after a reinstall): start a new one with what the workbench recorded, instead of ending the turn.
+                # after a reinstall): start a new one with what the engine recorded, instead of ending the turn.
                 state["session"], state["sent"] = None, 0
                 self._append_message(st, {"role": "user", "content": "【系统通知】之前的会话无法续接，对话细节丢失了。"
                                           "先看你已经写下的文件和上面的任务，从那里接着做。"})
@@ -323,7 +323,7 @@ class LoopMixin(KindLookup):
         return on_text
 
     def _interrupted(self) -> str:
-        return "已中断：工作台正在关闭" if self.closing else "已取消：Agent 被停止"
+        return "已中断：引擎正在关闭" if self.closing else "已取消：Agent 被停止"
 
     def _check_budget(self, st: AgentState) -> bool:
         budget, usage = st.rec["budget"], st.rec["usage"]

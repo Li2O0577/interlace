@@ -7,7 +7,7 @@ and puts such an agent back on its feet: it restarts a dead thread, or wakes the
 inbox again (and goes idle if there is nothing to do). Each repair is logged as a notice.
 
 It also ends the pause of an agent the account's usage limit stopped (``hold.until``), once that time has
-passed, so a run continues on its own after the limit resets, also across a restart of the workbench.
+passed, so a run continues on its own after the limit resets, also across a restart of the engine.
 
 ``Watchdog`` is its own object: it reads the runtime's states and calls back only through the few runtime
 operations it needs (set a status, make sure a thread runs, emit a notice, schedule a project).

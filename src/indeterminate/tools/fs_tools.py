@@ -183,7 +183,7 @@ def _idle_wait(text: str) -> str:
 
 
 @tool("code.run", "运行代码", "在项目根目录下运行一段 Python 代码（或一条 shell 命令）并返回输出，最长 300 秒。"
-      "适合数据探索、快速试算；耗时的计算请用 exp.run 作为实验运行。",
+      "适合快速试算和检查；不适合长时间等待。",
       {"code": {"type": "string", "description": "Python 代码"}, "command": {"type": "string", "description": "或者一条 shell 命令"},
        "timeout": {"type": "integer"}}, dangerous=True)
 def code_run(ctx: ToolContext, code: str = "", command: str = "", timeout: int = 120):
@@ -192,8 +192,8 @@ def code_run(ctx: ToolContext, code: str = "", command: str = "", timeout: int =
     timeout = max(1, min(timeout, 300))
     idle = _idle_wait(code or command)
     if idle:
-        raise ToolError(f"不要在 code.run 里干等（{idle}）：后台在跑的计算用 exp.run 作为实验运行，"
-                        "等待期间先做别的（写解答概括、看已有结果、准备下一步），需要时用 exp.get 或 exp.log 查看进度。")
+        raise ToolError(f"不要在 code.run 里干等（{idle}）：需要等待时先做别的，"
+                        "或直接结束本轮。")
     limits = sandbox.config(ctx.settings.raw() if ctx.settings else None)
     if command:
         try:

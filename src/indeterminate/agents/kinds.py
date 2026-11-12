@@ -26,7 +26,7 @@ READ = ("fs.list", "fs.read", "fs.search")
 WRITE = ("fs.write", "fs.edit")
 CODE = ("code.run",)
 
-THINKING_TIERS = ("lead", "solver", "sub")   # which thinking setting applies: thinking_lead / _solver / _sub
+THINKING_TIERS = ("lead", "worker", "sub")   # which thinking setting applies: thinking_lead / _worker / _sub
 
 
 class KindError(ValueError):
@@ -77,7 +77,7 @@ class SubLead(Coordinator):
     role = "sublead"
     title = "次主控"
     tools = READ + WRITE + CODE
-    thinking = "solver"
+    thinking = "worker"
     skill_index = True
 
 

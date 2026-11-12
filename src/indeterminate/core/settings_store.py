@@ -1,4 +1,4 @@
-"""Global user settings (model providers, defaults), stored in ``~/.mch``.
+"""Global user settings (model providers, defaults), stored in ``~/.indeterminate``.
 
 API keys never leave the server in clear text: reads return a masked value,
 and writes that send the masked value back keep the stored key unchanged.
@@ -24,7 +24,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                  "lead_budget_tokens": 3_000_000, "sub_budget_tokens": 400_000,
                  "auto_resume_agents": True, "stream": True,
                  # thinking depth: default (the service decides) | low | medium | high; budgets are Anthropic thinking tokens
-                 "thinking_lead": "default", "thinking_sub": "default", "thinking_solver": "high",
+                 "thinking_lead": "default", "thinking_sub": "default", "thinking_worker": "high",
                  "thinking_budgets": {"low": 2048, "medium": 8000, "high": 24000}},
     "github": {"token": "", "user": ""},
     "hosts": [],
@@ -202,7 +202,7 @@ def _clean_host(raw: dict) -> dict:
         "id": str(raw.get("id") or secrets.token_hex(4)),
         "name": name, "host": host, "user": user, "port": port,
         "identity_file": str(raw.get("identity_file", "")).strip(),
-        "remote_root": str(raw.get("remote_root", "")).strip() or "~/mch-runs",
+        "remote_root": str(raw.get("remote_root", "")).strip() or "~/indeterminate-runs",
         "max_jobs": max_jobs,
         "ssh_command": str(raw.get("ssh_command", "")).strip() or "ssh",
     }

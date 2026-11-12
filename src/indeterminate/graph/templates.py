@@ -1,4 +1,4 @@
-"""Editable starter, not a confirmed plan or a competition preset."""
+"""Editable starter, not a confirmed plan."""
 
 
 def starter(task):

@@ -74,7 +74,7 @@ class EventLog:
         return event
 
     def broadcast(self, type: str, data: dict[str, Any] | None = None, source: str = "system") -> None:
-        """Send a short-lived event (e.g. live experiment progress) to open
+        """Send a short-lived event (e.g. live progress of a long run) to open
         connections without writing it to the log or giving it a seq."""
         event = {"seq": None, "ephemeral": True, "ts": time.time(), "type": type, "source": source, "data": finite(data or {})}
         self._deliver(event)

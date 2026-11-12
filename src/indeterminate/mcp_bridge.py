@@ -1,12 +1,12 @@
-"""MCP server that lets a CLI agent (Claude Code, Codex) use the workbench's tools.
+"""MCP server that lets a CLI agent (Claude Code, Codex) use the engine's tools.
 
 It runs as a stdio MCP server started by the CLI for one agent. Every tool call
-is forwarded to the running workbench (``/api/bridge/<project>/<agent>/…``),
+is forwarded to the running engine (``/api/bridge/<project>/<agent>/…``),
 so the agent's permissions, the user's approvals, the project layout rules,
 the event timeline and the budget all apply exactly as for API-driven agents.
 
     python -m indeterminate.mcp_bridge --url http://127.0.0.1:8765 --project P --agent A
-    (token in $MCH_BRIDGE_TOKEN)
+    (token in $INDETERMINATE_BRIDGE_TOKEN)
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ import os
 import sys
 import urllib.error
 import urllib.request
+
+from . import __version__
 
 PROTOCOL = "2025-06-18"
 
@@ -37,7 +39,7 @@ class Bridge:
 
     def _request(self, path: str, body: dict | None = None, timeout: float = 30):
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(self.base + path, data, {"X-MCH-Bridge": self.token, "Content-Type": "application/json"},
+        req = urllib.request.Request(self.base + path, data, {"X-Indeterminate-Bridge": self.token, "Content-Type": "application/json"},
                                      method="POST" if body is not None else "GET")
         try:
             with self.opener.open(req, timeout=timeout) as r:
@@ -48,9 +50,9 @@ class Bridge:
                 detail = json.loads(detail).get("detail", detail)
             except ValueError:
                 pass
-            raise RuntimeError(f"工作台拒绝了请求（{exc.code}）：{detail}") from exc
+            raise RuntimeError(f"引擎拒绝了请求（{exc.code}）：{detail}") from exc
         except OSError as exc:
-            raise RuntimeError(f"连接不到工作台：{exc}") from exc
+            raise RuntimeError(f"连接不到引擎：{exc}") from exc
 
     def tools(self) -> list[dict]:
         return self._request("/tools")["tools"]
@@ -69,8 +71,8 @@ def handle(bridge: Bridge, msg: dict) -> dict | None:
         if method == "initialize":
             client = (msg.get("params") or {}).get("protocolVersion") or PROTOCOL
             result = {"protocolVersion": client, "capabilities": {"tools": {"listChanged": False}},
-                      "serverInfo": {"name": "mch", "title": "未定式工作台", "version": "0.1"},
-                      "instructions": "这些是工作台的工具：文件、流程、实验、Git、想法与决策、子 Agent 等。所有工作都通过它们完成。"}
+                      "serverInfo": {"name": "1ndeterminate", "version": __version__},
+                      "instructions": "这些是引擎为你开放的工具，所有工作都通过它们完成。"}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -113,7 +115,7 @@ def main() -> None:
     parser.add_argument("--project", required=True)
     parser.add_argument("--agent", required=True)
     args = parser.parse_args()
-    serve(Bridge(args.url, args.project, args.agent, os.environ.get("MCH_BRIDGE_TOKEN", "")))
+    serve(Bridge(args.url, args.project, args.agent, os.environ.get("INDETERMINATE_BRIDGE_TOKEN", "")))
 
 
 if __name__ == "__main__":

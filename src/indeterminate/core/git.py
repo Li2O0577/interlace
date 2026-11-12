@@ -1,6 +1,6 @@
 """Git operations on a project folder.
 
-Every project is a git repository. The workbench uses it for:
+Every project is a git repository. The engine uses it for:
 - automatic commits after each state change (full history, diff, rollback);
 - checkpoints: annotated tags ``cp-NNNN`` carrying JSON metadata (which
   workflow node, why). Tags survive restores, so a backtrack can be undone;
@@ -21,8 +21,8 @@ LOCAL_TIMEOUT = 60
 NETWORK_TIMEOUT = 180
 MAX_DIFF_CHARS = 200_000
 
-SYSTEM_AUTHOR = ("MCH", "mch@localhost")
-HUMAN_AUTHOR = ("Human", "human@mch.local")
+SYSTEM_AUTHOR = ("1ndeterminate", "system@1ndeterminate.local")
+HUMAN_AUTHOR = ("Human", "human@1ndeterminate.local")
 
 
 class GitError(Exception):
@@ -38,7 +38,7 @@ def author_for(actor: str) -> tuple[str, str]:
         return HUMAN_AUTHOR
     if actor in ("", "system"):
         return SYSTEM_AUTHOR
-    return (f"MCH Agent ({actor})", f"{re.sub(r'[^a-zA-Z0-9_.-]', '-', actor)}@agent.mch.local")
+    return (f"Agent ({actor})", f"{re.sub(r'[^a-zA-Z0-9_.-]', '-', actor)}@agent.1ndeterminate.local")
 
 
 class GitRepo:
@@ -162,7 +162,7 @@ class GitRepo:
         self.run("add", "-A")
         if not self.run("diff", "--cached", "--name-only").strip() and self.has_commits():
             return None
-        # The workbench checks the file layout itself; the pre-commit hook is for
+        # The engine checks the file layout itself; the pre-commit hook is for
         # commits made outside it (VS Code, terminal).
         self.run("commit", "-q", "--no-verify", "--allow-empty-message", "-m", message, author=author_for(actor))
         return self.head()

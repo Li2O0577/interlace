@@ -1,5 +1,5 @@
-"""Loaded automatically by Python processes that the workbench starts for project code
-(see mch/core/sandbox.py). Refuses writes outside the allowed folders and, if configured,
+"""Loaded automatically by Python processes that the engine starts for project code
+(see core/sandbox.py). Refuses writes outside the allowed folders and, if configured,
 network connections. Kept dependency-free and fast: it runs on every file open."""
 
 import os
@@ -7,10 +7,10 @@ import sys
 
 
 def _install():
-    roots = [os.path.realpath(r) for r in os.environ.get("MCH_SANDBOX_ROOTS", "").split(os.pathsep) if r]
+    roots = [os.path.realpath(r) for r in os.environ.get("INDETERMINATE_SANDBOX_ROOTS", "").split(os.pathsep) if r]
     if not roots:
         return
-    allow_net = os.environ.get("MCH_SANDBOX_NET", "1") == "1"
+    allow_net = os.environ.get("INDETERMINATE_SANDBOX_NET", "1") == "1"
     devices = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/shm", "/dev/fd", "/proc/self")
     WRITE = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
     realpath, fspath, isinstance_, str_, bytes_ = os.path.realpath, os.fspath, isinstance, str, bytes
@@ -33,7 +33,7 @@ def _install():
         return False
 
     def deny(path):
-        raise PermissionError(f"[MCH 代码执行限制] 不允许修改项目文件夹以外的位置：{path}")
+        raise PermissionError(f"[代码执行限制] 不允许修改项目文件夹以外的位置：{path}")
 
     def hook(event, args):
         if event == "open":
@@ -62,7 +62,7 @@ def _install():
                 return   # a local (unix) socket
             if isinstance_(address, tuple) and address and address[0] in ("127.0.0.1", "::1", "localhost"):
                 return
-            raise PermissionError("[MCH 代码执行限制] 已禁止代码联网（设置 → 代码执行）；下载数据请用 data.download")
+            raise PermissionError("[代码执行限制] 已禁止代码联网")
 
     sys.addaudithook(hook)
 

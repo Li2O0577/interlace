@@ -12,10 +12,10 @@ def main(argv=None):
     for stream in (sys.stdin,sys.stdout,sys.stderr):
         if hasattr(stream,'reconfigure'):
             stream.reconfigure(encoding='utf-8')
-    parser=argparse.ArgumentParser(prog='1ndeterminate',description='Hyperplan 通用图任务引擎；stdio 连接关闭会停止本进程工作')
-    home=Path(os.environ.get('MCH_HOME',Path.home()/'.mch'))
+    parser=argparse.ArgumentParser(prog='1ndeterminate',description='1ndeterminate 通用图编排引擎；stdio 连接关闭会停止本进程工作')
+    home=Path(os.environ.get('INDETERMINATE_HOME',Path.home()/'.indeterminate'))
     parser.add_argument('--home',type=Path,default=home,help='提供器设置目录，不放入项目')
-    parser.add_argument('--workspace',type=Path,default=Path(os.environ.get('MCH_WORKSPACE',home/'workspace')))
+    parser.add_argument('--workspace',type=Path,default=Path(os.environ.get('INDETERMINATE_WORKSPACE',home/'workspace')))
     sub=parser.add_subparsers(dest='command',required=True)
     server=sub.add_parser('serve',help='进程内 stdio MCP 服务，非后台守护服务')
     server.add_argument('--demo',action='store_true',help='显式使用 FakeProvider 模拟；不调用外部模型。建议使用独立工作区')
@@ -39,7 +39,7 @@ def main(argv=None):
             from .daemon import Engine
             from .server import serve
             with Engine(args.workspace,args.home,demo=args.demo) as engine:
-                print('Hyperplan '+engine.mode+'; stdio EOF stops this engine.',file=sys.stderr,flush=True)
+                print('1ndeterminate '+engine.mode+'; stdio EOF stops this engine.',file=sys.stderr,flush=True)
                 serve(engine)
             return
         if args.command=='pending':

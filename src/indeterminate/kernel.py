@@ -151,7 +151,7 @@ class Kernel:
         except json.JSONDecodeError:
             raise DamagedError(f'项目 {pid} 的 project.json 损坏，停止处理该项目') from None
         root=self.store.path(pid)
-        require(isinstance(meta,dict) and meta.get('mode')=='graph','独立入口初版只调度 graph 项目；比赛和旧自由项目使用网页入口')
+        require(isinstance(meta,dict) and meta.get('mode')=='graph','只调度 graph 项目')
         marker=root/'state/harness-mode.json'
         try:
             mode=json.loads(marker.read_text(encoding='utf-8'))['mode'] if marker.exists() else 'configured-provider'
@@ -390,7 +390,7 @@ class Kernel:
                     match=re.fullmatch(r'/api/bridge/([a-z0-9-]+)/([a-z0-9-]+)/(tools|call)',self.path)
                     require(match is not None,'未知桥接地址')
                     pid,aid,action=match.groups()
-                    token=self.headers.get('X-MCH-Bridge','')
+                    token=self.headers.get('X-Indeterminate-Bridge','')
                     tools=manager.bridge_tools(pid,aid,token)
                     require(post==(action=='call'),'请求方法不匹配')
                     if post:

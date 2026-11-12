@@ -27,7 +27,7 @@ class ConversationMixin(KindLookup):
         d = self._defaults()
         # Agents that solve and check the math think hard by default: a framework must not make them shallower.
         key = "thinking_" + self.kind(st).thinking
-        level = d.get(key, "high" if key == "thinking_solver" else "default")
+        level = d.get(key, "high" if key == "thinking_worker" else "default")
         return level if level in THINKING_LEVELS else "default"
 
     def _thinking_budgets(self) -> dict:

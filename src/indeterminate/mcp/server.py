@@ -108,7 +108,7 @@ class Server:
                     raise ProtocolError(-32602,'需要 protocolVersion/capabilities/clientInfo')
                 self.negotiated=True
                 result={'protocolVersion':PROTOCOL,'capabilities':{'tools':{'listChanged':False}},
-                    'serverInfo':{'name':'hyperplan-harness','version':__version__},
+                    'serverInfo':{'name':'1ndeterminate','version':__version__},
                     'instructions':f'运行模式：{self.engine.mode}。内部 lead 保持主控；外部工具不能批准计划或代替主控放行。操作者使用单独本地 CLI。'}
             elif method=='ping':
                 result={}

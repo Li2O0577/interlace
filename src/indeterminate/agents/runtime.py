@@ -61,7 +61,7 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
         self.kinds = (kinds if kinds is not None else agent_kinds.DEFAULT).copy()
         for role, names in (roles or {}).items():
             self.kinds.register(agent_kinds.define(role, names))
-        self.bridge_url = ""  # where CLI agents' MCP bridge reaches this workbench (set by the app)
+        self.bridge_url = ""  # where CLI agents' MCP bridge reaches this engine (set by the host)
         self.store = store
         self.settings = settings
         self.events_for = events_for

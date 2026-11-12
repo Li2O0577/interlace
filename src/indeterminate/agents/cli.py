@@ -1,10 +1,10 @@
 """CLI agent runners: Claude Code and Codex drive the agent loop themselves,
-while every action goes through the workbench's tools (MCP bridge).
+while every action goes through the engine's tools (MCP bridge).
 
 A runner starts one CLI process per turn (resuming the CLI's own session on
 later turns), streams its JSON events, and reports text, tool activity and
 usage back to the runtime. The CLIs' built-in tools are switched off where the
-CLI allows it, so files, code and experiments are handled by the workbench —
+CLI allows it, so files and code are handled by the engine —
 with its permissions, approvals, layout rules and timeline.
 """
 
@@ -24,7 +24,7 @@ from typing import Callable
 
 from .providers import ProviderError
 
-MCP_PREFIX = "mcp__mch__"
+MCP_PREFIX = "mcp__indeterminate__"
 
 
 @dataclass
@@ -42,7 +42,7 @@ class CLIOutcome:
 
 @dataclass
 class MCPServer:
-    """How the CLI starts the workbench MCP server for this agent."""
+    """How the CLI starts the engine's MCP bridge for this agent."""
     command: str
     args: list[str]
     env: dict[str, str] = field(default_factory=dict)
@@ -50,14 +50,14 @@ class MCPServer:
 
 def bridge_server(url: str, project: str, agent: str, token: str) -> MCPServer:
     backend = str(Path(__file__).resolve().parents[2])
-    env={'MCH_BRIDGE_TOKEN':token,'PYTHONPATH':backend,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8'}
+    env={'INDETERMINATE_BRIDGE_TOKEN':token,'PYTHONPATH':backend,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8'}
     if os.name=='nt' and os.environ.get('SystemRoot'):
         env['SystemRoot']=os.environ['SystemRoot']  # Required by Windows SSL initialization, not a credential.
     return MCPServer(sys.executable, ["-m", "indeterminate.mcp_bridge", "--url", url, "--project", project, "--agent", agent],
                      env)
 
 
-# When the workbench itself runs inside a Claude Code session (a terminal in Claude Code, a cloud session), the CLIs
+# When the engine itself runs inside a Claude Code session (a terminal in Claude Code, a cloud session), the CLIs
 # it starts would inherit that session: its memory stores, extra directories, skill sync, background-task behaviour
 # (a long MCP call moved to the background after 120 s ends the agent's turn while the tool keeps running) and, in a
 # cloud session, its session id (CLAUDE_CODE_REMOTE_SESSION_ID): every agent then resumes one shared conversation and
@@ -71,7 +71,7 @@ KEPT_NAMES = {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE
 
 
 def agent_env(base: dict, extra: dict) -> dict:
-    """The environment for a CLI agent: the workbench's own, minus what belongs to an enclosing Claude session."""
+    """The environment for a CLI agent: the engine's own, minus what belongs to an enclosing Claude session."""
     env = {k: v for k, v in base.items()
            if k in KEPT_NAMES or (k not in INHERITED_NAMES and not k.startswith(INHERITED_PREFIXES))}
     return {**env, 'PYTHONUTF8':'1', 'PYTHONIOENCODING':'utf-8', **extra}
@@ -117,8 +117,8 @@ def limit_reset(text: str, now: float) -> float:
     return reset.timestamp() + 60
 
 
-def workbench_tool(name: str) -> str:
-    """mcp__mch__fs__read → fs.read"""
+def bridge_tool(name: str) -> str:
+    """mcp__indeterminate__fs__read → fs.read"""
     return (name[len(MCP_PREFIX):] if name.startswith(MCP_PREFIX) else name).replace("__", ".")
 
 
@@ -249,11 +249,11 @@ class ClaudeCodeRunner(CLIRunner):
                 pass
 
     def argv(self, prompt, system, session, mcp, workdir):
-        config = {"mcpServers": {"mch": {"type": "stdio", "command": mcp.command, "args": mcp.args, "env": mcp.env}}}
+        config = {"mcpServers": {"indeterminate": {"type": "stdio", "command": mcp.command, "args": mcp.args, "env": mcp.env}}}
         argv = [*self.command, "-p", prompt, "--output-format", "stream-json", "--verbose",
-                "--tools", "",                         # no built-in tools: everything goes through the workbench
+                "--tools", "",                         # no built-in tools: everything goes through the engine
                 "--mcp-config", json.dumps(config, ensure_ascii=False), "--strict-mcp-config",
-                "--allowedTools", "mcp__mch",          # the workbench does its own permission checks and approvals
+                "--allowedTools", "mcp__indeterminate",          # the engine does its own permission checks and approvals
                 "--setting-sources", "",
                 "--append-system-prompt", system]
         if self.model and self.model not in ("default", "-"):
@@ -271,7 +271,7 @@ class ClaudeCodeRunner(CLIRunner):
         import tempfile
         from .providers import ChatResult
         ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(mime, ".png")
-        with tempfile.TemporaryDirectory(prefix="mch-see-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="indeterminate-see-") as tmp:
             (Path(tmp) / f"image{ext}").write_bytes(image)
             argv = [*self.command, "-p", f"先用 Read 打开当前目录下的 image{ext}，再回答：\n\n{prompt}",
                     "--output-format", "json", "--tools", "Read", "--allowedTools", "Read",
@@ -304,7 +304,7 @@ class ClaudeCodeRunner(CLIRunner):
         elif t == "assistant":
             msg = event.get("message") or {}
             text = "".join(b.get("text", "") for b in msg.get("content", []) if b.get("type") == "text")
-            calls = [{"id": b.get("id"), "name": workbench_tool(b.get("name", "")), "args": b.get("input") or {}}
+            calls = [{"id": b.get("id"), "name": bridge_tool(b.get("name", "")), "args": b.get("input") or {}}
                      for b in msg.get("content", []) if b.get("type") == "tool_use"]
             if text or calls:
                 emit("assistant", {"text": text, "tool_calls": calls})
@@ -348,9 +348,9 @@ class CodexRunner(CLIRunner):
     def argv(self, prompt, system, session, mcp, workdir):
         def toml(v):
             return json.dumps(v, ensure_ascii=False)
-        cfg = ["-c", f"mcp_servers.mch.command={toml(mcp.command)}", "-c", f"mcp_servers.mch.args={toml(mcp.args)}",
-               "-c", "mcp_servers.mch.env={" + ", ".join(f"{k} = {toml(v)}" for k, v in mcp.env.items()) + "}",
-               "-c", "mcp_servers.mch.tool_timeout_sec=21600", "-c", 'approval_policy="never"']
+        cfg = ["-c", f"mcp_servers.indeterminate.command={toml(mcp.command)}", "-c", f"mcp_servers.indeterminate.args={toml(mcp.args)}",
+               "-c", "mcp_servers.indeterminate.env={" + ", ".join(f"{k} = {toml(v)}" for k, v in mcp.env.items()) + "}",
+               "-c", "mcp_servers.indeterminate.tool_timeout_sec=21600", "-c", 'approval_policy="never"']
         model = ["-m", self.model] if self.model and self.model not in ("default", "-") else []
         if session:
             return [*self.command, "exec", "resume", session, "--json", *cfg, *model, prompt]
@@ -368,7 +368,7 @@ class CodexRunner(CLIRunner):
                 out.text = item.get("text", "")
                 emit("assistant", {"text": out.text, "tool_calls": []})
             elif kind == "mcp_tool_call":
-                call = {"id": item.get("id"), "name": workbench_tool(str(item.get("tool", ""))),
+                call = {"id": item.get("id"), "name": bridge_tool(str(item.get("tool", ""))),
                         "args": item.get("arguments") or {}}
                 emit("assistant", {"text": "", "tool_calls": [call]})
                 result = item.get("result") or {}
@@ -394,8 +394,8 @@ def build(provider: dict, model: str) -> CLIRunner:
     return RUNNERS[provider["type"]](provider.get("command", ""), model)
 
 
-CLI_NOTE = """## 你通过工作台的工具工作
-你运行在 Claude Code / Codex 中，但这里只开放了工作台的工具（名字形如 mcp__mch__fs__read，对应工作台的 fs.read）。
-读写文件、运行代码和实验、推进流程、派生子 Agent、汇报，都用这些工具完成；不要尝试别的途径。
+CLI_NOTE = """## 你通过引擎的工具工作
+你运行在 Claude Code / Codex 中，但这里只开放了引擎的工具（名字形如 mcp__indeterminate__fs__read，对应 fs.read）。
+读写文件、运行代码、推进流程、派生子 Agent、汇报，都用这些工具完成；不要尝试别的途径。
 - 你写下的每一段文字用户都能看到，一律用中文，包括调用工具前顺手写的说明。
-- 不要在代码里 sleep 等待：长任务用 exp.run（或后台实验）跑，等结果时直接结束本轮，结果会作为通知送回来。"""
+- 不要在代码里 sleep 等待：需要等待时直接结束本轮，结果会作为通知送回来。"""

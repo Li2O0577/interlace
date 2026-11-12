@@ -1,4 +1,4 @@
-"""Real engine threads + FakeProvider; no FastAPI, workbench preset or remote model."""
+"""Real engine threads + FakeProvider; no web framework or remote model."""
 import os
 from pathlib import Path
 import subprocess
@@ -12,7 +12,7 @@ from pathlib import Path
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
         if any(fullname == n or fullname.startswith(n+'.') for n in (
-            'mch','fastapi','uvicorn','pypdf','openpyxl','psutil')):
+            'fastapi','uvicorn','pypdf','openpyxl','psutil')):
             raise RuntimeError('unexpected domain import: '+fullname)
 sys.meta_path.insert(0,Block())
 from indeterminate.agents.runtime import AgentManager
@@ -73,7 +73,6 @@ wait('inspector')
 assert 'delivery' not in runtime.run.state()['by_node']
 manager.run_tool(pid,'graph.release',{'block':'work','round':1,'note':'内部主控检查后放行'},'lead')
 wait('delivery')
-assert not [m for m in sys.modules if m == 'mch' or m.startswith('mch.')]
 assert all(not a.rec.get('error') for a in manager._project_states(pid))
 manager.shutdown()
 print('fake-provider standalone task completed: '+task)
@@ -81,7 +80,7 @@ print('fake-provider standalone task completed: '+task)
 
 
 @pytest.mark.parametrize('task',['整理代码并核对说明','审查资料并标明信息来源'])
-def test_generic_tasks_run_without_workbench_or_web(tmp_path,task):
+def test_generic_tasks_run_without_a_web_host(tmp_path,task):
     result=subprocess.run([sys.executable,'-X','utf8','-c',SCRIPT,str(tmp_path),task],capture_output=True,text=True,
         encoding='utf-8',env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')},timeout=40)
     assert result.returncode==0,result.stdout+'\n'+result.stderr

@@ -1,4 +1,4 @@
-"""The kernel is its own distribution: standard library only, and never the application."""
+"""The kernel is its own distribution: standard library only."""
 import ast
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ BLOCK = '''
 import importlib.abc, sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        if fullname.split('.')[0] in ('mch','fastapi','uvicorn','starlette','pydantic','pypdf','openpyxl','psutil',
+        if fullname.split('.')[0] in ('fastapi','uvicorn','starlette','pydantic','pypdf','openpyxl','psutil',
                                       'numpy','pandas','matplotlib'):
             raise RuntimeError('the kernel reached outside itself: '+fullname)
 sys.meta_path.insert(0,Block())
@@ -26,7 +26,7 @@ def imported(tree):
             yield node.lineno, node.level, [node.module or '']
 
 
-def test_no_module_imports_the_application_or_a_third_party_package():
+def test_no_module_imports_a_third_party_package():
     """Every import statement in the package, including the ones inside functions."""
     failures = []
     for path in PACKAGE.rglob('*.py'):
@@ -42,23 +42,13 @@ def test_no_module_imports_the_application_or_a_third_party_package():
     assert not failures, '\n'.join(failures)
 
 
-def test_no_source_names_an_application_module_path():
-    """Subprocess commands and dynamic imports are strings: none may point back at the application."""
-    hits = []
-    for path in PACKAGE.rglob('*.py'):
-        for number, text in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-            if any(mark in text for mark in ('"mch.', "'mch.", 'import mch\n', '-m mch ', 'from mch ')):
-                hits.append(f'{path.relative_to(SRC)}:{number}: {text.strip()[:100]}')
-    assert not hits, '\n'.join(hits)
-
-
 def run(script, cwd):
     return subprocess.run([sys.executable, '-X', 'utf8', '-c', BLOCK + script], capture_output=True, text=True,
                           encoding='utf-8', cwd=cwd, timeout=30,
                           env={k: v for k, v in os.environ.items() if k != 'PYTHONPATH'} | {'PYTHONPATH': str(SRC)})
 
 
-def test_engine_imports_with_the_application_and_its_dependencies_blocked(tmp_path):
+def test_engine_imports_with_third_party_packages_blocked(tmp_path):
     result = run('''
 import indeterminate
 from indeterminate import Kernel, HostAdapters, Extension, TaskType
@@ -70,7 +60,6 @@ import indeterminate.mcp_bridge
 from indeterminate.tools import registry
 registry.load_generic()
 assert {'fs.read','fs.write','graph.view','graph.publish'} <= registry.TOOLS.keys()
-assert not [m for m in sys.modules if m == 'mch' or m.startswith('mch.')]
 print('kernel imported', indeterminate.__version__)
 ''', tmp_path)
     assert result.returncode == 0, result.stderr

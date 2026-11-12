@@ -1,6 +1,6 @@
 """Run with a clean environment's Python after installing ONLY the 1ndeterminate wheel.
 
-Checks that the kernel works without the application: no ``mch`` package, no FastAPI, no source checkout.
+Checks that the kernel works on its own: no web framework, no source checkout.
 SIMULATION only: the stdio demo and the example use scripted fake models.
 """
 import argparse
@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
     import indeterminate
     assert 'site-packages' in str(Path(indeterminate.__file__).resolve()), 'smoke must import the installed wheel'
-    for absent in ('mch', 'fastapi', 'uvicorn'):
+    for absent in ('fastapi', 'uvicorn'):
         assert importlib.util.find_spec(absent) is None, f'{absent} must not be installed with the kernel alone'
     for name in indeterminate.__all__[1:]:
         getattr(indeterminate, name)

@@ -185,7 +185,7 @@ class TeamMixin(KindLookup):
 
     def _formal_name(self, pid: str, name: str, role: str) -> str:
         """A plain, formal display name: no emoji or decoration, the role name when none is given, and a
-        number when the same name is already taken in the project (建模师、建模师 2 …)."""
+        number when the same name is already taken in the project (检查员、检查员 2 …)."""
         title = self.kinds.title(role)
         base = clean_name(name)
         base = title if not base or base == title else base if base.startswith(title) else f"{title}·{base}"
@@ -499,7 +499,7 @@ class TeamMixin(KindLookup):
         if self.hooks.always_ask(name):
             return True
         if name == "code.run" and installs_packages(params):
-            return True   # changes the workbench's own environment: always the user's call, whatever the mode
+            return True   # changes the engine's own environment: always the user's call, whatever the mode
         if tool is None or tool.readonly or self._always_allowed(pid, st, name):
             return False
         autonomy = self.store.get(pid).get("autonomy", "checkpoints")
@@ -568,12 +568,12 @@ class TeamMixin(KindLookup):
                     result = f"已派出「{out['name']}」（{out['id']}）"
                 else:
                     result = str(self.run_tool(pid, approval.tool, approval.params, approval.agent))[:1500]
-                text = (f"【系统通知】工作台重启前你申请的 {approval.tool} 已经获得用户批准，系统已替你执行（不要重复执行）。结果：{result}")
+                text = (f"【系统通知】引擎重启前你申请的 {approval.tool} 已经获得用户批准，系统已替你执行（不要重复执行）。结果：{result}")
             except Exception as exc:  # noqa: BLE001
-                text = f"【系统通知】工作台重启前你申请的 {approval.tool} 已获批准，但替你执行时出错：{exc}。请检查后决定是否重新执行。"
+                text = f"【系统通知】引擎重启前你申请的 {approval.tool} 已获批准，但替你执行时出错：{exc}。请检查后决定是否重新执行。"
         else:
             why = f"（理由：{approval.reason}）" if approval.reason else ""
-            text = f"【系统通知】工作台重启前你申请的 {approval.tool} 被用户拒绝了{why}。不要换方式绕过，请调整方案。"
+            text = f"【系统通知】引擎重启前你申请的 {approval.tool} 被用户拒绝了{why}。不要换方式绕过，请调整方案。"
         if st.rec["status"] not in ("stopped",):
             self._deliver(st, {"from": "system", "channel": "human", "kind": "notice", "text": text})
 
