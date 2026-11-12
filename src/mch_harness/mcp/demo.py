@@ -31,7 +31,10 @@ def factory(engine):
                     break
             return ChatResult('SIMULATION：等待主控验收；无真实模型调用。',[])
         node,_,number=match.groups()
-        done={c['name'] for m in messages for c in m.get('tool_calls',[])}
+        # A step counts as done only when its result came back without error: a call cut short by a restart
+        # (or refused) is tried again, so a killed engine resumes the same steps instead of skipping one.
+        ok={m.get('tool_call_id') for m in messages if m.get('role')=='tool' and not m.get('error')}
+        done={c['name'] for m in messages for c in m.get('tool_calls',[]) if c.get('id') in ok}
         ref=f'nodes/{node}/r{number}/work/result.md'
         for name,args in [('fs.write',{'path':ref,'content':f'SIMULATION：{node} r{number} 演示交付；未调用模型。'}),
             ('graph.save_state',{'content':STATE_TEMPLATE}),
