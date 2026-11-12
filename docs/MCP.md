@@ -1,8 +1,6 @@
 # Hyperplan 独立 MCP 入口（初版）
 
-同一仓库有两个入口：`mch` 是带比赛预设的建模网页工作台；`mch-harness` 是不启动网页、不注册比赛预设的通用图引擎。两者复用 `AgentManager`、图调度和项目文件。当前仍发布一个 `mch` Python 包，尚未拆成不含 FastAPI 依赖的独立发行包。
-
-**后续抽离尚未实施。** 操作者已将下一阶段交给其他实施者；本轮只完成[内核抽离、依赖清理与第三方接入交接计划](superpowers/plans/2026-11-10-kernel-extraction-handoff.md)。计划中的 `mch_harness` 模块、独立 `mch-harness` 发行包和公共扩展 API 都是拟实现目标，不能当作下文当前启动命令已经具备的能力。
+同一仓库发布两个包：`mch-harness`（`packages/harness/`，模块 `mch_harness`）是只用标准库的通用编排内核，带本页的 stdio MCP 服务；`mch`（`backend/mch/`）是依赖它的建模网页工作台。工作台不复制内核代码，旧模块名只是指向内核同一模块的别名。内核的分层、智能体类、节点协议与第三方接入见 [内核说明](../packages/harness/README.md)，可运行示例在 `examples/harness_extension/`。
 
 本页描述已经实现的最小默认。进程内 stdio、仅本地 CLI 审批、单工作区单引擎、协议版本、自动文件模式映射都属于可替换假设；不把它们写成操作者已确认的新规则。
 
@@ -13,6 +11,7 @@
 ```sh
 uv sync --frozen --group dev
 uv run mch-harness --workspace ./workspace --home ./.mch serve
+# 或只装内核：uv build --package mch-harness -o dist/kernel，再在干净环境安装该 wheel
 ```
 
 这是 MCP stdio 端点，应由兼容客户端启动并连接 stdin/stdout。直接在终端启动时不会打开浏览器，也不会把当前宿主对话设为主控。诊断只写 stderr。初版实现 MCP **2025-11-25** 的初始化、ping、tools/list、tools/call、stdio 换行 JSON；没有实现 2026-07-28 新生命周期，也没有 resources/prompts/elicitation/HTTP 外部传输。[初始化约定](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)、[stdio 约定](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)、[工具协议](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)。
@@ -58,6 +57,8 @@ Windows 使用虚拟环境的 `Scripts/mch-harness.exe`。只提供说明，不�
 
 图定义支持每节点 `model` 与 `thinking`（default/low/medium/high），任务块支持 `coordinator` 指向图内次主控。内部协调者获得 `graph.block_status` 和 `graph.request_review`，外部 MCP 工具清单仍为上表 8 个；不会因外部连接而取得协调者或总主控身份。完整示例和边界见 [GRAPH.md](GRAPH.md)。
 
+参数长度上限写在工具的 `inputSchema` 里：`name` 200 字符，`task` 与 `instruction` 50000 字符，`request_id` 256 字符，`project` 128 字符，`path` 1024 字符，`proposal` 序列化后 256 KiB；含无法编码字符（孤立代理项）的参数直接拒绝。一行消息最多 4 MiB。超限、非 UTF-8、无法解析或嵌套过深的消息都只得到 JSON-RPC 错误，连接保持。
+
 `request_id` 是调用方提供的稳定 ID（最长 256 字符）。同 ID、同参数重试返回已持久化结果；同 ID 不同参数拒绝。执行前预留、返回前记录结果；中断时尚无确定结果的预留拒绝自动重放，先检查现有项目与 `.harness-requests/` 记录。此机制防止自动重试重复创建，**不承诺跨文件事务、模型消息恰好执行一次或在外部命令崩溃后自动回滚**。
 
 ## 操作者确认和审批
@@ -84,7 +85,7 @@ mch-harness --workspace /absolute/workspace resume PROJECT AGENT_ID --reason "�
 {"schema":1,"id":"24位十六进制ID","command":"confirm","args":{"project":"PROJECT","hash":"SHA256"},"status":"pending","created":0}
 ```
 
-结果在同一记录增加 `result` 或 `error`。队列位于工作区 `.harness-control/`，不在节点目录。拥有同等 shell/磁盘权限的程序仍可能写此队列；这不是技术上证明“只有人能批准”的身份隔离。独立操作者认证尚未接入。目录/prompt/代码扫描也不提供 OS 级文件隔离。
+结果在同一记录增加 `result` 或 `error`。无法读取的队列记录不会阻止引擎启动：原文件改名为 `*.json.corrupt` 保留，原位置写入 `failed` 记录。队列位于工作区 `.harness-control/`，不在节点目录。拥有同等 shell/磁盘权限的程序仍可能写此队列；这不是技术上证明“只有人能批准”的身份隔离。独立操作者认证尚未接入。目录/prompt/代码扫描也不提供 OS 级文件隔离。
 
 ## 一次完整模拟演示
 
@@ -109,16 +110,20 @@ uv run mch-harness --workspace ./.mch/demo-workspace --home ./.mch/demo-home ser
 可直接复跑验证：
 
 ```sh
-uv run pytest backend/tests/test_harness_mcp.py backend/tests/test_harness_protocol.py backend/tests/test_harness_service.py -q
-uv build
-# 在干净环境安装 dist/ 下的 wheel 后，以该环境 Python 执行：
+uv run pytest packages/harness/tests -q
+uv build --package mch-harness -o dist/kernel && uv build --package mch -o dist/app
+# 干净环境 A 只装内核 wheel：
+python scripts/kernel_package_smoke.py --example examples/harness_extension
+# 干净环境 B 装内核与应用两个 wheel：
 python scripts/package_smoke.py
 ```
 
 ## 生命周期和仍待验证的设计
 
-stdin EOF/宿主关闭会停止本进程内工作，不是后台常驻服务。已发出的 API 请求可能等返回，外部脱离进程的程序不保证随之停止。项目/会话/审批落盘；新连接按原引擎恢复策略续接，丢失的工具结果标记中断，不假定旧模型还存活。已由主控明确结束的图实例不复用旧会话，需要 `graph.wake` 新轮次，并核查 state 与现行授权。
+stdin EOF/宿主关闭会停止本进程内工作，不是后台常驻服务。已发出的 API 请求可能等返回，外部脱离进程的程序不保证随之停止。项目/会话/审批落盘；新连接按原引擎恢复策略续接，丢失的工具结果标记中断，不假定旧模型还存活。已由主控明确结束的图实例不复用旧会话，需要 `graph.wake` 新轮次，并核查 state 与现行授权。进程被强制终止（SIGKILL）后用同一工作区重启即可续接，已启动的轮次不会重复启动。
+
+某个项目的状态文件损坏（`state/graph.json`、`project.json`、`state/harness-mode.json`）时只停止该项目，并给出损坏文件名；`project.list` 仍列出它并带 `error`。`request_id` 的记录损坏时拒绝重放，需要人工核对。
 
 正式文件更新、已结束节点重启、获批局部改图的最小处理保留旧历史并阻止下游新启动，待 human/lead 复核；这是**待真实任务验证的设计**。主控额外 state 恢复仍为可选建议。自动文件模式暂映射 `autonomy=full`，只读授权沿用 `graph.runtime.DEFAULT_AUTH`；非自动模式不创建 keeper。keeper 按具体文件决策，由程序记录，不进图。
 
-当前只维护既有 harness 分支；其他分支与 Release 不在本次范围。CI 构建同一包并在干净环境验证两个入口。`scripts/package_smoke.py` 验证安装后的前端、模板、内置知识以及独立 stdio；全量测试另含真实 Chrome 的网页验证。已安装包默认运行数据写到使用者 home/workspace，不向安装目录写项目。
+当前只维护既有 harness 分支；其他分支与 Release 不在本次范围。CI 分别构建两个包，在两个干净环境中验证：只装内核时运行 stdio 服务和第三方示例；内核加应用时运行网页与 stdio。`scripts/package_smoke.py` 验证安装后的前端、模板、内置知识以及独立 stdio；全量测试另含真实 Chrome 的网页验证。已安装包默认运行数据写到使用者 home/workspace，不向安装目录写项目。
