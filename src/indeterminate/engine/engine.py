@@ -18,13 +18,16 @@ running and nothing is ready.
 
 ``workers=0`` runs everything in the calling thread, in a fixed order. With more workers, nodes run in a pool
 of threads and only the bookkeeping is serialised.
+
+``stopping`` is a function the engine asks before each activation; once it returns true the run stops as if
+``stop`` had been called. A graph that runs inside a node of another graph is stopped this way.
 """
 from __future__ import annotations
 
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ..base import Context, Delivery, Envelope, Firing, Graph, Node, NodeError, Protocols, digest
 
@@ -101,16 +104,19 @@ class _Context(Context):
         self._engine._emit(self._state, port, payload, self.round, self._cause)
 
     def stopping(self) -> bool:
-        return self._engine._stop
+        engine = self._engine
+        return engine._stop or (engine._outer is not None and bool(engine._outer()))
 
 
 class Engine:
     """One run of one graph. Build a new Engine to run again."""
 
-    def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0):
+    def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0,
+                 stopping: Callable[[], bool] | None = None):
         if workers < 0:
             raise ValueError("workers cannot be negative")
         self.graph, self.workers = graph, workers
+        self._outer = stopping
         self._lock = threading.Condition()
         self._ready: deque[_State] = deque()
         self._active = 0
@@ -195,6 +201,8 @@ class Engine:
         lock = self._lock
         while True:
             with lock:
+                if self._outer is not None and not self._stop and self._outer():
+                    self._stop = True
                 while not self._ready and self._active and not self._stop:
                     lock.wait()
                 if self._stop or not self._ready:
