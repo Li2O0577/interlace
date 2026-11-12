@@ -169,9 +169,9 @@ def test_envelopes_record_where_they_came_from():
     seen = {}
 
     class Spy(Engine):
-        def _deliver(self, feed, body, round, cause):
-            super()._deliver(feed, body, round, cause)
-            seen[feed.box[-1].id] = feed.box[-1]
+        def _place(self, feed, envelope):
+            super()._place(feed, envelope)
+            seen[envelope.id] = envelope
     graph = Chain(fn('a', lambda x: x + 1), fn('b', lambda x: x)).build(DEFAULT)
     Spy(graph, DEFAULT).run({'in': 1})
     first, second = seen['input:in#1'], seen['a.y>b.x#1']
