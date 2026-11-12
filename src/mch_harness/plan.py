@@ -28,6 +28,10 @@ class GraphError(ValueError):
     pass
 
 
+class DamagedError(GraphError):
+    """A state file cannot be read: what depends on it stops (fail closed), the rest goes on."""
+
+
 def require(condition, message):
     if not condition:
         raise GraphError(message)

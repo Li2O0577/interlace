@@ -26,7 +26,7 @@ from .core.ownership import WorkspaceLease
 from .core.projects import ProjectStore
 from .core.settings_store import SettingsStore
 from .graph.boundary import file_hash, safe_path
-from .graph.model import fingerprint, require
+from .graph.model import DamagedError, GraphError, fingerprint, require
 from .tools import registry
 from .tools.registry import ToolContext
 from . import host as host_module
@@ -146,11 +146,17 @@ class Kernel:
         self.close()
 
     def _project(self,pid):
-        meta=self.store.get(pid)
+        try:
+            meta=self.store.get(pid)
+        except json.JSONDecodeError:
+            raise DamagedError(f'项目 {pid} 的 project.json 损坏，停止处理该项目') from None
         root=self.store.path(pid)
-        require(meta.get('mode')=='graph','独立入口初版只调度 graph 项目；比赛和旧自由项目使用网页入口')
+        require(isinstance(meta,dict) and meta.get('mode')=='graph','独立入口初版只调度 graph 项目；比赛和旧自由项目使用网页入口')
         marker=root/'state/harness-mode.json'
-        mode=json.loads(marker.read_text(encoding='utf-8'))['mode'] if marker.exists() else 'configured-provider'
+        try:
+            mode=json.loads(marker.read_text(encoding='utf-8'))['mode'] if marker.exists() else 'configured-provider'
+        except (ValueError,KeyError,TypeError):
+            raise DamagedError(f'项目 {pid} 的 state/harness-mode.json 损坏，停止处理该项目') from None
         require(mode==self.mode,'模拟项目与真实提供器模式不能混用；请选择独立演示工作区')
         return meta
 
@@ -169,7 +175,11 @@ class Kernel:
         digest=fingerprint({'name':name,'args':args})
         with locked(path):
             if path.exists():
-                record=json.loads(path.read_text(encoding='utf-8'))
+                try:
+                    record=json.loads(path.read_text(encoding='utf-8'))
+                    require(isinstance(record,dict) and {'digest','status'}<=record.keys(),'')
+                except (ValueError,GraphError):
+                    raise DamagedError(f'request_id 的记录损坏，无法确认之前的结果，禁止自动重放；先检查项目与 .harness-requests/{path.name}') from None
                 require(record['digest']==digest,'request_id 已用于不同请求')
                 require(record['status']=='done','请求结果不确定或失败，禁止自动重放；先检查项目与操作记录')
                 return record['result']
@@ -225,6 +235,8 @@ class Kernel:
         for meta in self.store.list():
             try:
                 out.append(self._project(meta['id']))
+            except DamagedError as exc:
+                out.append({'id':meta['id'],'name':meta.get('name',''),'error':str(exc)})   # listed, not hidden
             except ValueError:
                 continue
         return out
@@ -296,7 +308,7 @@ class Kernel:
 
     def _recover_commands(self):
         for path in control.directory(self.workspace).glob('*.json'):
-            data=json.loads(path.read_text(encoding='utf-8'))
+            data=control.read(path)
             if data.get('status')=='running':
                 data.update(status='uncertain',error='引擎在处理时中断，先检查当前状态；不自动重放')
                 write(path,data)
@@ -313,7 +325,7 @@ class Kernel:
             with locked(path):
                 data={'id':path.stem}
                 try:
-                    data=json.loads(path.read_text(encoding='utf-8'))
+                    data=control.read(path)
                     if data.get('status')!='pending':
                         continue
                     data['status']='running'

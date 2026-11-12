@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import copy
 
-from ..plan import (THINKING_LEVELS, GraphError, Plan, check_acyclic as _acyclic, check_configuration as validate_configuration,
+from ..plan import (THINKING_LEVELS, DamagedError, GraphError, Plan, check_acyclic as _acyclic, check_configuration as validate_configuration,
                     check_id as _id, check_keys as _keys, check_text as _text, fingerprint, require)
 
-__all__ = ['THINKING_LEVELS', 'GraphError', 'require', 'fingerprint', 'validate_configuration', 'validate', 'downstream',
+__all__ = ['THINKING_LEVELS', 'DamagedError', 'GraphError', 'require', 'fingerprint', 'validate_configuration', 'validate', 'downstream',
            'affected']
 
 

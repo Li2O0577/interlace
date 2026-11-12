@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..core.jsonfile import locked, write
 from ..core.events import EventLog
-from .model import affected, fingerprint, require, validate
+from .model import DamagedError, GraphError, affected, fingerprint, require, validate
 from ..plan import LEAD, HUMAN
 
 
@@ -22,7 +22,11 @@ class GraphStore:
         with locked(self.path):
             if not self.path.exists():
                 return {'schema':1,'version':0,'status':'draft','plan':None,'confirmed_hash':None,'changes':{},'run':{}}
-            data = json.loads(self.path.read_text(encoding='utf-8'))
+            try:
+                data = json.loads(self.path.read_text(encoding='utf-8'))
+                require(isinstance(data, dict) and {'status', 'plan', 'run', 'changes'} <= data.keys(), '')
+            except (ValueError, GraphError):
+                raise DamagedError('图状态文件 state/graph.json 损坏或格式不符，停止执行；请从版本记录恢复') from None
             if data['plan'] is not None:
                 validate(data['plan'])
             if data['status'] == 'confirmed':
