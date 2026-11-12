@@ -38,18 +38,8 @@ AGENT_TOOLS = {
                             "reason": {"type": "string"}}, ["agent", "action"]),
     "agent.ask": _spec("agent.ask", "向上级提问并等待答复（主控 Agent 向用户提问）。用于必须由上级或用户做的取舍。",
                        {"question": {"type": "string"}}, ["question"]),
-    "brainstorm.run": _spec("brainstorm.run", "启动创新协议：盲评头脑风暴。自动派出多位思考者（不同视角与技巧）和一位整理“常规做法”的资料员。"
-                            "之后每次用 agent.wait 等待，再用 brainstorm.advance 依次进入：揭晓与交叉启发 → 唱反调 → 独立评分 → 形成决策。", {
-                                "question": {"type": "string", "description": "要回答的问题，例如：第一问的销量预测可以用哪些不同思路？"},
-                                "subproblem": {"type": "string", "description": "关联的子问题节点 ID（可选）"},
-                                "thinkers": {"type": "integer", "description": "思考者人数，2–6，默认 4"},
-                                "baseline": {"type": "boolean", "description": "是否整理常规做法作为参照，默认是"}}, ["question"]),
-    "brainstorm.advance": _spec("brainstorm.advance", "把 brainstorm.run 启动的头脑风暴推进到下一阶段（当前阶段的 Agent 必须都已完成）。",
-                                {"session": {"type": "string"}}, ["session"]),
-    "brainstorm.status": _spec("brainstorm.status", "查看头脑风暴所处阶段、参与 Agent 的状态和创新性提醒。",
-                               {"session": {"type": "string"}}, ["session"]),
     "tools.load": _spec("tools.load", "加载工具说明：系统提示里“按需加载的工具”只列了名字，用这个工具加载它们的完整说明后再调用。"
-                        "可以写通配符，例如 git.* 或 paper.*。", {"names": {"type": "array", "items": {"type": "string"}}}, ["names"]),
+                        "可以写通配符，例如 git.*。", {"names": {"type": "array", "items": {"type": "string"}}}, ["names"]),
     "agent.report": _spec("agent.report", "向上级提交任务汇报并结束工作。汇报要短：摘要 + 产出文件路径 + 关键发现 + 遗留问题。"
                           "上级要的是表、图或数字时，用 views 附上展示规格（与 view.show 相同，需要几样给几样），上级可以原样转给用户。", {
         "summary": {"type": "string"}, "files": {"type": "array", "items": {"type": "string"}},
@@ -58,3 +48,13 @@ AGENT_TOOLS = {
         "open_questions": {"type": "array", "items": {"type": "string"}},
         "status": {"type": "string", "enum": ["done", "partial", "blocked"]}}, ["summary"]),
 }
+
+# agent.spawn arguments the runtime reads itself; anything else a caller passes is an extra attribute for the new
+# agent's record, which the application's ``Hooks.before_spawn`` keeps or drops. Limits are not shown on an
+# approval card (the operator decides who does what, not the budget split).
+SPAWN_ARGS = ("role", "task", "name", "tools", "skills", "expect", "budget_tokens", "max_tokens")
+SPAWN_LIMITS = ("tools", "budget_tokens", "max_tokens")
+
+
+def spawn_attrs(args: dict) -> dict:
+    return {k: v for k, v in args.items() if k not in SPAWN_ARGS}

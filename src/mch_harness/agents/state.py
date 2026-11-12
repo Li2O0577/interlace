@@ -13,7 +13,6 @@ TERMINAL = {"done", "stopped", "failed"}
 # System notices that wake an idle agent: a run it started has finished, or a child stopped on its own.
 WAKING_NOTICES = {"run_done", "child_stopped", "graph.start_blocked", "graph.helpers_requested", "graph.change_approved", "external_request", "graph.block_progress", "graph.block_review_requested"}
 PRIORITY = {"human": 0, "parent": 1, "child": 2, "peer": 2, "system": 3}
-KEY_STAGES = {"analysis", "ideation", "plan", "subproblems", "paper", "review", "export"}
 TOOL_RESULT_LIMIT = 20_000
 SUB_MAX_STEPS = 80
 

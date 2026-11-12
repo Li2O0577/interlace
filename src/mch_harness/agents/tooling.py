@@ -14,7 +14,7 @@ from ..tools import registry
 from . import roles
 from .state import (TERMINAL, Approval,
                     AgentError, AgentState, _report_for_parent, _short, _to_text)
-from .specs import AGENT_TOOLS
+from .specs import AGENT_TOOLS, SPAWN_LIMITS, spawn_attrs
 
 CLI_WAIT = 90   # seconds a CLI agent's agent.wait may hold its tool call (CLIs give up on long MCP calls)
 
@@ -31,17 +31,19 @@ class ToolsMixin(KindLookup):
             return ['agent.report','agent.ask','tools.load']
         depth_ok = st.rec["depth"] < int(self._defaults().get("max_agent_depth", 3))
         names = []
-        for name in AGENT_TOOLS:
-            if (self._root(st.project_id)/'state/graph.json').exists() and (name=='agent.spawn' or name.startswith('brainstorm.')):
-                continue
-            if name.startswith("brainstorm.") and not self.hooks.special_tools:
+        in_graph = (self._root(st.project_id)/'state/graph.json').exists()
+        extra = self.hooks.agent_tools()
+        for name in [*AGENT_TOOLS, *(n for n in extra if n not in AGENT_TOOLS)]:
+            creates = name == "agent.spawn" or name in extra   # tools that start agents
+            if creates and (in_graph or not depth_ok):
                 continue
             if name == "agent.report" and not self.kind(st).reports():
                 continue
-            if (name == "agent.spawn" or name.startswith("brainstorm.")) and not depth_ok:
-                continue
             names.append(name)
         return names
+
+    def _collaboration_tool(self, name: str) -> bool:
+        return name in AGENT_TOOLS or name in self.hooks.agent_tools()
 
     def _loaded(self, st: AgentState) -> tuple[list[str], list[str]]:
         """(tools whose full specs go to the model, permitted tools only listed by name)."""
@@ -78,7 +80,7 @@ class ToolsMixin(KindLookup):
 
     def _agent_spec(self, name: str) -> dict:
         """The schema of a collaboration tool; agent.spawn offers the roles this engine can spawn."""
-        spec = AGENT_TOOLS[name]
+        spec = AGENT_TOOLS.get(name) or self.hooks.agent_tools()[name]
         if name != "agent.spawn":
             return spec
         spec = copy.deepcopy(spec)
@@ -126,14 +128,14 @@ class ToolsMixin(KindLookup):
                         "先用 fs.write 写入前一部分，再用 fs.edit 在末尾追加后续部分（每段控制在几千字以内）。"), True
             return "错误：工具参数不是合法的 JSON，没有执行。请检查引号和转义后重新调用。", True
         try:
-            if name in AGENT_TOOLS:
+            if self._collaboration_tool(name):
                 result = self._agent_tool(st, name, args)
             else:
                 if name not in self._expand(st.rec["tools"]) or not self._available(name):
                     raise AgentError(f"你没有使用 {name} 的权限（可以请上级或用户授权，或交给有权限的 Agent）")
                 if name in self.tools and name not in self._loaded(st)[0]:
                     self._load_tools(st, [name])  # called straight from the catalog: keep its spec from now on
-                self._formulation_gate(st, name)
+                self._before_tool(st, name)
                 scoped = self._scope_gate(st, name, args)
                 if scoped is not None:
                     args = scoped[0]
@@ -188,7 +190,7 @@ class ToolsMixin(KindLookup):
         pid, aid = st.project_id, st.rec["id"]
         if name == "agent.spawn" and self.kind(st).controller and self.team_mode(pid) == "manual":
             # Manual team mode: the user sees who the lead wants to send and may change the task or role first.
-            shown = {k: args[k] for k in ("role", "name", "task", "expect", "skills", "question") if args.get(k)}
+            shown = {k: v for k, v in args.items() if v and k not in SPAWN_LIMITS}
             approval = self._await_approval(st, self._request_approval(st, name, shown))
             if approval is None:
                 return self._interrupted()
@@ -209,7 +211,7 @@ class ToolsMixin(KindLookup):
             child = self.spawn(pid, aid, args.get("role", ""), task, args.get("name", ""),
                                tools=args.get("tools"), max_tokens=args.get("budget_tokens") or args.get("max_tokens"),
                                skills=args.get("skills") if isinstance(args.get("skills"), list) else None,
-                               expect=args.get("expect", ""), question=args.get("question", ""))
+                               expect=args.get("expect", ""), **spawn_attrs(args))
             out = {"agent": child["id"], "name": child["name"], "status": child["status"], "tools": len(child["tools"])}
             if child.get("skills"):
                 out["skills"] = child["skills"]
@@ -236,7 +238,7 @@ class ToolsMixin(KindLookup):
             return self._wait_children(st, args.get("agents"), int(args.get("timeout") or 600))
         if name == "agent.ask":
             return self._ask(st, args.get("question", ""))
-        if name.startswith('brainstorm.'):
+        if name in self.hooks.agent_tools() and name not in AGENT_TOOLS:
             return self.hooks.special_tool(self,st,name,args)
         if name == "tools.load":
             return self._load_tools(st, args.get("names") or [])
@@ -248,32 +250,16 @@ class ToolsMixin(KindLookup):
             return {"reported": True}
         raise AgentError(f"未知工具：{name}")
 
-    def _arranged(self,pid,slot,role,fallback):
-        return self.hooks.arranged(self,pid,slot,role,fallback)
-
-
-
-
-    def _formulation_gate(self,st,name):
+    def _before_tool(self,st,name):
         if graph_boundary(self,st) is not None:
             return
         return self.hooks.before_tool(self,st,name)
-
 
     def _scope_gate(self,st,name,args):
         boundary=graph_boundary(self,st)
         if boundary is not None:
             return boundary.check_call(name,args,getattr(self,'contracts',None)),set(),boundary
         return self.hooks.scope_call(self,st,name,args)
-
-
-    def _sublead_delivery(self,st,args):
-        return self.hooks.delivery(self,st,args)
-
-
-    def _devil_gone(self,pid,record):
-        return self.hooks.devil_gone(self,pid,record)
-
 
     def _wait_children(self, st: AgentState, ids: list | None, timeout: int) -> dict:
         pid, aid = st.project_id, st.rec["id"]

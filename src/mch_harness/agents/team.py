@@ -14,6 +14,7 @@ import re
 from ..tools import registry
 from . import roles
 from .role_catalog import clean_name
+from .specs import spawn_attrs
 from .state import (WAKING_NOTICES, LEAD_ID, MIN_SUB_BUDGET, PRIORITY, SUB_MAX_STEPS, TERMINAL,
                     AgentError, AgentState, Approval, _short, spent_tokens)
 
@@ -27,11 +28,6 @@ def installs_packages(params: dict) -> bool:
     """Whether a code.run call installs software (pip / uv / conda / apt …)."""
     return bool(INSTALL_RE.search(f"{params.get('command') or ''}\n{params.get('code') or ''}"))
 
-# "Always allow" on one of these covers the others: they are steps of the same kind of work.
-ALLOW_GROUPS = [{"exp.run", "exp.rerun", "exp.search", "exp.search_stop", "exp.kill"}]
-# Asked every time, whatever the autonomy or an earlier "always allow": the user decides each time what an agent
-# working on one question may learn about the questions before it.
-ALWAYS_ASK = {"question.request_previous"}
 
 
 class TeamMixin(KindLookup):
@@ -94,8 +90,10 @@ class TeamMixin(KindLookup):
 
     def spawn(self, pid: str, actor: str, role: str, task: str, name: str = "", parent: str | None = None,
               tools: list | None = None, model: str = "", max_tokens: int | None = None,
-              skills: list | None = None, expect: str = "", question: str = "", extra: dict | None = None,
-              start: bool = True, _graph_ticket=None) -> dict:
+              skills: list | None = None, expect: str = "", extra: dict | None = None,
+              start: bool = True, _graph_ticket=None, **attrs) -> dict:
+        """Create an agent. ``extra`` comes from the runtime itself (trusted); ``attrs`` are further record
+        attributes a caller asks for, kept only as far as the application's ``before_spawn`` hook allows."""
         if self.closing:
             raise AgentError('引擎正在关闭，不再创建模型')
         self.load(pid)
@@ -113,10 +111,10 @@ class TeamMixin(KindLookup):
         else:
             parent = actor
         parent_st = self._get(pid, parent) if parent else None
-        question = (question or "").strip()
+        kept = {}
         if not trusted_graph:
-            task,expect,skills,tools,question=self.hooks.before_spawn(self,pid=pid,actor=actor,role=role,
-                parent=parent_st,task=task,expect=expect,skills=skills,tools=tools,question=question,trusted=False)
+            task,expect,skills,tools,kept=self.hooks.before_spawn(self,pid=pid,actor=actor,role=role,
+                parent=parent_st,task=task,expect=expect,skills=skills,tools=tools,attrs=dict(attrs),trusted=False)
         depth = (parent_st.rec["depth"] + 1) if parent_st else 1
         if depth > int(d.get("max_agent_depth", 3)):
             raise AgentError(f"Agent 层级最多 {d.get('max_agent_depth', 3)} 层，请自己完成或交回上级拆分")
@@ -163,11 +161,9 @@ class TeamMixin(KindLookup):
                 rec["skills_dropped"] = dropped
             if (expect or "").strip():
                 rec["expect"] = expect.strip()[:500]
-            if question:
-                rec["question"] = question
             rec["budget"]["max_steps"] = default_steps
-            for k, v in (extra or {}).items():
-                rec.setdefault(k, v)
+            for k, v in {**(kept or {}), **(extra or {})}.items():
+                rec.setdefault(k, v)   # never over a field the runtime set
             st = AgentState(pid, rec)
             self.states[(pid, aid)] = st
             self._save(st)
@@ -287,32 +283,19 @@ class TeamMixin(KindLookup):
         if actor == "human" and announce:
             self._emit(pid, "agent.user_message", {"agent": target, "name": st.rec["name"], "text": text})
 
-    def experiment_finished(self, pid: str, kind: str, info: dict) -> None:
-        """Tell the agent that started a run (or a parameter search) that it ended, waking it if it had stopped
-        for the turn, so it never has to sleep while a computation runs."""
-        actor = info.get("actor") or ""
+    def notify_run_done(self, pid: str, actor: str, text: str) -> bool:
+        """Tell the agent that started a background run (a computation, a search, an external job) that it
+        ended, waking it if it had stopped for the turn, so it never has to sleep while something runs. The
+        application writes the text. Returns whether an agent was told."""
         if not actor or actor in ("human", "system") or not self.exists(pid, actor):
-            return
+            return False
         st = self._get(pid, actor)
-        if st.rec["status"] == "stopped" or info.get("status") == "killed":
-            return
-        what = "参数搜索" if kind == "search" else "实验"
-        status = {"succeeded": "完成", "failed": "失败", "lost": "丢失（主机失联）", "error": "启动失败"}.get(info.get("status"), "结束")
-        parts = [f"【系统通知】你发起的{what}「{info.get('name')}」（{info.get('id')}）已{status}。"]
-        if info.get("summary"):
-            parts.append("最新指标：" + json.dumps(info["summary"], ensure_ascii=False)[:600])
-        if info.get("best"):
-            parts.append("最好结果：" + json.dumps(info["best"], ensure_ascii=False)[:600])
-        if info.get("error"):
-            parts.append(f"错误：{str(info['error'])[:400]}")
-        if info.get("reason"):
-            parts.append(f"结束原因：{info['reason']}")
-        if info.get("outputs"):
-            parts.append("产出：" + "、".join(str(o.get("path", o)) if isinstance(o, dict) else str(o) for o in info["outputs"][:10]))
-        parts.append("用 exp.get / exp.log 看详情。")
+        if st.rec["status"] == "stopped":
+            return False
         # An agent that already handed in its report is not brought back for it; everyone else wakes up.
-        self._deliver(st, {"from": "system", "channel": "system", "kind": "run_done", "text": "\n".join(parts)},
+        self._deliver(st, {"from": "system", "channel": "system", "kind": "run_done", "text": text},
                       wake=st.rec["status"] != "done")
+        return True
 
     def _deliver(self, st: AgentState, item: dict, wake: bool = True) -> None:
         item = {**item, "ts": time.time(), "priority": PRIORITY[item["channel"]]}
@@ -492,9 +475,9 @@ class TeamMixin(KindLookup):
 
     def _always_allowed(self, pid: str, st: AgentState, name: str) -> bool:
         """"Always allow" given to an agent also covers everyone below it: the user trusts that branch of the team.
-        Given for the project, it covers every agent, including ones started later (each question's solver).
-        It covers the tool's whole family too (running experiments, searching parameters and stopping runs go together)."""
-        family = next((g for g in ALLOW_GROUPS if name in g), {name})
+        Given for the project, it covers every agent, including ones started later.
+        It covers the tool's whole family too (the application's ``Hooks.allow_groups``)."""
+        family = next((set(g) for g in self.hooks.allow_groups() if name in g), {name})
         if family & set(self.project_allowed(pid)):
             return True
         seen = set()
@@ -513,7 +496,7 @@ class TeamMixin(KindLookup):
 
     def needs_approval(self, pid: str, st: AgentState, name: str, params: dict) -> bool:
         tool = self.tools.get(name)
-        if name in ALWAYS_ASK:
+        if self.hooks.always_ask(name):
             return True
         if name == "code.run" and installs_packages(params):
             return True   # changes the workbench's own environment: always the user's call, whatever the mode
@@ -581,7 +564,7 @@ class TeamMixin(KindLookup):
                     args = {**approval.params, **approval.edits}
                     out = self.spawn(pid, approval.agent, args.get("role", ""), args.get("task", ""), args.get("name", ""),
                                      skills=args.get("skills") if isinstance(args.get("skills"), list) else None,
-                                     expect=args.get("expect", ""), question=args.get("question", ""))
+                                     expect=args.get("expect", ""), **spawn_attrs(args))
                     result = f"已派出「{out['name']}」（{out['id']}）"
                 else:
                     result = str(self.run_tool(pid, approval.tool, approval.params, approval.agent))[:1500]
@@ -657,7 +640,7 @@ class TeamMixin(KindLookup):
         if decision not in ("approve", "deny"):
             raise AgentError("decision 只能是 approve 或 deny")
         approval.status, approval.reason = ("approved" if decision == "approve" else "denied"), reason
-        if approval.tool in ALWAYS_ASK:
+        if self.hooks.always_ask(approval.tool):
             always = False
         if edits and decision == "approve" and approval.tool == "agent.spawn":
             approval.edits = {k: str(v) for k, v in edits.items() if k in ("role", "task", "expect", "name") and str(v).strip()}
