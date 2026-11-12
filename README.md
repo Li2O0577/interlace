@@ -2,13 +2,13 @@
 
 通用多智能体编排内核：操作者确认的计划图、确定性调度、节点文件边界、审批、可恢复状态和审计日志。内核只约束边界（谁能启动、读、写、通信、放行），不约束模型如何推理。只依赖 Python 标准库，外部程序只用 git。
 
-建模工作台（`mch` 包）是建在这个内核上的一个应用；内核本身不含网页、比赛预设或任何应用依赖。
+建模工作台（`mch` 包，在另一个仓库）是建在这个内核上的一个应用；内核本身不含网页、比赛预设或任何应用依赖。
 
 ## 安装
 
 ```sh
-pip install mch_harness-0.2.0-py3-none-any.whl     # 尚未发布到公共索引，使用本仓库构建的 wheel
-uv build --package mch-harness -o dist/kernel        # 在源码目录构建
+pip install -e .            # 在源码目录安装（尚未发布到公共索引）
+uv build -o dist            # 构建 wheel
 ```
 
 需要 Python 3.11 及以上。
@@ -62,7 +62,7 @@ with Kernel("./workspace", "./settings", extensions=[ext]) as kernel:
     kernel.operator.confirm(created["project"]["id"], created["plan_hash"])
 ```
 
-完整可运行示例见仓库 `examples/harness_extension/`：自定义智能体类、带路径契约的工具和任务类型，只引用本包。
+完整可运行示例见 [examples/harness_extension/](examples/harness_extension/)：自定义智能体类、带路径契约的工具和任务类型，只引用本包。
 
 扩展工具只有声明了读写哪些路径参数（`reads=`、`writes=`）才会出现在图节点里，节点边界按声明检查这些路径。这是路径检查，不是操作系统级沙箱：处理函数在声明之外做的事由宿主负责。
 
@@ -73,7 +73,16 @@ mch-harness --workspace /abs/workspace --home /abs/settings serve           # �
 mch-harness --workspace /abs/demo --home /abs/demo-home serve --demo         # 模拟，不调用模型
 ```
 
-对外 8 个工具：`project.create`、`project.list`、`project.open`、`graph.view`、`operation.request`、`events.read`、`artifact.list`、`artifact.read`。确认计划、批准改图、处理工具审批只能由操作者在另一终端用 `mch-harness confirm/approve-change/decide-tool/...` 完成，外部连接拿不到主控身份。协议与命令细节见仓库 `docs/MCP.md`。
+对外 8 个工具：`project.create`、`project.list`、`project.open`、`graph.view`、`operation.request`、`events.read`、`artifact.list`、`artifact.read`。确认计划、批准改图、处理工具审批只能由操作者在另一终端用 `mch-harness confirm/approve-change/decide-tool/...` 完成，外部连接拿不到主控身份。协议与命令细节见 [docs/MCP.md](docs/MCP.md)，图引擎设计见 [docs/GRAPH.md](docs/GRAPH.md)。
+
+## 测试
+
+```sh
+python -m pip install -e . pytest
+python -m pytest -q tests
+```
+
+测试只用脚本化的假模型（`FakeProvider`），不调用真实模型。`tests/test_layers.py` 检查分层引用规则。
 
 ## 限制
 

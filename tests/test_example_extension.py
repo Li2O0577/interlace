@@ -8,9 +8,9 @@ import sys
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / 'examples' / 'harness_extension'
-KERNEL = ROOT / 'packages' / 'harness' / 'src'
+KERNEL = ROOT / 'src'
 
 PROBE = r'''
 import importlib.abc, json, sys

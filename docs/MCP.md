@@ -1,6 +1,6 @@
 # Hyperplan 独立 MCP 入口（初版）
 
-同一仓库发布两个包：`mch-harness`（`packages/harness/`，模块 `mch_harness`）是只用标准库的通用编排内核，带本页的 stdio MCP 服务；`mch`（`backend/mch/`）是依赖它的建模网页工作台。工作台不复制内核代码，旧模块名只是指向内核同一模块的别名。内核的分层、智能体类、节点协议与第三方接入见 [内核说明](../packages/harness/README.md)，可运行示例在 `examples/harness_extension/`。
+本仓库发布 `mch-harness`（模块 `mch_harness`），一个只用标准库的通用编排内核，带本页的 stdio MCP 服务。建模网页工作台在另一个仓库，依赖本包。内核的分层、智能体类、节点协议与第三方接入见 [内核说明](../README.md)，可运行示例在 `examples/harness_extension/`。
 
 本页描述已经实现的最小默认。进程内 stdio、仅本地 CLI 审批、单工作区单引擎、协议版本、自动文件模式映射都属于可替换假设；不把它们写成操作者已确认的新规则。
 
@@ -9,9 +9,9 @@
 在源码目录可直接运行：
 
 ```sh
-uv sync --frozen --group dev
-uv run mch-harness --workspace ./workspace --home ./.mch serve
-# 或只装内核：uv build --package mch-harness -o dist/kernel，再在干净环境安装该 wheel
+python -m pip install -e .
+mch-harness --workspace ./workspace --home ./.mch serve
+# 或先构建 wheel：uv build -o dist，再在干净环境安装
 ```
 
 这是 MCP stdio 端点，应由兼容客户端启动并连接 stdin/stdout。直接在终端启动时不会打开浏览器，也不会把当前宿主对话设为主控。诊断只写 stderr。初版实现 MCP **2025-11-25** 的初始化、ping、tools/list、tools/call、stdio 换行 JSON；没有实现 2026-07-28 新生命周期，也没有 resources/prompts/elicitation/HTTP 外部传输。[初始化约定](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)、[stdio 约定](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)、[工具协议](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)。
@@ -110,12 +110,10 @@ uv run mch-harness --workspace ./.mch/demo-workspace --home ./.mch/demo-home ser
 可直接复跑验证：
 
 ```sh
-uv run pytest packages/harness/tests -q
-uv build --package mch-harness -o dist/kernel && uv build --package mch -o dist/app
-# 干净环境 A 只装内核 wheel：
+python -m pytest -q tests
+uv build -o dist
+# 在只装了该 wheel 的干净环境中：
 python scripts/kernel_package_smoke.py --example examples/harness_extension
-# 干净环境 B 装内核与应用两个 wheel：
-python scripts/package_smoke.py
 ```
 
 ## 生命周期和仍待验证的设计
@@ -126,4 +124,4 @@ stdin EOF/宿主关闭会停止本进程内工作，不是后台常驻服务。�
 
 正式文件更新、已结束节点重启、获批局部改图的最小处理保留旧历史并阻止下游新启动，待 human/lead 复核；这是**待真实任务验证的设计**。主控额外 state 恢复仍为可选建议。自动文件模式暂映射 `autonomy=full`，只读授权沿用 `graph.runtime.DEFAULT_AUTH`；非自动模式不创建 keeper。keeper 按具体文件决策，由程序记录，不进图。
 
-当前只维护既有 harness 分支；其他分支与 Release 不在本次范围。CI 分别构建两个包，在两个干净环境中验证：只装内核时运行 stdio 服务和第三方示例；内核加应用时运行网页与 stdio。`scripts/package_smoke.py` 验证安装后的前端、模板、内置知识以及独立 stdio；全量测试另含真实 Chrome 的网页验证。已安装包默认运行数据写到使用者 home/workspace，不向安装目录写项目。
+CI 构建 wheel，在只装该 wheel 的干净环境中运行 stdio 服务和第三方示例。已安装包默认运行数据写到使用者 home/workspace，不向安装目录写项目。

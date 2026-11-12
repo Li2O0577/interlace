@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Git identity for the test projects
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+      - name: Tests
+        run: |
+          uv venv .venv --python ${{ matrix.python }}
+          uv pip install --python .venv/bin/python -e . pytest
+          .venv/bin/python -m pytest -q tests
+      - name: Build
+        run: uv build -o dist
+      - name: Installed wheel alone in a clean environment
+        run: |
+          uv venv .clean-env --python ${{ matrix.python }}
+          uv pip install --python .clean-env/bin/python dist/*.whl
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/.clean-env/bin/python" "$GITHUB_WORKSPACE/scripts/kernel_package_smoke.py" --example "$GITHUB_WORKSPACE/examples/harness_extension"
