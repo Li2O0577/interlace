@@ -253,7 +253,7 @@ def test_a_protocol_decides_which_ports_an_edge_may_join():
         Plain().encode('three', Port('out', int))
 
 
-def test_ten_thousand_nodes_compile_in_linear_time():
+def test_ten_thousand_nodes_compile():
     ids = [f'n{i}' for i in range(10_000)]
     graph = chain(*ids).compile(PROTOCOLS)
     assert graph.order[0] == 'n0' and graph.order[-1] == 'n9999' and len(graph.edges) == 9_999
