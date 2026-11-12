@@ -1,51 +1,68 @@
-"""Agent persistence (records, transcripts, inboxes) and read-only queries."""
+"""Agent lifecycle (load, resume, shut down) and read-only views; files and lookups live in records.py."""
 
 from __future__ import annotations
 
 import json
-import threading
 import time
 from pathlib import Path
 
-from ..core.jsonfile import replace_file
 from . import providers
+from .records import read_jsonl
 from .state import (ACTIVE, AgentError, AgentState, spent_tokens)
 
 
 class StoreMixin:
-    # =================================================================== setup / persistence
+    """Lifecycle of the agents (load, resume, shut down) and the views shown to the operator. Files and lookups
+    belong to ``self.records`` (records.py); the short names below stay for the rest of the runtime."""
+
+    # =================================================================== records (see records.py)
+
+    def _root(self, pid: str) -> Path:
+        return self.records.root(pid)
+
+    def _dir(self, pid: str, aid: str) -> Path:
+        return self.records.folder(pid, aid)
+
+    def _save(self, st: AgentState) -> None:
+        self.records.save(st)
+
+    def _append_message(self, st: AgentState, msg: dict) -> None:
+        self.records.append_message(st, msg)
+
+    def _rewrite_messages(self, st: AgentState) -> None:
+        self.records.rewrite_messages(st)
+
+    def _save_inbox(self, st: AgentState) -> None:
+        self.records.save_inbox(st)
+
+    def _get(self, pid: str, aid: str) -> AgentState:
+        return self.records.get(pid, aid)
+
+    def _project_states(self, pid: str) -> list[AgentState]:
+        return self.records.project(pid)
+
+    def children(self, pid: str, aid: str | None) -> list[AgentState]:
+        return self.records.children(pid, aid)
+
+    def descendants(self, pid: str, aid: str) -> list[AgentState]:
+        return self.records.descendants(pid, aid)
+
+    def ancestors(self, pid: str, aid: str) -> list[str]:
+        return self.records.ancestors(pid, aid)
+
+    def name_of(self, pid: str, aid: str | None) -> str:
+        return self.records.name_of(pid, aid)
+
+    def exists(self, pid: str, aid: str) -> bool:
+        return self.records.exists(pid, aid)
+
+    # =================================================================== setup / lifecycle
 
     def _default_provider(self, model: str) -> providers.Provider:
         return providers.build(model, self.settings.raw().get("providers", []))
 
     def _defaults(self) -> dict:
         return self.settings.raw().get("defaults", {})
-
-    def _root(self, pid: str) -> Path:
-        return self.store.path(pid)
-
-    def _dir(self, pid: str, aid: str) -> Path:
-        return self._root(pid) / "agents" / aid
-
-    def _save(self, st: AgentState) -> None:
-        with st.io_lock:  # the agent's thread and request threads may save at the same time
-            st.rec["updated"] = time.time()
-            path = self._dir(st.project_id, st.rec["id"]) / "agent.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(f"agent.{threading.get_ident()}.tmp")
-            tmp.write_text(json.dumps(st.rec, ensure_ascii=False, indent=2), encoding="utf-8")
-            replace_file(tmp,path)
-
-    def _append_message(self, st: AgentState, msg: dict) -> None:
-        msg = {**msg, "ts": time.time()}
-        with st.io_lock:
-            st.messages.append(msg)
-            with (self._dir(st.project_id, st.rec["id"]) / "messages.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-
-    def _rewrite_messages(self, st: AgentState) -> None:
-        path = self._dir(st.project_id, st.rec["id"]) / "messages.jsonl"
-        path.write_text("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in st.messages), encoding="utf-8")
 
     def load(self, pid: str) -> None:
         """Load a project's agents once. Agents that were working when the workbench stopped continue
@@ -64,7 +81,7 @@ class StoreMixin:
                 st = AgentState(pid, rec)
                 msg_path = path.parent / "messages.jsonl"
                 if msg_path.exists():
-                    st.messages, dropped = _read_jsonl(msg_path)
+                    st.messages, dropped = read_jsonl(msg_path)
                     if dropped:
                         self._rewrite_messages(st)   # so the next line is not glued to the broken one
                 inbox_path = path.parent / "inbox.json"
@@ -115,14 +132,6 @@ class StoreMixin:
             except Exception:  # noqa: BLE001 — one broken project must not block the others
                 continue
 
-    def _save_inbox(self, st: AgentState) -> None:
-        path = self._dir(st.project_id, st.rec["id"]) / "inbox.json"
-        with st.io_lock:
-            try:
-                path.write_text(json.dumps(st.inbox, ensure_ascii=False), encoding="utf-8")
-            except OSError:
-                pass
-
     def shutdown(self) -> None:
         with self.guard:
             self.closing = True
@@ -135,44 +144,6 @@ class StoreMixin:
             approval.event.set()
 
     # =================================================================== queries
-
-    def _get(self, pid: str, aid: str) -> AgentState:
-        self.load(pid)
-        st = self.states.get((pid, aid))
-        if st is None:
-            raise AgentError(f"找不到 Agent：{aid}")
-        return st
-
-    def _project_states(self, pid: str) -> list[AgentState]:
-        self.load(pid)
-        return [st for (p, _), st in self.states.items() if p == pid]
-
-    def children(self, pid: str, aid: str | None) -> list[AgentState]:
-        return [st for st in self._project_states(pid) if st.rec.get("parent") == aid]
-
-    def descendants(self, pid: str, aid: str) -> list[AgentState]:
-        result, frontier = [], [aid]
-        while frontier:
-            current = frontier.pop()
-            for child in self.children(pid, current):
-                result.append(child)
-                frontier.append(child.rec["id"])
-        return result
-
-    def ancestors(self, pid: str, aid: str) -> list[str]:
-        chain, current = [], self._get(pid, aid).rec.get("parent")
-        while current:
-            chain.append(current)
-            current = self._get(pid, current).rec.get("parent")
-        return chain
-
-    def name_of(self, pid: str, aid: str | None) -> str:
-        if aid in (None, "human"):
-            return "用户"
-        try:
-            return self._get(pid, aid).rec["name"]
-        except AgentError:
-            return aid
 
     def view(self, st: AgentState) -> dict:
         rec = st.rec
@@ -209,12 +180,6 @@ class StoreMixin:
                 totals[currency] = round(totals.get(currency, 0) + cost, 4)
         return {"totals": totals, "unpriced_agents": unpriced}
 
-    def exists(self, pid: str, aid: str) -> bool:
-        if not aid:
-            return False
-        self.load(pid)
-        return (pid, aid) in self.states
-
     def list(self, pid: str) -> list[dict]:
         return sorted((self.view(st) for st in self._project_states(pid)), key=lambda r: r["created"])
 
@@ -231,21 +196,3 @@ class StoreMixin:
     def pending_approvals(self, pid: str) -> list[dict]:
         return [a.public() | {"agent_name": self.name_of(pid, a.agent)} for a in self.approvals.values()
                 if a.project_id == pid and a.status == "pending"]
-
-
-def _read_jsonl(path) -> tuple[list[dict], int]:
-    """The lines of a conversation log. A line cut short (the machine stopped mid-write) is dropped
-    instead of making the whole project's agents unloadable."""
-    out, dropped = [], 0
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-        except ValueError:
-            item = None
-        if isinstance(item, dict):
-            out.append(item)
-        else:
-            dropped += 1
-    return out, dropped

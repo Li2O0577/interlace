@@ -8,6 +8,9 @@ inbox again (and goes idle if there is nothing to do). Each repair is logged as 
 
 It also ends the pause of an agent the account's usage limit stopped (``hold.until``), once that time has
 passed, so a run continues on its own after the limit resets, also across a restart of the workbench.
+
+``Watchdog`` is its own object: it reads the runtime's states and calls back only through the few runtime
+operations it needs (set a status, make sure a thread runs, emit a notice, schedule a project).
 """
 
 from __future__ import annotations
@@ -18,30 +21,35 @@ import time
 LOOKS_BUSY = ("running", "waiting_children")
 
 
-class WatchdogMixin:
+class Watchdog:
     WATCH_EVERY = 60      # seconds between checks
     STALE_AFTER = 120     # seconds an agent may look busy with no turn in progress
 
-    def start_watchdog(self) -> None:
-        if getattr(self, "_watchdog", None) is not None:
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.thread is not None:
             return
 
         def loop():
-            while not self.closing:
+            while not self.runtime.closing:
                 time.sleep(self.WATCH_EVERY)
                 try:
-                    self.watch_once()
+                    self.check()
                 except Exception:  # noqa: BLE001 — the watchdog must never stop watching
                     pass
-        self._watchdog = threading.Thread(target=loop, daemon=True, name="agent-watchdog")
-        self._watchdog.start()
+        self.thread = threading.Thread(target=loop, daemon=True, name="agent-watchdog")
+        self.thread.start()
 
-    def watch_once(self, now: float | None = None) -> list[str]:
+    def check(self, now: float | None = None) -> list[str]:
         """Repair agents that have looked busy without a turn for too long, and resume agents whose usage-limit
         pause is over; returns their names."""
+        rt = self.runtime
         now = time.time() if now is None else now
         fixed = []
-        for st in list(self.states.values()):
+        for st in list(rt.states.values()):
             hold = st.rec.get("hold") or {}
             if (not st.stop and st.rec["status"] == "paused" and hold.get("by") == "system" and hold.get("until")
                     and now >= float(hold["until"])):
@@ -58,22 +66,44 @@ class WatchdogMixin:
             alive = st.thread is not None and st.thread.is_alive()
             with st.cv:
                 if st.rec["status"] == "waiting_children":
-                    self._set_status(st, "running")    # the loop re-reads its inbox, then works or goes idle
+                    rt._set_status(st, "running")    # the loop re-reads its inbox, then works or goes idle
                 st.cv.notify_all()
             if not alive:
-                self._ensure_thread(st)
+                rt._ensure_thread(st)
             fixed.append(st.rec["name"])
-            self._emit(st.project_id, "system.notice", {
+            rt._emit(st.project_id, "system.notice", {
                 "text": f"「{st.rec['name']}」显示在工作，但已有一段时间没有进行中的轮次，已自动唤醒"
                         + ("（工作线程已重启）" if not alive else "")})
         return fixed
 
     def _resume_after_limit(self, st) -> None:
+        rt = self.runtime
         with st.cv:
             st.rec["hold"] = None
             st.rec.pop("prev_status", None)
-            self._set_status(st, "running", by="system", reason="用量上限已过，自动继续")
+            rt._set_status(st, "running", by="system", reason="用量上限已过，自动继续")
             st.cv.notify_all()
-        self._ensure_thread(st)
-        self._emit(st.project_id, "system.notice", {"text": f"「{st.rec['name']}」的用量上限已过，已自动继续"})
-        self._schedule(st.project_id)
+        rt._ensure_thread(st)
+        rt._emit(st.project_id, "system.notice", {"text": f"「{st.rec['name']}」的用量上限已过，已自动继续"})
+        rt._schedule(st.project_id)
+
+
+class WatchdogMixin:
+    """The runtime's entry points to its watchdog (kept for callers of the old names)."""
+
+    @property
+    def watchdog(self) -> Watchdog:
+        dog = self.__dict__.get("_watchdog_component")
+        if dog is None:
+            dog = self.__dict__["_watchdog_component"] = Watchdog(self)
+        return dog
+
+    @property
+    def STALE_AFTER(self) -> int:  # noqa: N802 — read by tests and callers as before
+        return self.watchdog.STALE_AFTER
+
+    def start_watchdog(self) -> None:
+        self.watchdog.start()
+
+    def watch_once(self, now: float | None = None) -> list[str]:
+        return self.watchdog.check(now)

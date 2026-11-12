@@ -35,6 +35,7 @@ from .compaction import CompactionMixin
 from .conversation import ConversationMixin
 from .loop import LoopMixin
 from .providers import ChatResult
+from .records import AgentRecords
 from .state import LEAD_ID, AgentError, AgentState, Approval, spent_tokens
 from .specs import AGENT_TOOLS
 from .store import StoreMixin
@@ -66,7 +67,8 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
         self.run_tool = run_tool          # (project_id, name, params, actor) -> result
         self.locks = locks
         self.provider_factory: Callable[[str], providers.Provider] = self._default_provider
-        self.states: dict[tuple[str, str], AgentState] = {}
+        self.records = AgentRecords(store, self.load)   # in-memory agents and their files (records.py)
+        self.states = self.records.states
         self.approvals: dict[str, Approval] = {}
         self.loaded: set[str] = set()
         self.guard = threading.RLock()
