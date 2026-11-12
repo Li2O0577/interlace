@@ -365,6 +365,9 @@ class Engine:
                     self._journal.write({"kind": "end"})
                 self._journal.close()
         if self._error:
+            cause = self._error.__cause__
+            if cause is not None and not isinstance(cause, Exception):
+                raise cause                 # an interrupt or an exit request passes through as itself
             raise self._error
         result = self._result
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
@@ -415,7 +418,7 @@ class Engine:
                     snapshot = node.snapshot()
                     if snapshot:
                         act.snaps[node.id] = dict(snapshot)
-            except Exception as exc:   # noqa: BLE001 - whatever a node raises ends the run
+            except BaseException as exc:   # noqa: BLE001 - whatever a node raises ends the run, an interrupt included
                 with lock:
                     self._fail(state, exc)
                 continue
@@ -448,7 +451,7 @@ class Engine:
                     stream._close()
             state.streams.clear()
 
-    def _fail(self, state: _State, exc: Exception) -> None:
+    def _fail(self, state: _State, exc: BaseException) -> None:
         self._end_streams(state)
         state.running = False
         self._active -= 1
