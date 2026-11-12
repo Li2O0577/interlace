@@ -123,7 +123,8 @@ class Node(Entity):
         return self.id == LEAD
 
     @classmethod
-    def check(cls, data):
+    def check(cls, data, blocks=None):
+        """``blocks``: ids of the plan's blocks, when the node is checked as part of a plan."""
         check_keys(data, cls.REQUIRED, cls.OPTIONAL)
         check_configuration(data)
         for name in ('name', 'summary', 'role'):
@@ -131,7 +132,9 @@ class Node(Entity):
         if data['id'] == LEAD:
             require(data.get('block') is None, '主控不属于任务块')
         else:
-            require(data['role'] != LEAD and isinstance(data.get('block'), str), '工作节点必须属于有效任务块且不能冒充主控')
+            block = data.get('block')
+            require(data['role'] != LEAD and isinstance(block, str) and (blocks is None or block in blocks),
+                    '工作节点必须属于有效任务块且不能冒充主控')
             check_text(data.get('duty'))
             check_text(data.get('accept'))
         require(type(data.get('helpers', False)) is bool, 'helpers 必须为布尔值')
@@ -165,7 +168,10 @@ class Block(Entity):
         check_keys(data, cls.REQUIRED, cls.OPTIONAL)
         check_text(data['name'])
         coordinator = data.get('coordinator', '')
-        require(coordinator == '' or isinstance(coordinator, str), '协调者应为空或次主控节点 ID')
+        if coordinator:
+            require(isinstance(coordinator, str), '任务块协调者必须是已有次主控节点')
+        else:
+            require(coordinator == '', '协调者应为空或次主控节点 ID')
         require(isinstance(data['after'], list) and all(isinstance(a, str) for a in data['after']), 'after 必须是 ID 列表')
         require(len(data['after']) == len(set(data['after'])), '无效前置任务块')
 
@@ -239,8 +245,7 @@ class Plan(Entity):
         blocks = {b['id']: b for b in data['blocks']}
         require(LEAD in nodes and nodes[LEAD].get('role') == LEAD, '必须有内部主控 lead')
         for node in nodes.values():
-            Node.check(node)
-            require(node['id'] == LEAD or node['block'] in blocks, '工作节点必须属于有效任务块且不能冒充主控')
+            Node.check(node, blocks)
         for block in blocks.values():
             Block.check(block)
             if block.get('coordinator'):
