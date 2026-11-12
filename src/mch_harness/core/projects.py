@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -188,7 +189,10 @@ class ProjectStore:
                 raise error
             os.chmod(candidate,stat.S_IREAD|stat.S_IWRITE)
             function(path)
-        shutil.rmtree(target,onexc=retry_readonly)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(target,onexc=retry_readonly)
+        else:  # Python 3.11 has only onerror, which passes (type, value, traceback)
+            shutil.rmtree(target,onerror=lambda function,path,info:retry_readonly(function,path,info[1]))
         self._deleted(project_id)
 
     def _deleted(self, project_id: str) -> None:
