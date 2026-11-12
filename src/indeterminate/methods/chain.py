@@ -17,9 +17,11 @@ def sole_input(node: Node) -> str | None:
 
 
 def sole_output(node: Node) -> str:
-    if len(node.outputs) != 1:
-        raise GraphError(f"{node.id}: a chain needs exactly one output, and it has {sorted(node.outputs)}")
-    return next(iter(node.outputs))
+    """The output a chain passes on: the only one, not counting the ports the node makes calls through."""
+    outputs = [name for name, port in node.outputs.items() if not port.call]
+    if len(outputs) != 1:
+        raise GraphError(f"{node.id}: a chain needs exactly one output, and it has {sorted(outputs)}")
+    return outputs[0]
 
 
 class Chain(Method):
