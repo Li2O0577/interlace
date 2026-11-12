@@ -1,5 +1,6 @@
 """Pure eligibility calculation. Reserved records are not model instances."""
 from __future__ import annotations
+from ..plan import LEAD
 
 
 def ready(plan, run):
@@ -9,7 +10,7 @@ def ready(plan, run):
     blocks = {b['id']:b for b in plan['blocks']}
     for node in plan['nodes']:
         key = node['id']
-        if key == 'lead' or key in run.get('input_holds', {}):
+        if key == LEAD or key in run.get('input_holds', {}):
             continue
         current = run.get('instances', {}).get(run.get('by_node', {}).get(key))
         if current and not (current['status'] == 'ended' and key in run.get('wake_pending', {})):

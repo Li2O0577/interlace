@@ -297,26 +297,32 @@ def project_overrides(root: Path) -> dict:
 
 def audience(sk: Skill, role_name=lambda r: r) -> str:
     """The tag the lead sees: whether a skill is for itself or which sub-agent roles it suits."""
-    subs = [r for r in sk.roles if r != "lead"]
-    parts = (["主控自用"] if "lead" in sk.roles else []) + ([f"适合派给：{'、'.join(role_name(r) for r in subs)}"] if subs else [])
+    from .agents.kinds import Lead
+    subs = [r for r in sk.roles if r != Lead.role]
+    parts = (["主控自用"] if Lead.role in sk.roles else []) + ([f"适合派给：{'、'.join(role_name(r) for r in subs)}"] if subs else [])
     return "；".join(parts) or "通用"
 
 
-def granted(rec: dict, active: set[str]) -> list[str]:
-    """Skills an agent may read: the lead every active one; a sub-agent only those it was given."""
-    if rec.get("role") == "lead":
+def _kind(rec: dict, kind=None):
+    if kind is None:
+        from .agents import kinds
+        kind = kinds.DEFAULT.of(rec.get("role"))
+    return kind
+
+
+def granted(rec: dict, active: set[str], kind=None) -> list[str]:
+    """Skills an agent may read: the controller every active one; a sub-agent only those it was given."""
+    if _kind(rec, kind).controller:
         return sorted(active)
     return [s for s in rec.get("skills") or [] if s in active]
 
 
-INDEX_ONLY = {"sublead"}
-
-
-def prompt_section(store: SkillStore, root: Path, rec: dict, role_name=lambda r: r) -> str:
+def prompt_section(store: SkillStore, root: Path, rec: dict, role_name=lambda r: r, kind=None) -> str:
     """The skills part of an agent's prompt. The lead sees an index of every active skill, tagged with who it
     is for; a sub-agent sees nothing but the full text of the skills its parent (or the user) gave it."""
     active = {s.id: s for s in store.active(project_overrides(root))}
-    if rec.get("role") == "lead":
+    kind = _kind(rec, kind)
+    if kind.controller:
         if not active:
             return ""
         lines = ["## 技能（经验手册）",
@@ -325,10 +331,10 @@ def prompt_section(store: SkillStore, root: Path, rec: dict, role_name=lambda r:
                  "一开始就会读到全文（不要把技能内容抄进任务里）。"]
         lines += [f"- {s.id}（{s.title}；{audience(s, role_name)}）：{s.description}" for s in active.values()]
         return "\n".join(lines)
-    chosen = [active[s] for s in granted(rec, set(active))]
+    chosen = [active[s] for s in granted(rec, set(active), kind)]
     if not chosen:
         return ""
-    if rec.get("role") in INDEX_ONLY:
+    if kind.skill_index:
         # Someone solving a whole question reads the problem first; manuals stay one call away.
         lines = ["## 技能（上级为你选的经验手册，供参考）", "需要时用 skill.load 读全文；与这一问无关的不必读。"]
         lines += [f"- {s.id}（{s.title}）：{s.description}" for s in chosen]

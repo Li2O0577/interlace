@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .kinds import KindLookup
 import fnmatch
 import json
 import secrets
@@ -12,6 +13,7 @@ import re
 
 from ..tools import registry
 from . import roles
+from .role_catalog import clean_name
 from .state import (WAKING_NOTICES, LEAD_ID, MIN_SUB_BUDGET, PRIORITY, SUB_MAX_STEPS, TERMINAL,
                     AgentError, AgentState, Approval, _short, spent_tokens)
 
@@ -32,7 +34,7 @@ ALLOW_GROUPS = [{"exp.run", "exp.rerun", "exp.search", "exp.search_stop", "exp.k
 ALWAYS_ASK = {"question.request_previous"}
 
 
-class TeamMixin:
+class TeamMixin(KindLookup):
     # =================================================================== permissions
 
     def _can_command(self, pid: str, actor: str, target: AgentState) -> None:
@@ -72,19 +74,21 @@ class TeamMixin:
             d = self._defaults()
             model = model or d.get("agent_model", "")
             self.provider_factory(model)  # fail early if no usable model
-            rec = self._new_record(LEAD_ID, "主控", "lead", None, "", model, ["*"],
+            lead = next(k for k in self.kinds.kinds() if k.controller)
+            rec = self._new_record(LEAD_ID, lead.title, lead.role, None, "", model, list(lead.tools),
                                    int(d.get("lead_budget_tokens", 3_000_000)), 0, "human")
             st = AgentState(pid, rec)
             self.states[(pid, LEAD_ID)] = st
             self._save(st)
-        self._emit(pid, "agent.spawned", {"agent": LEAD_ID, "name": "主控", "role": "lead", "parent": None, "by": "human"})
+        self._emit(pid, "agent.spawned", {"agent": LEAD_ID, "name": rec["name"], "role": rec["role"], "parent": None, "by": "human"})
         return self.view(st)
 
     def _new_record(self, aid, name, role, parent, task, model, tools, max_tokens, depth, owner) -> dict:
         now = time.time()
+        top = self.kind(role).controller
         return {"id": aid, "name": name, "role": role, "parent": parent, "depth": depth, "task": task, "model": model,
-                "owner": owner, "tools": tools, "status": "idle" if role == "lead" else "queued", "hold": None,
-                "budget": {"max_tokens": max_tokens, "max_steps": 0 if role == "lead" else SUB_MAX_STEPS, "reserved": 0},
+                "owner": owner, "tools": tools, "status": "idle" if top else "queued", "hold": None,
+                "budget": {"max_tokens": max_tokens, "max_steps": 0 if top else SUB_MAX_STEPS, "reserved": 0},
                 "usage": {"steps": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}, "always_allow": [], "report": None,
                 "summary": "", "created": now, "updated": now, "error": None}
 
@@ -96,9 +100,10 @@ class TeamMixin:
             raise AgentError('引擎正在关闭，不再创建模型')
         self.load(pid)
         trusted_graph=_graph_ticket is self._graph_ticket
-        if ((self._root(pid)/'state/graph.json').exists() or role=='file_keeper') and not trusted_graph:
+        kind = self.kind(role)
+        if ((self._root(pid)/'state/graph.json').exists() or kind.scheduler_only) and not trusted_graph:
             raise AgentError('图项目中的 Agent 只能由调度器或获批 helper 批次创建')
-        if not self.known_role(role) or role == "lead":
+        if not self.known_role(role) or kind.controller:
             raise AgentError(f"未知或不可派生的角色：{role}")
         if not (task or "").strip():
             raise AgentError("子 Agent 需要明确的任务说明")
@@ -120,10 +125,10 @@ class TeamMixin:
         if parent_st:
             allowed = {t for t in self._expand(parent_st.rec["tools"]) if self._available(t)}
             requested = [t for t in requested if t in allowed]
-            lacking = [t for t in roles.ESSENTIAL.get(role, []) if t not in allowed]
+            lacking = [t for t in kind.essential if t not in allowed]
             if lacking and not tools:
                 # Permissions only shrink down the tree: such a child could not do its job.
-                raise AgentError(f"你没有 {', '.join(lacking)} 权限，派生的「{roles.role_name(role)}」也不会有，无法完成这类任务。"
+                raise AgentError(f"你没有 {', '.join(lacking)} 权限，派生的「{self.kinds.title(role)}」也不会有，无法完成这类任务。"
                                  "请在 agent.report 中说明需要谁来做什么，交给上级安排有权限的 Agent。")
         # Explicit choice > per-role default (e.g. coders on Claude Code) > the parent's model > the default.
         model = model or (d.get("role_models") or {}).get(role) or (parent_st.rec["model"] if parent_st else d.get("agent_model", ""))
@@ -136,7 +141,7 @@ class TeamMixin:
             budget = max(budget, min(MIN_SUB_BUDGET, default_budget))
         # The lead's budget pays for the lead's own calls only: its direct reports get their budgets from the
         # settings. Further down, a child's budget is carved out of its parent's, so a branch never outspends it.
-        reserve = parent_st is not None and parent_st.rec["role"] != "lead"
+        reserve = parent_st is not None and not self.kind(parent_st).controller
         with self.guard:
             if self.closing:
                 raise AgentError('引擎正在关闭，不再创建模型')
@@ -185,8 +190,8 @@ class TeamMixin:
     def _formal_name(self, pid: str, name: str, role: str) -> str:
         """A plain, formal display name: no emoji or decoration, the role name when none is given, and a
         number when the same name is already taken in the project (建模师、建模师 2 …)."""
-        title = roles.role_name(role)
-        base = roles.clean_name(name)
+        title = self.kinds.title(role)
+        base = clean_name(name)
         base = title if not base or base == title else base if base.startswith(title) else f"{title}·{base}"
         taken = {s.rec["name"] for s in self._project_states(pid)}
         if base not in taken:
@@ -209,7 +214,7 @@ class TeamMixin:
         """The user changes which skills a sub-agent may read; it is told on its next turn."""
         self.load(pid)
         st = self._get(pid, aid)
-        if st.rec["role"] == "lead":
+        if self.kind(st).controller:
             raise AgentError("主控可以读所有已开启的技能，不需要分配")
         chosen, dropped = self._pick_skills(pid, wanted)
         if dropped:

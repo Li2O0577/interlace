@@ -9,6 +9,7 @@ from pathlib import Path
 from ..core.jsonfile import locked, write
 from ..core.events import EventLog
 from .model import affected, fingerprint, require, validate
+from ..plan import LEAD, HUMAN
 
 
 class GraphStore:
@@ -34,7 +35,7 @@ class GraphStore:
         events.append(event, detail, source=actor)
 
     def draft(self, actor, plan):
-        require(actor in ('human','lead'), '只有操作者或主控能拟定草稿')
+        require(actor in (HUMAN,LEAD), '只有操作者或主控能拟定草稿')
         plan = validate(plan)
         with locked(self.path):
             data = self.load()
@@ -44,7 +45,7 @@ class GraphStore:
         return copy.deepcopy(data)
 
     def confirm(self, actor, plan_hash):
-        require(actor == 'human', '只有操作者能确认计划')
+        require(actor == HUMAN, '只有操作者能确认计划')
         with locked(self.path):
             data = self.load()
             require(data['status'] == 'draft' and data['plan'] is not None, '没有待确认草稿')
@@ -54,7 +55,7 @@ class GraphStore:
         return copy.deepcopy(data)
 
     def propose(self, actor, plan, *, reason, handling):
-        require(actor == 'lead', '只有主控能提出改图申请')
+        require(actor == LEAD, '只有主控能提出改图申请')
         plan = validate(plan)
         require(isinstance(reason,str) and reason.strip() and handling == 'invalidate', '需要原因和明确成果处理；初版只支持 invalidate')
         with locked(self.path):
@@ -69,7 +70,7 @@ class GraphStore:
         return copy.deepcopy(req)
 
     def approve(self, actor, request_id, plan_hash):
-        require(actor == 'human', '只有操作者能批准改图')
+        require(actor == HUMAN, '只有操作者能批准改图')
         with locked(self.path):
             data = self.load()
             req = data['changes'].get(request_id)
@@ -80,7 +81,7 @@ class GraphStore:
             self._save(data,'graph.change_approved',actor,{'request':request_id,'hash':plan_hash})
 
     def apply(self, actor, request_id):
-        require(actor == 'lead', '只有主控能应用获批修改')
+        require(actor == LEAD, '只有主控能应用获批修改')
         with locked(self.path):
             data = self.load()
             req = data['changes'].get(request_id)

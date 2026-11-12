@@ -1,6 +1,7 @@
 """Authenticated graph tools shared by the browser and model runtimes."""
 from .registry import tool, ToolError
 from ..graph.model import fingerprint, THINKING_LEVELS
+from ..plan import LEAD, HUMAN
 
 S={'type':'string'}
 O={'type':'object'}
@@ -24,7 +25,7 @@ def view(ctx):
 @tool('graph.models','可用节点模型','供操作者和内部总主控拟图时查看配置过的 API/CLI 模型，不返回凭据。',readonly=True)
 def models(ctx):
     r=runtime(ctx)
-    if r.identity(ctx.actor) not in ('human','lead'):
+    if r.identity(ctx.actor) not in (HUMAN,LEAD):
         raise ToolError('模型目录由操作者或总主控查看')
     return {**ctx.settings.model_catalog(),'thinking':list(THINKING_LEVELS[1:])}
 

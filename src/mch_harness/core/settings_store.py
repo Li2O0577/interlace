@@ -251,11 +251,12 @@ def _clean_role_models(raw) -> dict:
             role, model = (x.strip() for x in line.split("=", 1))
             pairs[role] = model
         raw = pairs
-    from ..agents.roles import ROLE_TOOLS  # local import: settings must not depend on the agent runtime at import time
+    from ..agents.kinds import DEFAULT  # local import: settings must not depend on the agent runtime at import time
+    assignable = DEFAULT.assignable()
     clean = {}
     for role, model in raw.items():
-        if role not in ROLE_TOOLS or role == "lead":
-            raise SettingsError(f"未知角色：{role}（可用：{', '.join(r for r in ROLE_TOOLS if r != 'lead')}）")
+        if role not in assignable:
+            raise SettingsError(f"未知角色：{role}（可用：{', '.join(assignable)}）")
         if model and ":" not in str(model):
             raise SettingsError(f"{role} 的模型格式应为 提供方:模型")
         if model:

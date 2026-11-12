@@ -39,10 +39,7 @@ class Hooks:
         if name!='agent.spawn':
             return spec
         out=copy.deepcopy(spec)
-        fields=out['parameters']['properties']
-        fields['role']={'type':'string','enum':['worker','reviewer','coder','analyst','researcher','writer'],
-            'description':'按权限选执行、检查、代码或资料整理角色；职责与验收要求由当前任务定义。'}
-        fields.pop('question',None)
+        out['parameters']['properties'].pop('question',None)
         return out
 
     def special_tool(self,manager,state,name,args):

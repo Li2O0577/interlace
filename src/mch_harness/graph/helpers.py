@@ -7,6 +7,7 @@ import secrets
 from ..core.jsonfile import locked
 from .model import require, validate_configuration
 from .run import GraphRun
+from ..plan import LEAD
 
 
 class Helpers:
@@ -56,7 +57,7 @@ class Helpers:
         return request
 
     def approve(self,actor,request_id):
-        require(actor=='lead', '图外 helper 必须由内部主控批准')
+        require(actor==LEAD, '图外 helper 必须由内部主控批准')
         with locked(self.store.path):
             data=self._load()
             request=self._request(data,request_id)
@@ -65,7 +66,7 @@ class Helpers:
             self.store._save(data,'graph.helpers_approved',actor,{'request':request_id,'count':request['count']})
 
     def deny(self,actor,request_id,reason):
-        require(actor=='lead' and isinstance(reason,str) and reason.strip(), '需要主控明确拒绝原因')
+        require(actor==LEAD and isinstance(reason,str) and reason.strip(), '需要主控明确拒绝原因')
         with locked(self.store.path):
             data=self._load()
             request=self._request(data,request_id)
@@ -77,7 +78,7 @@ class Helpers:
         with locked(self.store.path):
             data=self._load()
             request=self._request(data,request_id)
-            require(actor in ('lead',request['node']) and request['status']=='approved', '批次未经主控批准或调用者无权执行')
+            require(actor in (LEAD,request['node']) and request['status']=='approved', '批次未经主控批准或调用者无权执行')
             require(type(index) is int and 0<=index<request['count'], '超过批准数量')
             slot=str(index)
             if slot not in request['slots']:

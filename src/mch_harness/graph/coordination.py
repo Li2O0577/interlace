@@ -4,6 +4,7 @@ import copy
 from ..core.jsonfile import locked
 from .model import fingerprint, require
 from .run import GraphRun
+from ..plan import LEAD, HUMAN
 
 
 class Coordination:
@@ -14,7 +15,7 @@ class Coordination:
     def _scope(self,data,actor,block):
         definition=next((b for b in data['plan']['blocks'] if b['id']==block),None)
         require(definition is not None,'未知任务块')
-        if actor in ('human','lead'):
+        if actor in (HUMAN,LEAD):
             return None
         require(definition.get('coordinator')==actor,'没有此任务块的协调权限')
         instance=self.run._current(data,actor)

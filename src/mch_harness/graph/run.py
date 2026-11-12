@@ -13,6 +13,7 @@ from .model import downstream, fingerprint, require
 from .scheduler import ready
 from .boundary import file_hash, safe_path, validate_submission_text
 from .recovery import validate_state, work_hashes, check_state
+from ..plan import LEAD, HUMAN, LEAD_INSTANCE
 
 
 def initial(plan):
@@ -27,7 +28,7 @@ def invalidate_for_change(data,request):
     review before a new round; this policy is provisional, not model validation.
     """
     run=data['run']
-    touched=set(request['affected'])-{'lead'}
+    touched=set(request['affected'])-{LEAD}
     for node in touched:
         inst=run['instances'].get(run['by_node'].get(node))
         require(not inst or inst['status']=='ended' or
@@ -35,8 +36,8 @@ def invalidate_for_change(data,request):
                 '先由主控明确结束受影响实例，再应用改图')
     new_version=data['version']+1
     new_nodes={n['id']:n for n in request['after']['nodes']}
-    if 'lead' in request['affected'] and 'lead' in run['submissions']:
-        run['submissions']['lead']['status']='invalidated'
+    if LEAD in request['affected'] and LEAD in run['submissions']:
+        run['submissions'][LEAD]['status']='invalidated'
     for node,instance in list(run['by_node'].items()):
         inst=run['instances'][instance]
         if node not in touched:
@@ -93,7 +94,7 @@ class GraphRun:
 
     def _node(self, data, node):
         found = next((n for n in data['plan']['nodes'] if n['id']==node), None)
-        require(found is not None and node != 'lead', '未知工作节点')
+        require(found is not None and node != LEAD, '未知工作节点')
         return found
 
     def _current(self, data, node, instance=None):
@@ -205,7 +206,7 @@ class GraphRun:
             self.store._save(data,'graph.start_blocked','system',copy.deepcopy(inst))
 
     def retry(self,actor,instance,reason):
-        require(actor=='lead' and isinstance(reason,str) and reason.strip(),'需主控明确重试依据')
+        require(actor==LEAD and isinstance(reason,str) and reason.strip(),'需主控明确重试依据')
         with locked(self.store.path):
             data=self._load()
             inst=data['run']['instances'].get(instance)
@@ -237,11 +238,11 @@ class GraphRun:
             return copy.deepcopy(record)
 
     def publish_lead(self,actor,*,summary,files,known_issues=None,usage='按已确认计划使用主控交付'):
-        require(actor=='lead','只有内部主控可发布主控交付')
-        return self._submit('lead','lead:r1',summary=summary,files=files,known_issues=known_issues,usage=usage,controller=True)
+        require(actor==LEAD,'只有内部主控可发布主控交付')
+        return self._submit(LEAD,LEAD_INSTANCE,summary=summary,files=files,known_issues=known_issues,usage=usage,controller=True)
 
     def submit(self, actor, instance, **submission):
-        require(actor!='lead','主控使用独立发布入口，不能冒充工作实例')
+        require(actor!=LEAD,'主控使用独立发布入口，不能冒充工作实例')
         return self._submit(actor,instance,**submission)
 
     def _submit(self, actor, instance, *, summary, files, known_issues=None, usage='按本节点验收要求使用交付文件',controller=False):
@@ -249,9 +250,9 @@ class GraphRun:
             data = self._load()
             if controller:
                 r=data['run']
-                r['instances'].setdefault(instance,{'id':instance,'node':'lead','round':1,'plan_version':data['version'],
-                    'status':'active','handle':'lead','kind':'controller','inputs':{}})
-                r['by_node']['lead']=instance
+                r['instances'].setdefault(instance,{'id':instance,'node':LEAD,'round':1,'plan_version':data['version'],
+                    'status':'active','handle':LEAD,'kind':'controller','inputs':{}})
+                r['by_node'][LEAD]=instance
                 folder=safe_path(self.store.root,'nodes/lead/r1')
                 (folder/'submit').mkdir(parents=True,exist_ok=True)
                 (folder/'README.md').write_text('# 主控正式交付\n\nwork/：主控工作文件。\nsubmit/：程序维护的正式入口。\n主控 state 恢复为可选机制，不在此强制启用。\n',encoding='utf-8')
@@ -296,7 +297,7 @@ class GraphRun:
             return copy.deepcopy(record)
 
     def release(self, actor, block, number, note):
-        require(actor == 'lead', '只有内部主控能明确放行')
+        require(actor == LEAD, '只有内部主控能明确放行')
         with locked(self.store.path):
             data = self._load()
             self._audit(data)
@@ -306,12 +307,12 @@ class GraphRun:
             require(all(r['blocks'][a]['released'] for a in b['after']), '前置块未放行')
             members = [n['id'] for n in data['plan']['nodes'] if n.get('block') == block]
             require(all(r['submissions'].get(n,{}).get('status') == 'submitted' and n not in r['input_holds'] for n in members), '正式交付未齐或仍待复核')
-            r['blocks'][block]['released'] = {'by':'lead','round':number,'plan_version':data['version'],'note':note}
+            r['blocks'][block]['released'] = {'by':LEAD,'round':number,'plan_version':data['version'],'note':note}
             self.store._save(data,'graph.released',actor,{'block':block,**r['blocks'][block]['released']})
 
     def rework(self, actor, node, reason):
-        require(actor == 'lead' and isinstance(reason,str) and reason.strip(), '需主控明确返工原因')
-        require(node!='lead','主控交付用发布新修订更新，不调用工作实例返工')
+        require(actor == LEAD and isinstance(reason,str) and reason.strip(), '需主控明确返工原因')
+        require(node!=LEAD,'主控交付用发布新修订更新，不调用工作实例返工')
         with locked(self.store.path):
             data = self._load()
             inst = self._current(data,node)
@@ -323,7 +324,7 @@ class GraphRun:
             self.store._save(data,'graph.returned',actor,{'node':node,'reason':reason})
 
     def review_inputs(self, actor, node, basis, reason):
-        require(actor in ('human','lead') and isinstance(reason,str) and reason.strip(), '仅操作者或主控可复核输入')
+        require(actor in (HUMAN,LEAD) and isinstance(reason,str) and reason.strip(), '仅操作者或主控可复核输入')
         with locked(self.store.path):
             data = self._load()
             self._audit(data)
@@ -343,8 +344,8 @@ class GraphRun:
             self.store._save(data,'graph.inputs_reviewed',actor,{'node':node,'basis':basis,'reason':reason})
 
     def end(self, actor, node, instance, reason):
-        require(actor == 'lead' and isinstance(reason,str) and reason.strip(), '需主控明确结束')
-        require(node!='lead','主控生命周期不由工作实例结束工具管理')
+        require(actor == LEAD and isinstance(reason,str) and reason.strip(), '需主控明确结束')
+        require(node!=LEAD,'主控生命周期不由工作实例结束工具管理')
         with locked(self.store.path):
             data = self._load()
             inst = self._current(data,node,instance)
@@ -359,7 +360,7 @@ class GraphRun:
 
         A lead-authored checkpoint is explicitly marked; no delivery is accepted.
         """
-        require(actor=='lead' and node!='lead' and isinstance(reason,str) and reason.strip(),'需内部主控明确记录中断收尾')
+        require(actor==LEAD and node!=LEAD and isinstance(reason,str) and reason.strip(),'需内部主控明确记录中断收尾')
         with locked(self.store.path):
             data=self._load()
             inst=self._current(data,node,instance)
@@ -368,19 +369,19 @@ class GraphRun:
             data=self._load()
             inst=self._current(data,node,instance)
             checkpoint=data['run']['states'][instance]
-            checkpoint.update(recorded_by='lead',kind='interrupted_checkpoint',reason=reason)
+            checkpoint.update(recorded_by=LEAD,kind='interrupted_checkpoint',reason=reason)
             write(safe_path(self.store.root,f'nodes/{node}/r{inst["round"]}/state/meta.json'),checkpoint)
             inst.update(status='ended',outcome='interrupted',last_state_revision=checkpoint['revision'])
             if node in data['run']['submissions']:
                 data['run']['submissions'][node]['status']='invalidated'
             self._hold(data,node,'中断后须重新核查成果，不能沿用旧放行')
             self.store._save(data,'graph.interrupted_closed',actor,{'node':node,'instance':instance,'reason':reason,
-                'checkpoint':checkpoint['path'],'recorded_by':'lead','outcome':'interrupted'})
+                'checkpoint':checkpoint['path'],'recorded_by':LEAD,'outcome':'interrupted'})
             return copy.deepcopy(inst)
 
     def wake(self, actor, node, reason):
-        require(actor == 'lead' and isinstance(reason,str) and reason.strip(), '需主控明确唤醒')
-        require(node!='lead','主控生命周期不由工作实例唤醒工具管理')
+        require(actor == LEAD and isinstance(reason,str) and reason.strip(), '需主控明确唤醒')
+        require(node!=LEAD,'主控生命周期不由工作实例唤醒工具管理')
         with locked(self.store.path):
             data = self._load()
             inst = self._current(data,node)

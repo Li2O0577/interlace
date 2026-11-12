@@ -12,10 +12,14 @@ import re
 from dataclasses import dataclass, field, fields
 from pathlib import PurePosixPath
 
+from .agents import kinds as agent_kinds
+
 THINKING_LEVELS = ('', 'default', 'low', 'medium', 'high')
 EDGE_KINDS = ('deliverable', 'review', 'feedback', 'rework')
 STANCES = ('', 'proof')
 LEAD = 'lead'  # the id of the one node the scheduler never starts: the plan's controller
+LEAD_INSTANCE = LEAD + ':r1'  # the controller's single, permanent instance
+HUMAN = 'human'  # the operator, as an actor
 _RESERVED_NAMES = {'con', 'prn', 'aux', 'nul', *[f'com{i}' for i in range(1, 10)], *[f'lpt{i}' for i in range(1, 10)]}
 _PRIVATE_ROOTS = ('nodes', 'state', 'agents', '.git')
 
@@ -123,7 +127,7 @@ class Node(Entity):
         return self.id == LEAD
 
     @classmethod
-    def check(cls, data, blocks=None):
+    def check(cls, data, blocks=None, kinds=None):
         """``blocks``: ids of the plan's blocks, when the node is checked as part of a plan."""
         check_keys(data, cls.REQUIRED, cls.OPTIONAL)
         check_configuration(data)
@@ -133,7 +137,7 @@ class Node(Entity):
             require(data.get('block') is None, '主控不属于任务块')
         else:
             block = data.get('block')
-            require(data['role'] != LEAD and isinstance(block, str) and (blocks is None or block in blocks),
+            require(not (kinds or agent_kinds.DEFAULT).of(data['role']).controller and isinstance(block, str) and (blocks is None or block in blocks),
                     '工作节点必须属于有效任务块且不能冒充主控')
             check_text(data.get('duty'))
             check_text(data.get('accept'))
@@ -214,9 +218,10 @@ class Plan(Entity):
     # ------------------------------------------------------------------ stored form
 
     @classmethod
-    def from_dict(cls, data, *, trusted=False):
+    def from_dict(cls, data, *, trusted=False, kinds=None):
+        """``kinds``: the agent kinds the roles are resolved against (default: the process default)."""
         if not trusted:
-            cls.check(data)
+            cls.check(data, kinds)
         parts = {name: tuple(kind.from_dict(item, trusted=True) for item in data[name]) for name, kind in cls.PARTS.items()}
         return cls(**parts, task=data.get('task', ''), given=tuple(data))
 
@@ -231,7 +236,8 @@ class Plan(Entity):
         return fingerprint(self.to_dict())
 
     @classmethod
-    def check(cls, data):
+    def check(cls, data, kinds=None):
+        kinds = kinds or agent_kinds.DEFAULT
         check_keys(data, cls.REQUIRED, cls.OPTIONAL)
         for name in cls.PARTS:
             require(isinstance(data[name], list), name + ' 必须是列表')
@@ -243,13 +249,14 @@ class Plan(Entity):
             require(len(ids) == len(set(ids)), 'ID 重复')
         nodes = {n['id']: n for n in data['nodes']}
         blocks = {b['id']: b for b in data['blocks']}
-        require(LEAD in nodes and nodes[LEAD].get('role') == LEAD, '必须有内部主控 lead')
+        require(LEAD in nodes and kinds.of(nodes[LEAD].get('role')).controller, '必须有内部主控 lead')
         for node in nodes.values():
-            Node.check(node, blocks)
+            Node.check(node, blocks, kinds)
         for block in blocks.values():
             Block.check(block)
             if block.get('coordinator'):
-                require(block['coordinator'] in nodes and nodes[block['coordinator']]['role'] == 'sublead',
+                coordinator = block['coordinator'] in nodes and kinds.of(nodes[block['coordinator']]['role'])
+                require(coordinator and coordinator.coordinates and not coordinator.controller,
                         '任务块协调者必须是已有次主控节点')
             require(set(block['after']) <= blocks.keys(), '无效前置任务块')
             require(any(n.get('block') == block['id'] for n in nodes.values()), '任务块不能为空')

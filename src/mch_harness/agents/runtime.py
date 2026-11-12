@@ -30,7 +30,7 @@ import threading
 from typing import Callable
 
 from .. import host as host_module, skills
-from . import providers
+from . import kinds as agent_kinds, providers
 from .compaction import CompactionMixin
 from .conversation import ConversationMixin
 from .loop import LoopMixin
@@ -48,14 +48,17 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
     """Runs every project's agents; the behaviour lives in the mixins (store, team, loop, tooling)."""
 
     def __init__(self, store, settings, events_for: Callable, run_tool: Callable, locks, *, hooks=None, host=None,
-                 tools=None, contracts=None, roles=None):
+                 tools=None, contracts=None, roles=None, kinds=None):
         from ..tools import registry
         registry.load_generic()
         self.host = host if host is not None else host_module.default()
         self.hooks = hooks if hooks is not None else self.host.hooks if self.host.hooks is not None else Hooks()
         self.tools = tools if tools is not None else registry.TOOLS   # the tools this engine knows; a Kernel passes its own
         self.contracts = dict(contracts or {})    # extension tools a graph node may hold: name -> path contract
-        self.extra_roles = dict(roles or {})      # roles registered for this engine only
+        # The agent kinds this engine knows: the process default plus kinds registered for this engine only.
+        self.kinds = (kinds if kinds is not None else agent_kinds.DEFAULT).copy()
+        for role, names in (roles or {}).items():
+            self.kinds.register(agent_kinds.define(role, names))
         self.bridge_url = ""  # where CLI agents' MCP bridge reaches this workbench (set by the app)
         self.store = store
         self.settings = settings
@@ -80,12 +83,10 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
             return self._graphs[pid]
 
     def known_role(self, role) -> bool:
-        from . import roles
-        return role in self.extra_roles or role in roles.ROLE_TOOLS
+        return role in self.kinds
 
     def role_tools(self, role) -> list[str]:
-        from . import roles
-        return list(self.extra_roles[role]) if role in self.extra_roles else roles.tools_for(role)
+        return self.kinds.tools(role)
 
     def graph_tools_for(self,role,requested=None):
         defaults=set(self._expand(self.role_tools(role)))
@@ -93,7 +94,7 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
             raise AgentError('节点工具必须是角色默认权限的子集')
         selected=defaults if requested is None else set(self._expand(requested))
         mapped={'fs.read','fs.list','fs.search','fs.write','fs.edit','code.run'} | set(self.contracts)
-        coordination={'graph.block_status','graph.request_review'} if role=='sublead' else set()
+        coordination={'graph.block_status','graph.request_review'} if self.kind(role).coordinates else set()
         return sorted(selected & mapped | {'graph.save_state','graph.submit','graph.send','graph.request_helpers','access.request'} | coordination)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .kinds import KindLookup
 import secrets
 import time
 from typing import Callable
@@ -12,7 +13,7 @@ from .providers import ProviderError
 from .state import (WAKING_NOTICES, AgentError, AgentState, spent_tokens)
 
 
-class LoopMixin:
+class LoopMixin(KindLookup):
     # =================================================================== the loop
 
     def _loop(self, st: AgentState) -> None:
@@ -77,7 +78,7 @@ class LoopMixin:
             return not st.stop
 
     def _turn(self, st: AgentState) -> None:
-        if st.rec['role']=='lead' and (self._root(st.project_id)/'state/graph.json').exists():
+        if self.kind(st).controller and (self._root(st.project_id)/'state/graph.json').exists():
             self.graph(st.project_id).prepare_lead(st)
         runner = self.provider_factory(st.rec["model"])
         if isinstance(runner, cli.CLIRunner):
@@ -126,7 +127,7 @@ class LoopMixin:
                 self._emit_message(st, result.text, result.reasoning)
             if not result.tool_calls:
                 st.pending_turn = False
-                if st.rec["role"] != "lead" and not st.rec.get("report"):
+                if self.kind(st).reports() and not st.rec.get("report"):
                     if not st.nudged:
                         st.nudged = True
                         st.pending_turn = True
@@ -274,11 +275,11 @@ class LoopMixin:
                 self._commit(st)
                 return
             st.pending_turn = False
-            if st.rec["role"] != "lead" and not st.nudged:
+            if self.kind(st).reports() and not st.nudged:
                 st.nudged = True
                 st.pending_turn = True
                 self._append_message(st, {"role": "user", "content": "【系统通知】请用 agent.report 向上级汇报结果后再结束。"})
-            elif st.rec["role"] != "lead":
+            elif self.kind(st).reports():
                 self._submit_report(st, {"summary": out.text or "（未提交汇报）", "status": "partial"})
 
     def bridge_tools(self, pid: str, aid: str, token: str) -> list[dict]:
@@ -289,7 +290,7 @@ class LoopMixin:
         if st.stop:
             return {"content": self._interrupted(), "error": True}
         budget, spent = st.rec["budget"], spent_tokens(st.rec["usage"])
-        if spent >= budget["max_tokens"] and st.rec["role"] != "lead" and not self._wrap_up_call(st, name, args or {}):
+        if spent >= budget["max_tokens"] and self.kind(st).reports() and not self._wrap_up_call(st, name, args or {}):
             return {"content": "预算已用完：立即用 agent.report 汇报已完成的部分和未完成的事项（status 写 partial）。"
                                + ("这一问的解答概括还可以写。" if st.rec.get("question") else ""), "error": True}
         content, error = self._execute(st, {"id": f"cli-{secrets.token_hex(3)}", "name": name, "args": args or {}})
@@ -329,7 +330,7 @@ class LoopMixin:
         spent = spent_tokens(usage)
         over_tokens = spent >= budget["max_tokens"]
         over_steps = budget.get("max_steps") and usage["steps"] >= budget["max_steps"]
-        wraps_up = st.rec["role"] != "lead" and not st.rec.get("report")
+        wraps_up = self.kind(st).reports() and not st.rec.get("report")
         # About to run out (less than ~2 more calls of the current size): ask for a report while there is room.
         per_step = spent / max(1, usage["steps"])
         low = budget["max_tokens"] - spent < 2 * per_step or (budget.get("max_steps") and usage["steps"] >= budget["max_steps"] - 2)

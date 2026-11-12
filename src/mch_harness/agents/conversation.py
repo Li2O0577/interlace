@@ -3,12 +3,12 @@ conversation to an earlier message of the user's (to edit it or to regenerate th
 
 from __future__ import annotations
 
+from .kinds import KindLookup
 import base64
 
 from .providers import THINKING_BUDGETS, THINKING_LEVELS
 from .state import LEAD_ID, AgentError, AgentState
 
-SOLVER_ROLES = {"sublead", "modeler", "devil"}   # see the "thinking_solver" setting
 
 IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -16,7 +16,7 @@ IMAGE_MESSAGES = 3          # pictures are re-sent with the latest few user mess
 BUSY = ("running", "waiting_approval", "waiting_children", "waiting_parent", "waiting_user", "queued")
 
 
-class ConversationMixin:
+class ConversationMixin(KindLookup):
     # =================================================================== thinking depth
 
     def thinking_of(self, st: AgentState) -> str:
@@ -25,9 +25,8 @@ class ConversationMixin:
         if level in THINKING_LEVELS:
             return level
         d = self._defaults()
-        role = st.rec["role"]
         # Agents that solve and check the math think hard by default: a framework must not make them shallower.
-        key = "thinking_lead" if role == "lead" else "thinking_solver" if role in SOLVER_ROLES else "thinking_sub"
+        key = "thinking_" + self.kind(st).thinking
         level = d.get(key, "high" if key == "thinking_solver" else "default")
         return level if level in THINKING_LEVELS else "default"
 

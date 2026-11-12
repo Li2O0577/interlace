@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import roles
+from . import kinds, roles
 
 
 def _spec(name, description, params=None, required=None):
@@ -13,7 +13,7 @@ def _spec(name, description, params=None, required=None):
 AGENT_TOOLS = {
     "agent.spawn": _spec("agent.spawn", "派生一个子 Agent 并立即开始工作（不等待）。只给它任务说明和相关文件路径，不要粘贴长内容。"
                          "tools 可选，只能是你自己工具的子集；默认按角色分配。", {
-                             "role": {"type": "string", "enum": [r for r in roles.ROLE_TOOLS if r not in ('lead','file_keeper')], "description": roles.ROLE_GUIDE},
+                             "role": {"type": "string", "enum": kinds.DEFAULT.spawnable(), "description": roles.ROLE_GUIDE},
                              "task": {"type": "string", "description": "清楚的任务说明：目标、输入文件、背景与约束。交回什么由它自己判断"},
                              "name": {"type": "string", "description": "简短正式的称呼，写负责范围即可，例如“资料核对”“摘要”"
                                       "（界面显示为“角色·范围”）；不要用表情符号或昵称。可不填"},

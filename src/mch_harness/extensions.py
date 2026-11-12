@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .agents import kinds as agent_kinds
 from .tools.registry import Tool
 
 RESERVED = ("fs.", "code.", "graph.", "access.", "agent.", "tools.", "brainstorm.", "lineage.", "project.",
             "operation.", "events.", "artifact.", "approval.")
-RESERVED_ROLES = ("lead", "file_keeper")
 
 
 class ExtensionError(ValueError):
@@ -49,7 +49,8 @@ class Extension:
     task_types: list[TaskType] = field(default_factory=list)
     tools: list[Tool] = field(default_factory=list)
     contracts: dict[str, Contract] = field(default_factory=dict)   # tool name -> its path parameters
-    roles: dict[str, list[str]] = field(default_factory=dict)      # role -> the tools it holds by default
+    roles: dict[str, list[str]] = field(default_factory=dict)      # role -> its default tools (becomes a Worker kind)
+    kinds: list[type] = field(default_factory=list)                 # agent kinds: subclasses of kinds.Agent
 
     def tool(self, name: str, title: str, description: str, params: dict | None = None,
              required: list[str] | None = None, *, readonly: bool = False, dangerous: bool = False,
@@ -68,13 +69,19 @@ class Registered:
     """What one Kernel knows after its extensions were checked."""
     tools: dict[str, Tool]
     contracts: dict[str, Contract]
-    roles: dict[str, list[str]]
+    kinds: agent_kinds.AgentKinds
     task_types: dict[str, TaskType]
 
+    @property
+    def roles(self) -> dict[str, list[str]]:
+        """Role -> default tools of the kinds the extensions added (for older callers)."""
+        return {k.role: list(k.tools) for k in self.kinds.kinds() if k.role not in agent_kinds.DEFAULT}
 
-def register(base_tools: dict[str, Tool], extensions) -> Registered:
+
+def register(base_tools: dict[str, Tool], extensions, base_kinds: agent_kinds.AgentKinds | None = None) -> Registered:
     tools = dict(base_tools)
-    out = Registered(tools, {}, {}, {})
+    out = Registered(tools, {}, (base_kinds or agent_kinds.DEFAULT).copy(), {})
+    added: set[str] = set()
     for ext in extensions:
         if not isinstance(ext, Extension) or not str(ext.name).strip():
             raise ExtensionError("扩展必须是带名称的 Extension 对象")
@@ -92,13 +99,20 @@ def register(base_tools: dict[str, Tool], extensions) -> Registered:
             if unknown:
                 raise ExtensionError(f"工具 {name} 的边界声明引用了不存在的参数：{', '.join(sorted(unknown))}")
             out.contracts[name] = contract
-        for role, names in ext.roles.items():
-            if role in RESERVED_ROLES or role in out.roles or not str(role).strip():
+        new = [agent_kinds.define(role, names) if isinstance(role, str) and str(role).strip() else role
+               for role, names in ext.roles.items()] + list(ext.kinds)
+        for kind in new:
+            role = getattr(kind, "role", kind)
+            if not isinstance(role, str) or not role.strip() or role in added or out.kinds.get(role) in (agent_kinds.Lead, agent_kinds.Keeper):
                 raise ExtensionError(f"角色 {role} 由内核保留或已经注册过")
-            missing = [n for n in names if n not in tools]
+            try:
+                out.kinds.register(kind, replace=True)
+            except agent_kinds.KindError as e:
+                raise ExtensionError(str(e)) from None
+            missing = [n for n in kind.tools if n != "*" and not any(t == n or n.endswith("*") and t.startswith(n[:-1]) for t in tools)]
             if missing:
                 raise ExtensionError(f"角色 {role} 引用了未注册的工具：{', '.join(missing)}")
-            out.roles[role] = list(names)
+            added.add(role)
         for kind in ext.task_types:
             if not isinstance(kind, TaskType) or not str(kind.id).strip() or kind.id == "generic" or kind.id in out.task_types:
                 raise ExtensionError(f"任务类型 {getattr(kind, 'id', kind)!r} 不合法、由内核保留或已经注册过")

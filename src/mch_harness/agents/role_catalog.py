@@ -2,29 +2,16 @@
 from pathlib import Path
 import json
 
-READ = ["fs.list", "fs.read", "fs.search"]
-WRITE = ["fs.write", "fs.edit"]
+from . import kinds as _kinds
 
-# Graph nodes get the file and code tools of their role plus the graph tools; nothing here is a method or a pipeline.
-ROLE_TOOLS: dict[str, list[str]] = {
-    "file_keeper": ["fs.read", "fs.list", "fs.search", "access.decide"],
-    "lead": ["*"],
-    "worker": READ + WRITE + ["code.run"],
-    "reviewer": READ + WRITE,
-    "coder": READ + WRITE + ["code.run"],
-    "analyst": READ + WRITE + ["code.run"],
-    "researcher": READ + WRITE,
-    "writer": READ + WRITE,
-    "sublead": READ + WRITE + ["code.run"],
-}
+READ = list(_kinds.READ)
+WRITE = list(_kinds.WRITE)
 
-# Tools without which a role cannot do its job (a parent lacking them cannot spawn that role).
-ESSENTIAL: dict[str, list[str]] = {}
-
-ROLE_GUIDE = "按权限选角色：worker 执行、reviewer 检查（不运行代码）、coder 写代码、analyst 分析、researcher 整理资料、writer 写作；职责与验收要求由当前任务定义。"
-
-ROLE_NAMES = {"lead": "主控", "sublead": "次主控", "worker": "执行员", "reviewer": "检查员", "coder": "程序员",
-              "analyst": "分析师", "researcher": "资料员", "writer": "写作者", "file_keeper": "文件处理"}
+# Read-only views of the process default registry (see kinds.py), for code that reads the old role tables.
+ROLE_TOOLS = _kinds.View(_kinds.DEFAULT, lambda k: list(k.tools))
+ESSENTIAL = _kinds.View(_kinds.DEFAULT, lambda k: list(k.essential))
+ROLE_NAMES = _kinds.View(_kinds.DEFAULT, lambda k: k.title or k.role)
+ROLE_GUIDE = _kinds.DEFAULT.guide
 
 
 def project_mode(root: Path) -> str:
@@ -35,11 +22,11 @@ def project_mode(root: Path) -> str:
 
 
 def tools_for(role: str) -> list[str]:
-    return list(ROLE_TOOLS.get(role, READ))
+    return _kinds.DEFAULT.tools(role)
 
 
 def role_name(role):
-    return ROLE_NAMES.get(role, role)
+    return _kinds.DEFAULT.title(role)
 
 
 def clean_name(name: str) -> str:

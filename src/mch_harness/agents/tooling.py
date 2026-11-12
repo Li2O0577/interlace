@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .kinds import KindLookup
+import copy
+
 import time
 from typing import Any
 
@@ -16,11 +19,11 @@ from .specs import AGENT_TOOLS
 CLI_WAIT = 90   # seconds a CLI agent's agent.wait may hold its tool call (CLIs give up on long MCP calls)
 
 
-class ToolsMixin:
+class ToolsMixin(KindLookup):
     # =================================================================== tools
 
     def _agent_tool_names(self, st: AgentState) -> list[str]:
-        if st.rec['role']=='file_keeper':
+        if self.kind(st).decides_files:
             return []
         if st.rec.get('graph'):
             return ['agent.ask','agent.message','tools.load']
@@ -33,7 +36,7 @@ class ToolsMixin:
                 continue
             if name.startswith("brainstorm.") and not self.hooks.special_tools:
                 continue
-            if name == "agent.report" and st.rec["role"] == "lead":
+            if name == "agent.report" and not self.kind(st).reports():
                 continue
             if (name == "agent.spawn" or name.startswith("brainstorm.")) and not depth_ok:
                 continue
@@ -43,15 +46,16 @@ class ToolsMixin:
     def _loaded(self, st: AgentState) -> tuple[list[str], list[str]]:
         """(tools whose full specs go to the model, permitted tools only listed by name)."""
         allowed = [n for n in self._expand(st.rec["tools"]) if n in self.tools and self._available(n)]
-        if st.rec['role']=='lead' and (self._root(st.project_id)/'state/graph.json').exists():
+        controls_graph = self.kind(st).controller and (self._root(st.project_id)/'state/graph.json').exists()
+        if controls_graph:
             allowed=[n for n in allowed if n not in ('graph.confirm','graph.approve','access.decide')]
         core = set(self.hooks.core_tools(self,st,allowed))
-        if st.rec['role']=='lead' and (self._root(st.project_id)/'state/graph.json').exists():
+        if controls_graph:
             core.update(n for n in allowed if n.startswith('graph.') or n=='access.revoke')
         if st.rec.get('graph'):
             core.update({'graph.save_state','graph.submit','graph.send','graph.request_helpers','access.request'})
             core.update(n for n in allowed if n in self.contracts)
-            if st.rec['role']=='sublead':
+            if self.kind(st).coordinates:
                 core.update({'graph.block_status','graph.request_review'})
         core |= set(st.rec.get("loaded") or [])
         return [n for n in allowed if n in core], [n for n in allowed if n not in core]
@@ -69,8 +73,18 @@ class ToolsMixin:
         if full:  # CLI agents list their tools once per process through MCP: give them all
             loaded = loaded + rest
         specs = [self.tools[n].spec() for n in loaded]
-        specs += [self.hooks.agent_spec(n,AGENT_TOOLS[n]) for n in self._agent_tool_names(st)]
+        specs += [self.hooks.agent_spec(n,self._agent_spec(n)) for n in self._agent_tool_names(st)]
         return [{"name": s["name"], "description": s["description"], "parameters": s["parameters"]} for s in specs]
+
+    def _agent_spec(self, name: str) -> dict:
+        """The schema of a collaboration tool; agent.spawn offers the roles this engine can spawn."""
+        spec = AGENT_TOOLS[name]
+        if name != "agent.spawn":
+            return spec
+        spec = copy.deepcopy(spec)
+        fields = spec["parameters"]["properties"]
+        fields["role"] = {**fields["role"], "enum": self.kinds.spawnable(), "description": self.kinds.guide or fields["role"].get("description", "")}
+        return spec
 
     def _system(self, st: AgentState, full: bool = False) -> "roles.SystemPrompt":
         pid = st.project_id
@@ -85,7 +99,7 @@ class ToolsMixin:
         if not self._available("skill.load") or "skill.load" not in self._expand(st.rec["tools"]):
             return ""
         try:
-            return skills.prompt_section(self.skills, self._root(st.project_id), st.rec, roles.role_name)
+            return skills.prompt_section(self.skills, self._root(st.project_id), st.rec, self.kinds.title, self.kind(st))
         except Exception:  # noqa: BLE001 — a broken skill file must not stop the agent
             return ""
 
@@ -165,14 +179,14 @@ class ToolsMixin:
         return approval
 
     def _agent_tool(self, st: AgentState, name: str, args: dict) -> Any:
-        if st.rec['role']=='file_keeper':
+        if self.kind(st).decides_files:
             raise AgentError('文件处理模型只能只读查找材料并输出 access.decide，不能协作或管理 Agent')
         if (st.rec.get('graph') and name not in ('agent.ask','agent.message','tools.load') or st.rec.get('graph_helper') and name not in ('agent.report','agent.ask','tools.load')):
             raise AgentError('图节点必须使用 graph.submit 和获批 helper 批次，不能绕过正式流程')
         if st.rec.get('graph') and name=='agent.message':
             return self.graph(st.project_id).reply_helper(st.rec['id'],args.get('to',''),args.get('text',''))
         pid, aid = st.project_id, st.rec["id"]
-        if name == "agent.spawn" and st.rec["role"] == "lead" and self.team_mode(pid) == "manual":
+        if name == "agent.spawn" and self.kind(st).controller and self.team_mode(pid) == "manual":
             # Manual team mode: the user sees who the lead wants to send and may change the task or role first.
             shown = {k: args[k] for k in ("role", "name", "task", "expect", "skills", "question") if args.get(k)}
             approval = self._await_approval(st, self._request_approval(st, name, shown))
@@ -227,7 +241,7 @@ class ToolsMixin:
         if name == "tools.load":
             return self._load_tools(st, args.get("names") or [])
         if name == "agent.report":
-            if st.rec["role"] == "lead":
+            if not self.kind(st).reports():
                 raise AgentError("主控 Agent 直接在对话中向用户汇报")
             args=self.hooks.before_report(self,st,args)
             self._submit_report(st, args)

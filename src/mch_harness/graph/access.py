@@ -9,6 +9,7 @@ from ..core.jsonfile import locked
 from .boundary import file_hash, safe_path
 from .model import require
 from .run import GraphRun
+from ..plan import LEAD, HUMAN
 
 
 class Access:
@@ -129,7 +130,7 @@ class Access:
             return copy.deepcopy(request)
 
     def revoke(self,actor,grant_id,reason):
-        require(actor in ('human','lead') and isinstance(reason,str) and reason.strip(), '仅操作者或主控可撤销授权')
+        require(actor in (HUMAN,LEAD) and isinstance(reason,str) and reason.strip(), '仅操作者或主控可撤销授权')
         with locked(self.store.path):
             data=self._load()
             grant=data['run']['grants'].get(grant_id)
