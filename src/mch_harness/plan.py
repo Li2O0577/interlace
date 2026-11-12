@@ -117,10 +117,11 @@ class Node(Entity):
     model: str = ''
     thinking: str = ''
     helpers: bool = False
+    kind: str = 'agent'   # how the node runs (graph/nodes.py); absent in stored plans means a model instance
     given: tuple = field(default=(), repr=False)
 
     REQUIRED = ('id', 'name', 'summary', 'role')
-    OPTIONAL = ('duty', 'block', 'accept', 'stance', 'reads', 'tools', 'model', 'thinking', 'helpers')
+    OPTIONAL = ('duty', 'block', 'accept', 'stance', 'reads', 'tools', 'model', 'thinking', 'helpers', 'kind')
 
     @property
     def is_lead(self):
@@ -131,10 +132,13 @@ class Node(Entity):
         """``blocks``: ids of the plan's blocks, when the node is checked as part of a plan."""
         check_keys(data, cls.REQUIRED, cls.OPTIONAL)
         check_configuration(data)
+        require(isinstance(data.get('kind', 'agent'), str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', data.get('kind', 'agent')),
+                '未知节点种类')
         for name in ('name', 'summary', 'role'):
             check_text(data[name])
         if data['id'] == LEAD:
             require(data.get('block') is None, '主控不属于任务块')
+            require(data.get('kind', 'agent') == 'agent', '主控必须是模型节点')
         else:
             block = data.get('block')
             require(not (kinds or agent_kinds.DEFAULT).of(data['role']).controller and isinstance(block, str) and (blocks is None or block in blocks),

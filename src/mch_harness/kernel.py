@@ -82,6 +82,7 @@ class Kernel:
         self.locks=ProjectLocks()
         self.manager=AgentManager(self.store,self.settings,self.events_for,self.run_tool,self.locks,host=self.adapters,
             tools=self.registered.tools,contracts=self.registered.contracts,kinds=self.registered.kinds)
+        self.manager.node_kinds=self.registered.node_kinds   # how this kernel's plan nodes run (graph/nodes.py)
         if provider_factory is not None:
             self.manager.provider_factory=provider_factory
         self.operator=Operator(self)

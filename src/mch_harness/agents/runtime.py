@@ -55,6 +55,7 @@ class AgentManager(StoreMixin, TeamMixin, LoopMixin, ToolsMixin, CompactionMixin
         self.host = host if host is not None else host_module.default()
         self.hooks = hooks if hooks is not None else self.host.hooks if self.host.hooks is not None else Hooks()
         self.tools = tools if tools is not None else registry.TOOLS   # the tools this engine knows; a Kernel passes its own
+        self.node_kinds = None   # the node kinds of this engine; None: the kernel default (graph/nodes.py)
         self.contracts = dict(contracts or {})    # extension tools a graph node may hold: name -> path contract
         # The agent kinds this engine knows: the process default plus kinds registered for this engine only.
         self.kinds = (kinds if kinds is not None else agent_kinds.DEFAULT).copy()

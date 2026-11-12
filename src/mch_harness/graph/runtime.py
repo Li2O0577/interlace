@@ -14,6 +14,8 @@ from .run import GraphRun
 from .store import GraphStore
 from ..plan import LEAD, HUMAN, LEAD_INSTANCE
 from ..agents.kinds import Keeper
+from ..plan import Plan
+from . import nodes as node_kinds
 
 DEFAULT_AUTH='只读查看本项目材料，按既定职责评估具体文件申请；不写文件、不改图、不指挥 Agent。'
 
@@ -27,6 +29,18 @@ class GraphRuntime:
         self.coordination=Coordination(self.store)
         self.guard=threading.RLock()
         self.ticking=False
+        self.again=False
+        self.node_kinds=getattr(manager,'node_kinds',None) or node_kinds.DEFAULT
+
+    def node_kind(self,node):
+        """The kind that runs a plan node; refuses a kind this engine does not know."""
+        kind=self.node_kinds.get(node.kind)
+        require(kind is not None,f'本引擎未注册节点种类 {node.kind}，节点 {node.id} 不能启动')
+        return kind
+
+    def _kind_of_instance(self,instance):
+        plan=Plan.from_dict(self.store.load()['plan'],trusted=True)
+        return self.node_kind(plan.node(instance['node']))
 
     def enabled(self):
         return self.store.path.exists() and self.store.load()['status']=='confirmed'
@@ -119,49 +133,72 @@ class GraphRuntime:
 
     def tick(self):
         with self.guard:
-            if self.ticking or not self.enabled() or self.manager.closing:
+            if self.ticking:
+                self.again=True   # a runner delivered during this tick: look once more before leaving
+                return
+            if not self.enabled() or self.manager.closing:
                 return
             self.ticking=True
             try:
-                self.ensure_lead()
-                data=self.store.load()
-                automatic=self.manager.store.get(self.pid).get('autonomy')=='full'
-                access=data['run'].get('access',{})
-                if not access or access['automatic']!=automatic:
-                    previous=access.get('keeper') or {}
-                    self.access.configure(automatic,task=data['plan'].get('task') or self.manager.store.get(self.pid).get('description') or '完成当前项目任务',
-                                          authorization=access.get('authorization',DEFAULT_AUTH))
-                    if not automatic and previous.get('handle') and self.manager.exists(self.pid,previous['handle']):
-                        self.manager.control(self.pid,LEAD,previous['handle'],'stop',reason='关闭自动文件处理')
-                if automatic:
-                    self.access.ensure_keeper(self._keeper)
-                candidates=self.run.ready()
-                candidates += [i['node'] for i in self.run.state()['instances'].values() if i['status']=='reserved']
-                for node in dict.fromkeys(candidates):
-                    instance=None
-                    try:
-                        instance=self.run.reserve(node)
-                        data=self.store.load()
-                        definition=next(n for n in data['plan']['nodes'] if n['id']==node)
-                        node_tools=self.manager.graph_tools_for(definition['role'],definition.get('tools'))
-                        handle=self._spawn(instance['id'],definition['role'],definition['duty'],name=definition['name'],
-                            tools=node_tools,model=definition.get('model',''),extra={**({'thinking':definition['thinking']} if definition.get('thinking') else {}),'graph':{
-                                'node':node,'round':instance['round'],'plan_version':data['version']}})
-                        self.run.attach(instance['id'],handle)
-                    except Exception as exc:
-                        instance=instance or self.run.state()['instances'][self.run.state()['by_node'][node]]
-                        self.run.failed_start(instance['id'],exc)
-                        self.notify('graph.start_blocked',{'node':node,'instance':instance['id'],'reason':str(exc)})
-                        continue
-                    self._activate(handle)
-                    self.notify('graph.launched',{'node':node,'instance':instance['id'],'agent':handle})
-                # Reconcile a crash after attach but before activating the queued record.
-                for inst in self.run.state()['instances'].values():
-                    if inst['status']=='active' and inst.get('handle'):
-                        self._activate(inst['handle'])
-                self.manager._schedule(self.pid)
+                while True:
+                    self.again=False
+                    self._tick_once()
+                    if not self.again or self.manager.closing:
+                        break
             finally:
                 self.ticking=False
+
+    def _tick_once(self):
+        self.ensure_lead()
+        data=self.store.load()
+        automatic=self.manager.store.get(self.pid).get('autonomy')=='full'
+        access=data['run'].get('access',{})
+        if not access or access['automatic']!=automatic:
+            previous=access.get('keeper') or {}
+            self.access.configure(automatic,task=data['plan'].get('task') or self.manager.store.get(self.pid).get('description') or '完成当前项目任务',
+                                  authorization=access.get('authorization',DEFAULT_AUTH))
+            if not automatic and previous.get('handle') and self.manager.exists(self.pid,previous['handle']):
+                self.manager.control(self.pid,LEAD,previous['handle'],'stop',reason='关闭自动文件处理')
+        if automatic:
+            self.access.ensure_keeper(self._keeper)
+        candidates=self.run.ready()
+        candidates += [i['node'] for i in self.run.state()['instances'].values() if i['status']=='reserved']
+        for node in dict.fromkeys(candidates):
+            instance=None
+            try:
+                instance=self.run.reserve(node)
+                definition=Plan.from_dict(self.store.load()['plan'],trusted=True).node(node)
+                kind=self.node_kind(definition)
+                handle=kind.prepare(self,definition,instance)
+                self.run.attach(instance['id'],handle)
+            except Exception as exc:
+                instance=instance or self.run.state()['instances'][self.run.state()['by_node'][node]]
+                self.run.failed_start(instance['id'],exc)
+                self.notify('graph.start_blocked',{'node':node,'instance':instance['id'],'reason':str(exc)})
+                continue
+            kind.activate(self,handle)
+            self.notify('graph.launched',{'node':node,'instance':instance['id'],'agent':handle})
+        # Reconcile a crash after attach but before activating the queued record.
+        for inst in self.run.state()['instances'].values():
+            if inst['status']=='active' and inst.get('handle') and inst.get('kind')!='controller':
+                try:
+                    self._kind_of_instance(inst).activate(self,inst['handle'])
+                except GraphError:
+                    continue
+        self.manager._schedule(self.pid)
+
+    def deliver(self,instance,*,summary,files,state,known_issues=None,usage='按本节点验收要求使用交付文件'):
+        """How a runner that is not a model (see nodes.py) submits: its state record and its submission pass the
+        same checks as a model node's graph.save_state and graph.submit; then the scheduler continues."""
+        record=self.run.state()['instances'].get(instance)
+        require(record and record.get('kind')!='controller','未知工作实例')
+        node=record['node']
+        self.run.save_state(node,instance,state)
+        result=self.run.submit(node,instance,summary=summary,files=files,known_issues=known_issues,usage=usage)
+        self._coordinator_progress(node)
+        self.notify('graph.delivered',{'node':node,'instance':instance,'submission':result['id']})
+        self.tick()
+        return result
 
     def apply_change(self,actor,request):
         with self.guard:
@@ -204,14 +241,14 @@ class GraphRuntime:
 
     def rework(self,actor,node,reason):
         self.run.rework(self.identity(actor),node,reason)
-        handle=self.run.state()['instances'][self.run.state()['by_node'][node]]['handle']
-        self.manager.send(self.pid,LEAD,handle,'图节点返工：'+reason)
+        instance=self.run.state()['instances'][self.run.state()['by_node'][node]]
+        self._kind_of_instance(instance).rework(self,instance['handle'],reason)
         return {'node':node,'status':'returned'}
 
     def end(self,actor,node,instance,reason):
         self.run.end(self.identity(actor),node,instance,reason)
-        handle=self.run.state()['instances'][instance]['handle']
-        self.manager.control(self.pid,LEAD,handle,'stop',reason=reason)
+        record=self.run.state()['instances'][instance]
+        self._kind_of_instance(record).stop(self,record['handle'],reason)
         return {'instance':instance,'status':'ended'}
 
     def close_interrupted(self,actor,node,instance,content,reason):

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agents import kinds as agent_kinds
+from .graph import nodes as graph_nodes
 from .tools.registry import Tool
 
 RESERVED = ("fs.", "code.", "graph.", "access.", "agent.", "tools.", "brainstorm.", "lineage.", "project.",
@@ -51,6 +52,7 @@ class Extension:
     contracts: dict[str, Contract] = field(default_factory=dict)   # tool name -> its path parameters
     roles: dict[str, list[str]] = field(default_factory=dict)      # role -> its default tools (becomes a Worker kind)
     kinds: list[type] = field(default_factory=list)                 # agent kinds: subclasses of kinds.Agent
+    nodes: list = field(default_factory=list)                       # node kinds: instances of graph.nodes.NodeKind
 
     def tool(self, name: str, title: str, description: str, params: dict | None = None,
              required: list[str] | None = None, *, readonly: bool = False, dangerous: bool = False,
@@ -71,6 +73,7 @@ class Registered:
     contracts: dict[str, Contract]
     kinds: agent_kinds.AgentKinds
     task_types: dict[str, TaskType]
+    node_kinds: graph_nodes.NodeKinds = field(default_factory=graph_nodes.NodeKinds)
 
     @property
     def roles(self) -> dict[str, list[str]]:
@@ -113,6 +116,11 @@ def register(base_tools: dict[str, Tool], extensions, base_kinds: agent_kinds.Ag
             if missing:
                 raise ExtensionError(f"角色 {role} 引用了未注册的工具：{', '.join(missing)}")
             added.add(role)
+        for node_kind in ext.nodes:
+            try:
+                out.node_kinds.register(node_kind)
+            except graph_nodes.NodeKindError as e:
+                raise ExtensionError(str(e)) from None
         for kind in ext.task_types:
             if not isinstance(kind, TaskType) or not str(kind.id).strip() or kind.id == "generic" or kind.id in out.task_types:
                 raise ExtensionError(f"任务类型 {getattr(kind, 'id', kind)!r} 不合法、由内核保留或已经注册过")
