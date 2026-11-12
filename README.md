@@ -24,6 +24,10 @@ uv build -o dist            # 构建 wheel
 
 每层只引用下面的层，`tests/test_layers.py` 检查这条规则。类层次、计划图的数据结构和节点协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+## 节点、边、方法
+
+仓库里正在建立新的一层：通用的节点、边（传递协议）、方法（连接结构）和运行它们的引擎。节点可以是模型、函数、外部程序、设备、人或另一张图。说明见 [docs/GRAPH.md](docs/GRAPH.md)，示例见 [examples/graphs/](examples/graphs/)。下文描述的是在它之前的那一层，两者目前并存。
+
 ## 最小用法
 
 ```python

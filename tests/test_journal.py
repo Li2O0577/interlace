@@ -328,3 +328,20 @@ def test_a_line_cut_short_is_dropped_and_a_damaged_one_is_refused(tmp_path):
     journal.write({'kind': 'end'})
     journal.close()
     assert journal.read() == [{'kind': 'end'}]
+
+
+@pytest.mark.parametrize('workers', [0, 2])
+def test_an_interrupt_inside_a_node_passes_through_and_leaves_the_run_resumable(tmp_path, workers):
+    path = tmp_path / 'run.jsonl'
+    second = Flaky(double)
+
+    def interrupted(x):
+        if second.broken:
+            raise KeyboardInterrupt
+        return second(x)
+    graph = lambda: Chain(fn('a', add_one), fn('b', interrupted)).build(DEFAULT)   # noqa: E731
+    with pytest.raises(KeyboardInterrupt):
+        Engine(graph(), DEFAULT, workers=workers, journal=Journal(path)).run({'in': 1})
+    assert [r['kind'] for r in records(path)] == ['run', 'act']          # no end: the run is not over
+    second.broken = False
+    assert Engine(graph(), DEFAULT, journal=Journal(path)).resume().outputs == {'out': [4]}
