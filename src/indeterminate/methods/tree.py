@@ -77,3 +77,41 @@ class Star(Tree):
             if isinstance(spoke, Tree):
                 raise GraphError("the spokes of a star are nodes; use Tree for more levels")
         super().__init__(hub, *spokes, **options)
+
+
+class Governed(Tree):
+    """A tree whose coordinators must ask a person before they act on certain things.
+
+    ``Governed(lead, a, b, operator=person, max_rounds=3)`` is ``Tree(lead, a, b, max_rounds=3)`` with one
+    addition: every coordinator that has a call port named ``approve`` is joined to ``operator`` through it.
+    The coordinator asks with ``ctx.call("approve", request)`` (an agent: by using its ``approve`` tool) and
+    gets the person's answer back before it goes on. Consent is a node in the graph like any other, so it is
+    in the graph's digest and in the journal.
+    """
+
+    name = "governed"
+
+    def __init__(self, root: Node, *children: "Node | Tree", operator: Node, approve: str = "approve", **options):
+        super().__init__(root, *children, **options)
+        self.operator, self.approve = operator, approve
+
+    def build(self, protocols: Protocols) -> Graph:
+        builder = GraphBuilder()
+        task, result = self._wire(builder)
+        builder.add(self.operator)
+        target = sole_input(self.operator)
+        if target is None:
+            raise GraphError(f"{self.operator.id} takes no input and cannot be asked")
+        asking = [tree.root for tree in self._trees() if tree.root.outputs.get(self.approve) and tree.root.outputs[self.approve].call]
+        if not asking:
+            raise GraphError(f"no coordinator has a call port {self.approve!r}: nothing would ever ask {self.operator.id}")
+        for node in asking:
+            builder.connect((node.id, self.approve), (self.operator.id, target), "call")
+        return builder.input("in", task).output("out", result).compile(protocols)
+
+    def _trees(self):
+        stack = [self]
+        while stack:
+            tree = stack.pop()
+            yield tree
+            stack.extend(child for child in tree.children if isinstance(child, Tree))

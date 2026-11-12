@@ -2,6 +2,6 @@
 from .chain import Chain
 from .fan import Fan
 from .loop import Loop
-from .tree import Star, Tree
+from .tree import Governed, Star, Tree
 
-__all__ = ["Chain", "Fan", "Loop", "Star", "Tree"]
+__all__ = ["Chain", "Fan", "Governed", "Loop", "Star", "Tree"]
