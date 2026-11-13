@@ -358,3 +358,11 @@ def test_a_called_node_whose_answer_fails_a_check_fails_the_call_not_the_caller_
     with pytest.raises(RunError, match='node caller failed in round 1: asked could not answer: y: even does not hold'):
         Engine(graph, DEFAULT).run({'in': 3})
     assert calls == [2, 3]                                          # the caller ran once each time
+
+
+def test_a_sender_cannot_say_that_its_file_needs_no_checking(tmp_path):
+    from indeterminate.base import Port
+    from indeterminate.protocols import File
+    (tmp_path / 'a.txt').write_text('abc')
+    body = File(tmp_path).encode({'path': 'a.txt', 'unchecked': True, 'size': 999, 'sha256': 'no', 'note': 'kept'}, Port('y'))
+    assert 'unchecked' not in body and body['size'] == 3 and body['sha256'] != 'no' and body['note'] == 'kept'

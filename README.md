@@ -1,23 +1,25 @@
 # 1ndeterminate
 
-把任何东西接成一张图并运行它。
+**English** · [中文](https://github.com/Li2O0577/1ndeterminate/blob/main/README.zh-CN.md)
 
-- **节点**是接收信息、给出信息的任何东西：模型、函数、外部程序、设备、人，或者另一张图。
-- **边**按写好的协议把信息从一个节点带到另一个节点：排队的数据、只留最新值、状态、信号、流、有回答的调用、按引用传递的文件。
-- **方法**是把节点接起来的现成结构：链、循环、扇出汇合、树、星形、需要人同意的树。
+Join anything into a graph and run it.
 
-引擎按图运行：事件驱动调度，可并行，可写日志并在中断后继续，可以在改过的图下继续。只依赖 Python 标准库。
+- A **node** is anything that takes information in and gives information out: a model, a function, an external program, a device, a person, or another graph.
+- An **edge** carries information from one node to another under a written protocol: queued values, latest value only, state, signals, streams, calls that are answered, files passed by path.
+- A **method** is a ready-made way of joining nodes: chain, loop, fan-out and join, tree, star, a tree that needs a person's consent, a pool of members that appear when called.
 
-## 安装
+The engine runs the graph and looks after the run: outputs are checked, usage is counted against a budget, activations are timed, everything is journaled so an interrupted run carries on, and an observer is told what happens as it happens. The package is a kernel to build frameworks on. It depends on the Python standard library and nothing else.
+
+## Install
 
 ```sh
-pip install -e .            # 在源码目录安装（尚未发布到公共索引）
-uv build -o dist            # 构建 wheel
+pip install 1ndeterminate
+pip install -e .            # or from a checkout
 ```
 
-需要 Python 3.11 及以上。发布名是 `1ndeterminate`，导入名是 `indeterminate`（Python 模块名不能以数字开头）。
+Python 3.11 or later, on Linux, macOS and Windows. The distribution is called `1ndeterminate`; the import name is `indeterminate`, because a Python module name cannot begin with a digit.
 
-## 用法
+## A first graph
 
 ```python
 from indeterminate import DEFAULT, Chain, Engine, FunctionNode, Port
@@ -29,39 +31,64 @@ graph = Chain(double, show).build(DEFAULT)
 print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 ```
 
-一个模型带两个工具，工具由图上的节点回答：
+## What it does
+
+**A model with tools.** A tool is a call edge to an ordinary node, so a dictionary, a program and a robot arm are all answered the same way.
 
 ```python
 from indeterminate import AgentNode, GraphBuilder, SinkNode, Tool
 
-agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "查词"), Tool("move", "移动机械臂")])
+agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "Look a word up"), Tool("move", "Move the arm")])
 graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
          .connect("agent.lookup", "dictionary.x", "call")
          .connect("agent.move", "arm.x", "call")
          .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
 ```
 
-`model` 是任何带 `chat(system, messages, tools, max_tokens)` 的对象；`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口和用于测试的 `FakeProvider`。
+`model` is any object with `chat(system, messages, tools, max_tokens)`. `indeterminate.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。七个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件、把设计做成块、运行中增长。
+**Outputs that are checked.** A port says what may leave through it and what happens when something else does: the node fails, the payload goes on with a warning, or the node is told what is wrong and may send again.
 
-图也可以写成 JSON，用命令行检查和运行。每次运行放在一个目录里，图里的人还没回答时命令会停下来，回答之后再继续：
-
-```sh
-cd examples/data && export PYTHONPATH=.
-1ndeterminate check  release.json --allow steps
-1ndeterminate run    release.json --dir /tmp/run --allow steps --input topic=tides    # 停在 waiting，退出码 3
-1ndeterminate answer --dir /tmp/run --json '{"approved": true}'
-1ndeterminate resume --dir /tmp/run                                                   # done，退出码 0
+```python
+Port("plan", dict, check=valid_plan, repairs=2)      # a model is told why its plan was refused, twice at most
 ```
 
-同样的操作也可以作为 MCP 服务接到别的应用里。图能够到的范围由启动服务的人在命令行上决定，客户端改不了：
+**Files passed by path.** Nodes send relative paths, not contents. The file is checked when it is sent and again when it arrives.
 
-```json
-{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
+```python
+protocols = with_files(DEFAULT, "work")
+Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)
+builder.connect("draw.chart", "report.chart", "file")
 ```
 
-搭自己的框架时，图文件只写结构和不想用默认值的地方。默认设置放在 `defaults` 里，提示词可以放在单独的文件里再引用，成员可以预留位置、用到时才出现：
+**Designs used as units.** A graph that has been worked out becomes a block, used many times and joined with others.
+
+```python
+review = Block(lambda: Loop(writer(), critic(), max_rounds=3), name="review")
+study = seq(clean, par(review, review, review), publish)       # in a row, side by side, nested
+graph = Chain(intake, study("study"), report).build(DEFAULT)
+```
+
+**Graphs that are not fixed in advance.** `Pool` keeps places for members that do nothing until they are called for. `SpawnNode` builds and runs a graph that a node wrote during the run, within limits set by whoever made the node.
+
+```python
+grow = SpawnNode("grow", Catalog(allow=["my_steps"]), max_nodes=20)
+graph = Chain(planner, grow).build(DEFAULT)                    # planner sends {"graph": ..., "inputs": ...}
+```
+
+**Runs that are looked after.**
+
+```python
+engine = Engine(graph, DEFAULT, workers=4,
+                journal=Journal("run.jsonl"),                  # an interrupted run is taken up with resume()
+                time_limit=600,                                # the longest one activation may take
+                budget={"tokens": 2_000_000},                  # nodes report what they use; over it, the run stops
+                observe=print)                                 # every event, as it happens
+```
+
+A node that must not do something twice outside the graph uses `ctx.key`, which stays the same when an interrupted activation runs again.
+
+**Graphs written as data.** A graph file holds the structure and whatever differs from the defaults; a prompt is a file that is referred to.
 
 ```json
 {
@@ -73,59 +100,72 @@ cd examples/data && export PYTHONPATH=.
 }
 ```
 
-设计好的图可以做成块，当作一个单位反复使用和拼接：
-
-```python
-review = Block(lambda: Loop(writer(), critic(), max_rounds=3), name="review")
-study = seq(clean, par(review, review, review), publish)       # 串起来、并排、嵌套
-graph = Chain(intake, study("study"), report).build(DEFAULT)
+```sh
+cd examples/data && export PYTHONPATH=.
+1ndeterminate check  release.json --allow steps
+1ndeterminate run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
+1ndeterminate answer --dir /tmp/run --json '{"approved": true}'
+1ndeterminate resume --dir /tmp/run                                                   # done, exit code 0
 ```
 
-节点之间可以只传文件的相对路径。发出时检查文件在不在、是不是声明的类型；没通过时由端口决定是失败、警告放行，还是把问题告诉节点让它改：
+A run is a directory. A person in the graph who has not answered yet does not keep a process waiting: the command exits, and the run goes on once the answer has been given. One process at a time runs a directory.
 
-```python
-protocols = with_files(DEFAULT, "work")
-Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)          # 文件不对就让节点改，最多两次
-builder.connect("draw.chart", "report.chart", "file")
+**As an MCP server.** The same operations can be offered to a model in another application. What its graphs may reach, how much they may use and how long a node may take are set on the command line by whoever starts the server, and the client cannot change them.
+
+```json
+{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate",
+  "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
-图的结构到运行中途才知道时，让一个节点把图写成数据交给 `SpawnNode`，它在目录允许的范围内建图、运行、发回结果：
+Model keys are read from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and their `_BASE_URL`), and are never written to a graph file, a run directory or a journal.
 
-```python
-grow = SpawnNode("grow", Catalog(allow=["my_steps"]), max_nodes=20)       # 能用什么由目录决定，不由写图的一方决定
-graph = Chain(planner, grow).build(DEFAULT)                               # planner 发出 {"graph": ..., "inputs": ...}
-```
+## What it is for
 
-## 组成
+Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/1ndeterminate/blob/main/docs/CASES.md) (in Chinese). In short:
 
-| 层 | 包 | 主要名称 |
+| Case | How it is built |
+|---|---|
+| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/1ndeterminate/blob/main/examples/graphs/planner_and_arm.py) |
+| A modelling assistant: a lead, one owner per question, a solver and a critic who argue until the answer is proved, a person who may step in anywhere | each question is a `Block` holding a `Loop(solve, critic)`; "no proof, not done" is a port check; questions run in `seq`; the person is the operator of a `Governed` tree; the run directory survives restarts |
+| A mathematician: a lead sends out explorers in parallel, each hands its work to a proof checker and reports back when it passes | `Pool(lead, explorer, size=10)` with `workers`; each explorer is a `Loop(prove, check)`; three directions given, three explorers exist |
+
+The kernel carries information and looks after the run. How a model thinks, how an arm moves and how a paper is typeset are the business of the nodes.
+
+## Layout
+
+| Layer | Package | Main names |
 |---|---|---|
-| 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
-| 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
-| 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
-| 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
-| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
-| 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
+| Abstractions | `indeterminate.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
+| Engine | `indeterminate.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
+| Parts | `indeterminate.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Blocks | `indeterminate.blocks` | `Block`, `seq`, `par` |
+| Graphs as data | `indeterminate.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
+| Outside | `indeterminate.runs`, `indeterminate.cli`, `indeterminate.serve` | `Run`; the command `1ndeterminate`; the MCP server |
 
-每层只引用下面的层，引擎不认识任何具体的节点、协议或方法；`tests/test_engine.py` 里有测试检查这条规则。
+Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-## 测试
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/1ndeterminate/blob/main/docs/GRAPH.md) (in Chinese). Eight examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/1ndeterminate/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/1ndeterminate/tree/main/examples/data).
+
+## Tests
 
 ```sh
 python -m pip install -e . pytest
 python -m pytest -q tests
-python scripts/bench_engine.py       # 每个信封的调度开销
+python scripts/bench_engine.py       # what the engine adds per envelope (about 11 microseconds)
 ```
 
-测试只用脚本化的假模型和假设备，不调用真实模型。
+The tests run on Linux, macOS and Windows, with scripted models and stand-in devices. They include runs broken at random places, with the journal cut short as a dying process leaves it, which must end as unbroken runs do. The package passes `mypy`.
 
-## 限制
+## Limits
 
-- 中断后的恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
-- 目前只有进程内的传递；`Transport` 是留给跨进程、跨机器的接口。
-- 设备节点没有接过真实设备，智能体节点没有用真实模型跑过。
-- MCP 服务只有 stdio 一种传输，一次处理一个调用，运行结束前这次调用不会返回。
+- Taking a run up again is at-least-once: an interrupted node runs again, and what it did outside the graph is done again unless the node uses `ctx.key` to prevent it.
+- Delivery is in-process only. `Transport` is the place for carrying envelopes between processes or machines, and nothing is there yet.
+- Both model interfaces have been tried once, with very small requests, against one compatible service. Thinking output, picture input and retries on rate limits have not been tried against a real service. Device nodes have only met stand-ins.
+- A node that overruns its time is abandoned, not killed: a thread cannot be stopped from outside. A program started by `ProcessNode` is killed.
+- `allow` is a list of modules whose functions a graph may name. It is not a sandbox.
+- The MCP server speaks over stdio only, handles one call at a time, and has not been tried with a real client.
+- There is no asynchronous interface; the engine uses threads.
 
-## 许可
+## License
 
 MIT

@@ -1,0 +1,49 @@
+name: Release
+
+# Publishing a GitHub release whose tag is v<version> builds the package and uploads it to the package index.
+# The upload uses trusted publishing: no token is stored anywhere.
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: The tag must be the version in the package
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/indeterminate/__init__.py)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
+      - name: Tests
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e . pytest
+          .venv/bin/python -m pytest -q tests
+      - name: Build
+        run: uv build -o dist
+      - name: Installed wheel alone in a clean environment
+        run: |
+          uv venv .clean-env
+          uv pip install --python .clean-env/bin/python dist/*.whl
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/.clean-env/bin/python" "$GITHUB_WORKSPACE/scripts/package_smoke.py" "$GITHUB_WORKSPACE/examples/graphs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

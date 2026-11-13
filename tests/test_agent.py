@@ -182,3 +182,26 @@ def test_an_agents_conversation_survives_a_restart(tmp_path):
     assert asked == [{'summary': ['a did the job', 'b did the job']}]     # it still knew what a had replied before the restart
     assert result.rounds == {'lead': 3, 'a': 1, 'b': 1, 'operator': 1}
     assert [m['role'] for m in lead.messages][:2] == ['user', 'assistant'] and lead.usage['calls'] == 6
+
+
+def test_a_turn_that_fails_leaves_nothing_in_the_conversation_and_fenced_json_is_read():
+    replies = [ChatResult(tool_calls=[{'id': 'c1', 'name': 'look', 'args': {}}]), ChatResult(text='done')]
+    agent = AgentNode('a', FakeProvider(lambda system, messages, tools: replies.pop(0)), tools=[Tool('look', 'Look.')])
+    broken = [True]
+
+    def look(request):
+        if broken:
+            raise KeyboardInterrupt()           # the process is interrupted in the middle of the turn
+        return 'seen'
+    graph = (GraphBuilder().add(agent, FunctionNode('look', look, inputs=[Port('request')], outputs=[Port('y')]))
+             .connect('a.look', 'look.request', 'call').input('in', 'a.task').output('out', 'a.out').compile(DEFAULT))
+    with pytest.raises(KeyboardInterrupt):
+        Engine(graph, DEFAULT).run({'in': 'go'})
+    assert agent.messages == []                                # no question without its answer was left behind
+    broken.clear()
+    replies[:] = [ChatResult(tool_calls=[{'id': 'c1', 'name': 'look', 'args': {}}]), ChatResult(text='done')]
+    assert Engine(graph, DEFAULT).run({'in': 'go'}).last('out') == 'done'
+    assert [m['role'] for m in agent.messages] == ['user', 'assistant', 'tool', 'assistant']
+
+    fenced = AgentNode('j', FakeProvider(lambda system, messages, tools: ChatResult(text='```json\n{"n": 1}\n```\n')), json=True, repairs=0)
+    assert Engine(GraphBuilder().add(fenced).input('in', 'j.task').output('out', 'j.out').compile(DEFAULT), DEFAULT).run({'in': 'x'}).last('out') == {'n': 1}

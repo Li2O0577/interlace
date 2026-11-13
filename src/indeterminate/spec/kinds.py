@@ -146,7 +146,10 @@ def block(d, catalog, graphs):
     given, own = c.get("defaults") or {}, inner.get("defaults") or {}
     defaults = {kind: {**own.get(kind, {}), **given.get(kind, {})} for kind in own.keys() | given.keys()}
     inner = {**inner, "defaults": defaults, "graphs": {**graphs, **inner.get("graphs", {})}}
-    return GraphNode(d["id"], load(inner, catalog), catalog.protocols, workers=c.get("workers", 0), firing=d.get("firing"))
+    workers = c.get("workers", 0)
+    if catalog.max_workers is not None and type(workers) is int:
+        workers = min(workers, catalog.max_workers)
+    return GraphNode(d["id"], load(inner, catalog), catalog.protocols, workers=workers, firing=d.get("firing"))
 
 
 BUILT_IN = {

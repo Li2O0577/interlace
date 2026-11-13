@@ -5,7 +5,7 @@
 
 The client (usually a model in some other application) sends graphs as data and gets runs back. What those
 graphs may reach is decided by whoever starts the server, on its command line, and never by the client: a
-client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot raise ``--budget``, cannot choose where a run is kept, and can
+client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot raise ``--budget``, cannot give a node longer than ``--time-limit`` or a block more threads than ``--workers``, cannot choose where a run is kept, and can
 take text only from files under ``--files`` (from none when it is not given).
 Model keys come from the server's environment. Every run is a directory under ``--runs``, the same directory
 the command line works on, so a run started here can be looked at or answered from a terminal.
@@ -101,7 +101,7 @@ class Server:
         id = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
         run = Run.create(self.root / id, self._graph(arguments), allow=self.allow, processes=self.processes,
                          workers=self.workers, models=self.models, time_limit=self.time_limit, files=self.files,
-                         budget=self.budget)
+                         budget=self.budget, strict=True)
         return {"run": id, **run.start(inputs)}
 
     def status(self, arguments: Mapping) -> dict:
