@@ -43,7 +43,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
 
 `model` 是任何带 `chat(system, messages, tools, max_tokens)` 的对象；`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口和用于测试的 `FakeProvider`。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。五个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。六个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件、把设计做成块。
 
 图也可以写成 JSON，用命令行检查和运行。每次运行放在一个目录里，图里的人还没回答时命令会停下来，回答之后再继续：
 
@@ -73,6 +73,14 @@ cd examples/data && export PYTHONPATH=.
 }
 ```
 
+设计好的图可以做成块，当作一个单位反复使用和拼接：
+
+```python
+review = Block(lambda: Loop(writer(), critic(), max_rounds=3), name="review")
+study = seq(clean, par(review, review, review), publish)       # 串起来、并排、嵌套
+graph = Chain(intake, study("study"), report).build(DEFAULT)
+```
+
 节点之间可以只传文件的相对路径。发出时检查文件在不在、是不是声明的类型；没通过时由端口决定是失败、警告放行，还是把问题告诉节点让它改：
 
 ```python
@@ -88,6 +96,7 @@ builder.connect("draw.chart", "report.chart", "file")
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
 | 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
 | 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 

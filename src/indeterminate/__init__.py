@@ -9,6 +9,7 @@ Layers, bottom up (each imports only from below):
 1. base        Node, Port, Schema, Edge, Protocol, Envelope, Graph, GraphBuilder, Method
 2. engine      Engine, Result, Journal, Transport
 3. parts       nodes, protocols, methods, models: the ones that come with the package
+   blocks      a designed graph kept as a unit and used as often as needed: Block, seq, par
 4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
 5. runs, cli, serve   a run kept in a directory, the ``1ndeterminate`` command that works on one, and the
                same operations offered to an MCP client
@@ -16,7 +17,7 @@ Layers, bottom up (each imports only from below):
 Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 _PUBLIC = {
     # base
@@ -30,6 +31,7 @@ _PUBLIC = {
     "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes",
     "Chain": "methods", "Loop": "methods", "Fan": "methods", "Tree": "methods", "Star": "methods",
     "Governed": "methods", "Pool": "methods",
+    "Block": "blocks", "seq": "blocks", "par": "blocks",
     "DEFAULT": "protocols", "standard": "protocols", "File": "protocols", "FileOf": "protocols",
     "with_files": "protocols",
     "Provider": "models", "FakeProvider": "models", "ChatResult": "models",
