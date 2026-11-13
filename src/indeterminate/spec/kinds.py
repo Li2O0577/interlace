@@ -125,7 +125,32 @@ def graph(d, catalog, graphs):
                      firing=d.get("firing"))
 
 
+def block(d, catalog, graphs):
+    """A use of a block kept in a file of its own (or written in place): ``{"kind": "block", "file": ...}``.
+    ``defaults`` given here replace the block's own, so one design serves different uses."""
+    import json
+    from .catalog import SpecError
+    from .load import load
+    c = d["config"]
+    if "file" in c:
+        try:
+            inner = json.loads(catalog.text(c["file"]))
+        except ValueError as exc:
+            raise SpecError(f"{d['id']}: {c['file']} is not JSON: {exc}") from None
+    elif isinstance(c.get("graph"), Mapping):
+        inner = c["graph"]
+    else:
+        raise SpecError(f"{d['id']}: a block needs a file, or a graph written in place")
+    if not isinstance(inner, Mapping):
+        raise SpecError(f"{d['id']}: a block is a description of a graph")
+    given, own = c.get("defaults") or {}, inner.get("defaults") or {}
+    defaults = {kind: {**own.get(kind, {}), **given.get(kind, {})} for kind in own.keys() | given.keys()}
+    inner = {**inner, "defaults": defaults, "graphs": {**graphs, **inner.get("graphs", {})}}
+    return GraphNode(d["id"], load(inner, catalog), catalog.protocols, workers=c.get("workers", 0), firing=d.get("firing"))
+
+
 BUILT_IN = {
+    "block": block,
     "function": function, "agent": agent, "process": process, "source": source, "sink": sink, "human": human,
     "graph": graph,
     "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),

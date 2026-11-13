@@ -66,6 +66,13 @@ Every problem, whatever became of it, is in ``Result.problems``, in the journal,
 (``rejected`` when it was given back to the node, ``warned`` when it was let through). The same applies on
 arrival, when a protocol finds that what arrived is not what was sent: the receiving port fails or warns.
 
+A node may run a whole graph inside one activation: ``ctx.engine(graph, protocols)`` gives it an engine
+that belongs to the outer run. It stops with it, works under the same time limit, and tells the outer
+observer its events with ``within`` naming the node (or nodes) it runs inside. When the outer run has a
+journal, the inner one keeps its own next to it (``<journal>.d/<node>-<round>.jsonl``), so that after a
+restart the outer activation runs again and the inner run goes on from where it was instead of starting
+over. Problems found inside are recorded outside as well, under ``outer/inner``.
+
 ``transport`` stands between sending and receiving: every envelope body passes through its ``carry``. Without
 one, bodies are handed over as they are. Streams and calls do not pass through it yet.
 """
@@ -192,6 +199,9 @@ class _Context(Context):
         engine = self._engine
         return engine._stop or (engine._outer is not None and bool(engine._outer()))
 
+    def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0) -> "Engine":
+        return self._engine._inner(self, graph, protocols, workers)
+
 
 class Engine:
     """One run of one graph. Build a new Engine to run again."""
@@ -206,6 +216,8 @@ class Engine:
             raise ValueError("time_limit must be a positive number of seconds")
         self.graph, self.workers = graph, workers
         self._observe = observe
+        self._limit = time_limit
+        self._parent: tuple | None = None   # (outer engine, the outer node's state, its activation's record)
         self._pending: deque = deque()    # problems recorded under the lock, waiting to be told to the observer
         self._over = False                # set once the engine has returned: a node still running is on its own
         self._alive = 0                   # worker threads that have not returned
@@ -309,6 +321,43 @@ class Engine:
             for state in self._states.values():
                 self._consider(state)
         return self._finish()
+
+    def go(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
+        """Run, or, when the journal already holds a run of this graph, take that run up. ``fresh`` throws
+        an earlier run away."""
+        journal = self._journal
+        if journal is not None:
+            records = journal.read()
+            if records:
+                under = next((r["graph"] for r in reversed(records) if r["kind"] in ("run", "change")), None)
+                if not fresh and under == self.graph.digest:
+                    return self.resume()
+                journal.close()
+                journal.path.unlink()
+        return self.run(inputs)
+
+    def _inner(self, ctx: "_Context", graph: Graph, protocols: Protocols, workers: int) -> "Engine":
+        """An engine for a graph that runs inside one activation of one of this engine's nodes."""
+        state = ctx._state
+        journal = None
+        if self._journal is not None:
+            outer = self._journal.path
+            journal = Journal(outer.with_name(outer.name + ".d") / f"{state.node.id}-{ctx.round}.jsonl", sync=self._journal.sync)
+        told, id = self._observe, state.node.id
+        observe = None if told is None else lambda event: told({**event, "within": [id, *event.get("within", ())]})
+        inner = Engine(graph, protocols, workers=workers, stopping=ctx.stopping, journal=journal,
+                       time_limit=self._limit, observe=observe)
+        inner._parent = (self, state, ctx._act)
+        return inner
+
+    def _adopt(self, state: _State, act: _Act | None, problems: list[dict]) -> None:
+        """Take on the problems of a run that happened inside one of this engine's nodes."""
+        with self._lock:
+            for problem in problems:
+                record = {**problem, "node": f"{state.node.id}/{problem['node']}"}
+                self._result.problems.append(record)
+                if act is not None:
+                    act.problems.append(record)
 
     def resume(self, *, change: bool = False) -> Result:
         """Take up the run in the journal where it stopped. ``change=True`` allows this engine's graph to
@@ -415,6 +464,9 @@ class Engine:
                 if not ended and not self._stop and self._error is None:
                     self._journal.write({"kind": "end"})
                 self._journal.close()
+        if self._parent is not None and self._result.problems:
+            outer, state, act = self._parent
+            outer._adopt(state, act, self._result.problems)
         if self._error:
             self._flush()
             self._error.problems = self._result.problems

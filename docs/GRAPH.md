@@ -23,6 +23,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
 | 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
+| 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
 | 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 
@@ -51,7 +52,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `SourceNode`、`SinkNode` | 外部读数的来源、结果的去处（相机、机械臂这类设备接在这里） |
 | `HumanNode` | 人。请求交给 `ask(request)`，它返回时就是人的回答 |
-| `GraphNode` | 一整张图当成一个节点，方法由此嵌套 |
+| `GraphNode` | 一整张图当成一个节点，方法由此嵌套；块的每一次使用就是它 |
 | `Pass`、`Collect`、`Branch`、`Until` | 只负责流向：原样转发、汇合成列表、二选一、循环是否继续 |
 | `Roster` | 管着固定数目的位置，按名字把位置发出去；`Pool` 用它 |
 
@@ -156,6 +157,52 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 `Pool` 用在“最多要十个、通常只用三四个”的场合。`member(id)` 是造一个成员的函数，图里有 `size` 个位置，但位置在协调者把活交给它之前什么都不做：不激活，不请求模型，没有对话，日志里也没有它。协调者从 `send` 发出 `{"to": "几何", "task": ...}`：没用过的名字调出一个新成员，用过的名字找到原来那个成员，映射里其余的内容（比如角色）随任务一起交给成员，所以一个模板可以做出干不同事情的成员。不带 `to` 的内容每次调出一个新成员。回复以 `{"from": 名字, "reply": ...}` 回到协调者；位置用完时新名字得到 `{"from": 名字, "error": ...}`。`Pool` 可以放在 `Tree` 的下级位置，也可以放在 `Governed` 里。
 
 自己的方法继承 `Method`，实现 `build(protocols)`。
+
+## 块
+
+节点是某张图里的一个东西，有自己的名字和状态，所以同一个节点不能出现在两个地方。块是设计本身：一份每次都重新造出图来的配方，每用一次得到一个独立的节点。
+
+```python
+from indeterminate import Block, seq, par
+
+review = Block(lambda: Loop(writer(), critic(), max_rounds=3), name="review")
+
+Chain(outline, review("first-pass"), review("second-pass"), publish)     # 用两次，各有各的状态
+Fan(*review.times(4))                                                    # 一次造四个：review-1 到 review-4
+```
+
+块的一次使用对外只露出里面那张图的输入口和输出口。
+
+把块拼成更大的块，不用给每个节点起名字：
+
+```python
+pipeline = seq(clean, review, publish)             # 一个接一个，是一条链
+panel = par(review, review, review)                # 同一份输入给每一个，输出汇成列表
+study = seq(clean, par(review, review), publish)   # 可以嵌套
+```
+
+`seq` 和 `par` 的每一部分可以是一个块，也可以是一个“给名字就造出节点”的函数。直接放一个已经造好的节点也行，但这样拼出的块只能用一次，因为那个节点没法再造一个。
+
+块里面的运行属于外面的运行：
+
+- 外面有日志时，里面的运行在旁边记自己的日志（`<日志>.d/<节点>-<轮次>.jsonl`）。中断后续跑，块从里面断掉的地方接着跑，已经完成的节点不重做。
+- 监听口会收到里面的事件，事件上的 `within` 写着它在哪个块里，嵌套几层就有几个名字。
+- 时间上限按里面的每个节点计，不按整个块计。
+- 里面发现的输出问题也记在外面，节点名写成 `块/节点`。
+- 块里可以有人：运行停在等待状态，回答之后从块里面继续。
+
+块也可以存成一个图文件，被别的图引用，这样一个设计可以给很多图用：
+
+```json
+{"method": "fan", "nodes": [
+  {"id": "review", "kind": "block", "file": "blocks/review.json", "times": 4,
+   "defaults": {"agent": {"model": "anthropic:some-model"}}}
+]}
+```
+
+`file` 是块的图文件，从 `Catalog(files=...)` 允许的目录里读。`defaults` 写在使用处时，会盖过块文件里自己的 `defaults`，所以同一个设计可以换一套设置来用；块里节点自己写明的设置不受影响。`times` 对任何节点都可以用，一次造出 `名字-1` 到 `名字-n`。在 Python 里，`indeterminate.spec.block("blocks/review.json", catalog)` 把文件读成一个 `Block`。
+
+节点自己也可以在一次激活里跑一张图：`ctx.engine(graph, protocols).go(inputs)`，上面这些性质都由引擎给出，`GraphNode` 就是这样实现的。
 
 ## 引擎
 
@@ -309,7 +356,7 @@ files/          节点的工作目录，file 协议的路径相对于它
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有五个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件。
+[examples/graphs/](../examples/graphs/) 下有六个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用。
 
 ## 限制
 
@@ -322,3 +369,5 @@ files/          节点的工作目录，file 协议的路径相对于它
 - `Pool` 的成员在一次运行里不会被收回：名字用过的位置一直属于那个名字。图的大小仍然在建图时确定，运行中增删节点只能停下来用 `resume(change=True)`。
 - 检查只在内容发出和到达的时刻进行；文件在两次检查之间被改动，要到下一次到达才会发现。`hash=False` 时只比较大小。
 - 引擎重跑一次激活时，节点在上一次尝试里对图外做过的事（写过的文件、调用过的工具）不会撤销。
+- 块里面的运行进了日志之后，块里的边上也只能传普通数据。
+- 块的日志文件在运行结束后不会自动清理。

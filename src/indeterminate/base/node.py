@@ -60,6 +60,13 @@ class Context(ABC):
     def stopping(self) -> bool:
         """True once the run is being stopped: a long activation should return soon."""
 
+    @abstractmethod
+    def engine(self, graph: Any, protocols: Any, *, workers: int = 0) -> Any:
+        """An engine for a graph that runs inside this activation. It stops when the outer run stops, keeps
+        its own journal beside the outer one when there is one, tells the outer observer what happens in it,
+        and works under the same time limit. ``go(inputs)`` runs it, or takes it up where an interrupted
+        earlier attempt at this same activation left it."""
+
 
 def _ports(given: Iterable[Port] | Mapping[str, Port] | None, declared: Iterable[Port]) -> Mapping[str, Port]:
     ports = list(given.values() if isinstance(given, Mapping) else given) if given is not None else list(declared)

@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined'):
         sys.modules.pop(name, None)
 
 
@@ -25,6 +25,12 @@ def test_files_checked(tmp_path):
     result = files_checked.main(tmp_path)
     assert result.last('out') == 'chart.svg (28 bytes) drawn from data/table.csv (25 bytes)'
     assert [(p['node'], p['handled']) for p in result.problems] == [('draw', 'rejected')] and result.rounds['draw'] == 1
+
+
+def test_blocks_joined():
+    import blocks_joined
+    result = blocks_joined.main()
+    assert result.last('out') == ' | '.join(['One design, three uses.'] * 3) and result.rounds == {'first': 1, 'panel': 1, 'join': 1}
 
 
 def test_review_loop():

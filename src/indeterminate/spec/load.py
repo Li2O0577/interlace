@@ -23,7 +23,16 @@ A description may also be written by hand, and then it can be shorter:
 
       {"id": "lead", "kind": "agent", "system": {"file": "prompts/lead.md"}}
 
-What ``dump`` writes has none of these left in it: the defaults and the files' text are in the nodes.
+* a design kept in a file of its own is used as a block, as often as needed, each use a node::
+
+      {"id": "review", "kind": "block", "file": "blocks/review.json", "defaults": {"agent": {"model": "..."}}}
+
+* ``times`` makes several of a node at once, named ``<id>-1`` .. ``<id>-n``::
+
+      {"method": "fan", "nodes": [{"id": "review", "kind": "block", "file": "blocks/review.json", "times": 4}]}
+
+What ``dump`` writes has none of these left in it: the defaults, the files' text and the blocks' graphs are
+in the nodes.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..base import Graph, GraphBuilder, GraphError, Node, NodeError, PortError, SchemaError
+from ..blocks import Block
 from ..methods import Chain, Fan, Governed, Loop, Pool, Star, Tree
 from ..nodes import GraphNode
 from .catalog import Catalog, SpecError
@@ -81,7 +91,7 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
         if "method" in description:
             return _method(description, catalog, graphs).build(catalog.protocols)
         builder = GraphBuilder()
-        for node in description.get("nodes", ()):
+        for node in _several(description.get("nodes", ())):
             builder.add(_node(node, catalog, graphs))
         for edge in description.get("edges", ()):
             builder.connect(edge["from"], edge["to"], edge.get("protocol", "value"), id=edge.get("id"),
@@ -95,6 +105,37 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
         raise SpecError(f"the description lacks {exc.args[0]!r}") from None
     except (GraphError, NodeError, PortError, SchemaError) as exc:
         raise SpecError(str(exc)) from None
+
+
+def _several(parts) -> list:
+    """The parts as written, with each that says ``times`` written out that many times."""
+    out = []
+    for part in parts:
+        times = part.get("times") if isinstance(part, Mapping) else None
+        if times is None:
+            out.append(part)
+            continue
+        if type(times) is not int or times < 1 or "id" not in part:
+            raise SpecError(f"times is a whole number of at least 1, on a part that has an id: {part!r}")
+        rest = {key: value for key, value in part.items() if key != "times"}
+        out.extend({**rest, "id": f"{part['id']}-{i}"} for i in range(1, times + 1))
+    return out
+
+
+def block(source, catalog: Catalog | None = None, *, name: str | None = None, workers: int = 0) -> Block:
+    """A block from a description, or from the file one is written in: every use builds the graph anew."""
+    if isinstance(source, Mapping):
+        description, catalog = source, catalog if catalog is not None else Catalog()
+    else:
+        path = Path(source)
+        catalog = catalog if catalog is not None else Catalog(files=path.resolve().parent)
+        try:
+            description = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise SpecError(f"{path}: not JSON: {exc}") from None
+        name = name or path.stem
+    load(description, catalog)                 # a design that cannot be built is refused here, not at its first use
+    return Block(lambda: load(description, catalog), name=name or "block", protocols=catalog.protocols, workers=workers)
 
 
 def _node(given: Mapping, catalog: Catalog, graphs: Mapping) -> Node:
@@ -126,7 +167,7 @@ def _part(given: Mapping, catalog: Catalog, graphs: Mapping):
 def _method(d: Mapping, catalog: Catalog, graphs: Mapping):
     name = d["method"]
     options = {"protocol": d["protocol"]} if "protocol" in d else {}
-    nodes = [_node(node, catalog, graphs) for node in d.get("nodes", ())]
+    nodes = [_node(node, catalog, graphs) for node in _several(d.get("nodes", ()))]
     if name == "chain":
         return Chain(*nodes, **options)
     if name == "loop":
@@ -137,7 +178,7 @@ def _method(d: Mapping, catalog: Catalog, graphs: Mapping):
                    join=_node(d["join"], catalog, graphs) if d.get("join") else None, **options)
     if name in ("tree", "star", "governed"):
         root = _node(d["root"], catalog, graphs)
-        children = [_part(child, catalog, graphs) for child in d.get("children", ())]
+        children = [_part(child, catalog, graphs) for child in _several(d.get("children", ()))]
         if name == "governed":
             return Governed(root, *children, operator=_node(d["operator"], catalog, graphs), max_rounds=d["max_rounds"], **options)
         return (Tree if name == "tree" else Star)(root, *children, max_rounds=d["max_rounds"], **options)
