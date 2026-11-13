@@ -45,6 +45,16 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
 
 完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。四个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂。
 
+图也可以写成 JSON，用命令行检查和运行。每次运行放在一个目录里，图里的人还没回答时命令会停下来，回答之后再继续：
+
+```sh
+cd examples/data && export PYTHONPATH=.
+1ndeterminate check  release.json --allow steps
+1ndeterminate run    release.json --dir /tmp/run --allow steps --input topic=tides    # 停在 waiting，退出码 3
+1ndeterminate answer --dir /tmp/run --json '{"approved": true}'
+1ndeterminate resume --dir /tmp/run                                                   # done，退出码 0
+```
+
 ## 组成
 
 | 层 | 包 | 主要名称 |
@@ -52,6 +62,8 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
 | 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed` |
+| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
+| 对外接口 | `indeterminate.runs`、`indeterminate.cli` | `Run`；命令 `1ndeterminate` |
 
 每层只引用下面的层，引擎不认识任何具体的节点、协议或方法；`tests/test_engine.py` 里有测试检查这条规则。
 
@@ -70,7 +82,7 @@ python scripts/bench_engine.py       # 每个信封的调度开销
 - 中断后的恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
 - 目前只有进程内的传递；`Transport` 是留给跨进程、跨机器的接口。
 - 设备节点没有接过真实设备，智能体节点没有用真实模型跑过。
-- 还没有命令行和 MCP 服务这类对外接口。
+- 对外接口目前只有命令行，MCP 服务还没有做。
 
 ## 许可
 

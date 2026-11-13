@@ -23,12 +23,12 @@ class Catalog:
     ``allow``       module names a function may be imported from (``"mypkg"`` covers ``mypkg`` and all below it)
     ``processes``   whether ``process`` nodes may be built: they start programs on this machine
     ``models``      ``models(name)`` returns the model for an agent; without it, agents cannot be built
-    ``ask``         ``ask(node_id, request)`` answers for every ``human`` node that names no function of its own
+    ``ask``         ``ask(node_id, round, request)`` answers for every ``human`` node that names no function of its own
     ``protocols``   the protocols the graph is compiled with
     """
 
     def __init__(self, *, allow: Iterable[str] = (), processes: bool = False,
-                 models: Callable[[str], Any] | None = None, ask: Callable[[str, Any], Any] | None = None,
+                 models: Callable[[str], Any] | None = None, ask: Callable[[str, int, Any], Any] | None = None,
                  protocols: Protocols = DEFAULT):
         self.allow, self.processes = tuple(allow), bool(processes)
         self.models, self.ask, self.protocols = models, ask, protocols

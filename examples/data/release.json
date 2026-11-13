@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {"id": "draft", "kind": "function", "function": "steps.draft", "inputs": ["topic"], "outputs": ["note"]},
+    {"id": "editor", "kind": "human"},
+    {"id": "publish", "kind": "function", "function": "steps.publish", "inputs": ["note", "verdict"], "outputs": ["result"]}
+  ],
+  "edges": [
+    {"from": "draft.note", "to": "editor.request"},
+    {"from": "draft.note", "to": "publish.note"},
+    {"from": "editor.answer", "to": "publish.verdict"}
+  ],
+  "inputs": {"topic": "draft.topic"},
+  "outputs": {"result": "publish.result"}
+}

@@ -8,6 +8,9 @@ requires-python = ">=3.11"
 # Standard library only.
 dependencies = []
 
+[project.scripts]
+1ndeterminate = "indeterminate.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

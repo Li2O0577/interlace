@@ -85,7 +85,8 @@ class HumanNode(Node):
     """A person. What arrives on ``request`` is put to them through ``ask(request)``, which returns when they
     have answered; the answer leaves through ``answer``. How the person is reached (a console, a page, a
     queue) is the business of ``ask``. With ``ask=None`` the node is only a place in the graph: whoever runs
-    the graph sets ``node.ask`` before the run."""
+    the graph sets ``node.host``, a function ``host(node_id, round, request)`` that answers for every such
+    node; the round tells one question of a node from its next."""
 
     kind = "human"
 
@@ -93,11 +94,14 @@ class HumanNode(Node):
         super().__init__(id, inputs=[Port("request", request)], outputs=[Port("answer", answer)])
         self.ask = _callable(id, "ask", ask, True)
         self._given = ask is not None
+        self.host: Callable[[str, int, Any], Any] | None = None
 
     def config(self) -> Mapping:
         return {"ask": named(self.ask) if self._given else None}
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         if self.ask is None:
-            raise NodeError("nobody is there to ask: this node was given no ask")
+            if self.host is None:
+                raise NodeError("nobody is there to ask: this node was given no ask")
+            return {"answer": self.host(self.id, ctx.round, inputs["request"])}
         return {"answer": self.ask(inputs["request"])}

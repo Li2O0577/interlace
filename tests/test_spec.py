@@ -96,9 +96,9 @@ def test_methods_and_coordination_survive_the_round_trip():
              firing=Firing.ANY, context=True)
     graph = Governed(hub, fn('a', add_one), operator=HumanNode('operator'), max_rounds=2).build(DEFAULT)
     asked = []
-    again = load(dump(graph), catalog(ask=lambda node, request: (asked.append((node, request)), {'approved': True})[1]))
+    again = load(dump(graph), catalog(ask=lambda node, round, request: (asked.append((node, round, request)), {'approved': True})[1]))
     assert again.digest == graph.digest
-    assert Engine(again, DEFAULT).run({'in': 1}).outputs == {'out': [2]} and asked == [('operator', {'result': 2})]
+    assert Engine(again, DEFAULT).run({'in': 1}).outputs == {'out': [2]} and asked == [('operator', 1, {'result': 2})]
     with pytest.raises(Exception, match='nobody is there to ask'):
         Engine(load(dump(graph), catalog()), DEFAULT).run({'in': 1})
     fan = Fan(fn('a', add_one), fn('b', double)).build(DEFAULT)
