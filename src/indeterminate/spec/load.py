@@ -13,6 +13,17 @@ A description may also be written by hand, and then it can be shorter:
 
       {"method": "loop", "nodes": [{...}, {...}], "max_rounds": 4}
       {"method": "tree", "root": {...}, "children": [{...}, {"method": "tree", ...}], "max_rounds": 2}
+      {"method": "pool", "root": {...}, "member": {"kind": "agent"}, "size": 10, "max_rounds": 3}
+
+* ``defaults`` gives settings to every node of a kind, so that a node says only what is different about it::
+
+      {"defaults": {"agent": {"model": "anthropic:some-model", "max_steps": 20}}, "method": "chain", "nodes": [...]}
+
+* any setting may be taken from a file beside the description instead of being written in it::
+
+      {"id": "lead", "kind": "agent", "system": {"file": "prompts/lead.md"}}
+
+What ``dump`` writes has none of these left in it: the defaults and the files' text are in the nodes.
 """
 from __future__ import annotations
 
@@ -21,11 +32,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..base import Graph, GraphBuilder, GraphError, Node, NodeError, PortError, SchemaError
-from ..methods import Chain, Fan, Governed, Loop, Star, Tree
+from ..methods import Chain, Fan, Governed, Loop, Pool, Star, Tree
 from ..nodes import GraphNode
 from .catalog import Catalog, SpecError
 
-_NODE_KEYS = {"id", "kind", "firing", "inputs", "outputs", "config"}
+_NODE_KEYS = {"id", "kind", "firing", "inputs", "outputs", "config", "time_limit"}
 
 
 def dump(graph: Graph) -> dict:
@@ -47,6 +58,10 @@ def write(path, graph: Graph) -> None:
 
 
 def read(path, catalog: Catalog | None = None) -> Graph:
+    """Build the graph written in a file. Without a catalog, the description may take text from files in
+    its own directory and can reach nothing else."""
+    if catalog is None:
+        catalog = Catalog(files=Path(path).resolve().parent)
     try:
         description = json.loads(Path(path).read_text(encoding="utf-8"))
     except ValueError as exc:
@@ -60,6 +75,8 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
     if not isinstance(description, Mapping):
         raise SpecError("a description is a mapping")
     graphs = description.get("graphs", {})
+    if description.get("defaults"):
+        catalog = catalog.with_defaults(description["defaults"])
     try:
         if "method" in description:
             return _method(description, catalog, graphs).build(catalog.protocols)
@@ -83,9 +100,18 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
 def _node(given: Mapping, catalog: Catalog, graphs: Mapping) -> Node:
     if not isinstance(given, Mapping) or "id" not in given or "kind" not in given:
         raise SpecError(f"a node needs an id and a kind: {given!r}")
-    config = {**{key: value for key, value in given.items() if key not in _NODE_KEYS}, **given.get("config", {})}
+    config = {**catalog.defaults.get(given["kind"], {}),
+              **{key: value for key, value in given.items() if key not in _NODE_KEYS}, **given.get("config", {})}
+    time_limit = given.get("time_limit", config.pop("time_limit", None))
     try:
-        return catalog.loader(given["kind"])({**{k: given[k] for k in _NODE_KEYS & given.keys()}, "config": config}, catalog, graphs)
+        config = {key: catalog.text(value["file"]) if isinstance(value, Mapping) and value.keys() == {"file"} else value
+                  for key, value in config.items()}
+        node = catalog.loader(given["kind"])({**{k: given[k] for k in _NODE_KEYS & given.keys()}, "config": config}, catalog, graphs)
+        if time_limit is not None:
+            if isinstance(time_limit, bool) or not isinstance(time_limit, (int, float)) or not time_limit > 0:
+                raise SpecError("time_limit must be a positive number of seconds")
+            node.time_limit = time_limit
+        return node
     except KeyError as exc:
         raise SpecError(f"{given['id']}: a {given['kind']} node needs {exc.args[0]!r}") from None
     except SpecError as exc:
@@ -115,4 +141,13 @@ def _method(d: Mapping, catalog: Catalog, graphs: Mapping):
         if name == "governed":
             return Governed(root, *children, operator=_node(d["operator"], catalog, graphs), max_rounds=d["max_rounds"], **options)
         return (Tree if name == "tree" else Star)(root, *children, max_rounds=d["max_rounds"], **options)
-    raise SpecError(f"unknown method: {name!r} (known: chain, loop, fan, tree, star, governed)")
+    if name == "pool":
+        member = d["member"]
+
+        def make(id: str) -> Node:
+            if "method" in member:
+                return GraphNode(id, _method(member, catalog, graphs), catalog.protocols)
+            return _node({**member, "id": id}, catalog, graphs)
+        return Pool(_node(d["root"], catalog, graphs), make, size=d["size"], max_rounds=d["max_rounds"],
+                    places=d.get("places", "member"), **options)
+    raise SpecError(f"unknown method: {name!r} (known: chain, loop, fan, tree, star, governed, pool)")

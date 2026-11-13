@@ -4,7 +4,7 @@ Everything about a run is in its directory, so a run can be started by one proce
 and continued by a third::
 
     graph.json      the graph, as data
-    options.json    what the graph may reach (modules, processes) and how many workers
+    options.json    what the graph may reach (modules, processes), how many workers, the time limit
     journal.jsonl   what has happened so far
     questions/      one file per question that a person in the graph has been asked
     answers/        one file per answer given
@@ -74,9 +74,9 @@ class _Unbuilt:
         raise RuntimeError("a graph that is only being checked does not run")
 
 
-def check(description: Mapping, *, allow=(), processes: bool = False) -> dict:
+def check(description: Mapping, *, allow=(), processes: bool = False, files=None) -> dict:
     """Build the graph a description stands for, without running anything, and say what it is."""
-    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt))
+    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt, files=files))
     return {"digest": graph.digest, "nodes": {node.id: type(node).kind for node in graph.nodes},
             "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
 
@@ -96,28 +96,36 @@ def _read(path: Path, default: Any = None) -> Any:
 
 
 class Run:
-    def __init__(self, directory, *, models: Callable[[str], Any] | None = models_from_environment):
+    """``observe`` is told what happens while the run is going, as the engine's ``observe`` is."""
+
+    def __init__(self, directory, *, models: Callable[[str], Any] | None = models_from_environment,
+                 observe: Callable[[Mapping], None] | None = None):
         self.directory = Path(directory)
-        self.models = models
+        self.models, self.observe = models, observe
 
     # ---- creating --------------------------------------------------------------------------------------
 
     @classmethod
     def create(cls, directory, description: Mapping, *, allow=(), processes: bool = False, workers: int = 0,
-               models: Callable[[str], Any] | None = models_from_environment) -> "Run":
-        """Check the description and set up a directory for one run of it. Nothing runs yet."""
-        run = cls(directory, models=models)
+               models: Callable[[str], Any] | None = models_from_environment, files=None,
+               time_limit: float | None = None, observe: Callable[[Mapping], None] | None = None) -> "Run":
+        """Check the description and set up a directory for one run of it. Nothing runs yet. ``files`` is
+        the directory the description may take text from; the text is kept in the run, the files are not
+        needed again. ``time_limit`` is the longest one activation may take, in seconds."""
+        run = cls(directory, models=models, observe=observe)
         if (run.directory / "graph.json").exists():
             raise SpecError(f"{run.directory} already holds a run")
-        options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers)}
-        graph = load(description, run._catalog(options))
+        if time_limit is not None and not time_limit > 0:
+            raise SpecError("the time limit must be a positive number of seconds")
+        options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers), "time_limit": time_limit}
+        graph = load(description, run._catalog(options, files))
         _write(run.directory / "graph.json", dump(graph))
         _write(run.directory / "options.json", options)
         run._state(NEW, graph=graph.digest)
         return run
 
-    def _catalog(self, options: Mapping) -> Catalog:
-        return Catalog(allow=options["allow"], processes=options["processes"], models=self.models, ask=self._ask)
+    def _catalog(self, options: Mapping, files=None) -> Catalog:
+        return Catalog(allow=options["allow"], processes=options["processes"], models=self.models, ask=self._ask, files=files)
 
     def _engine(self) -> Engine:
         description = _read(self.directory / "graph.json")
@@ -126,7 +134,8 @@ class Run:
         options = _read(self.directory / "options.json")
         catalog = self._catalog(options)
         return Engine(load(description, catalog), catalog.protocols, workers=options["workers"],
-                      journal=Journal(self.directory / "journal.jsonl"))
+                      journal=Journal(self.directory / "journal.jsonl"), time_limit=options.get("time_limit"),
+                      observe=self.observe)
 
     # ---- running ---------------------------------------------------------------------------------------
 

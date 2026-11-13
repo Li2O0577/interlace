@@ -72,6 +72,7 @@ class Node(ABC):
     inputs: Iterable[Port] | Mapping[str, Port] = ()    # declared on the class as Ports; a mapping on an instance
     outputs: Iterable[Port] | Mapping[str, Port] = ()
     firing: Firing = Firing.ALL
+    time_limit: float | None = None          # the longest one activation may take, in seconds; None: the engine's
 
     def __init__(self, id: str, *, inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None):
@@ -90,9 +91,11 @@ class Node(ABC):
         return {}
 
     def describe(self) -> dict:
+        own = self.__dict__.get("time_limit")
         return {"id": self.id, "kind": type(self).kind, "firing": self.firing.value,
                 "inputs": [p.describe() for p in self.inputs.values()],
-                "outputs": [p.describe() for p in self.outputs.values()], "config": dict(self.config())}
+                "outputs": [p.describe() for p in self.outputs.values()], "config": dict(self.config()),
+                **({"time_limit": own} if own is not None else {})}
 
     # ---- lifecycle: only run is required --------------------------------------------------------------
 

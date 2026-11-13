@@ -41,12 +41,24 @@ it. Everything that travels must then be plain data, a ``Ref`` or a stream of th
 continues under a different graph: nodes and edges that are still there keep their state and their waiting
 envelopes, the rest is dropped.
 
+``time_limit`` is the longest one activation may take, in seconds. A node's own ``time_limit`` attribute wins over
+it (``math.inf`` for a node that may take as long as it likes, a person for instance). A thread cannot be
+killed, so when an activation overruns, the run fails with that node named, running nodes see
+``ctx.stopping()``, and the engine returns without waiting for the one that is stuck; whatever it does
+afterwards is thrown away. Nothing it did was journaled, so a resumed run starts that activation again.
+
+``observe`` is a function the engine tells what happens, as it happens: one mapping per event, with
+``event`` one of ``started``, ``emitted``, ``finished``, ``failed`` (each with ``node`` and ``round``) and,
+last, ``ended``. It is called from the threads that run the nodes and must not raise; it is how a screen
+or a log follows a run without reading the journal.
+
 ``transport`` stands between sending and receiving: every envelope body passes through its ``carry``. Without
 one, bodies are handed over as they are. Streams and calls do not pass through it yet.
 """
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
@@ -110,7 +122,7 @@ class _Port:
 
 class _State:
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
-                 "opened", "round", "outs", "calls", "passive", "streams", "called")
+                 "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit")
 
     def __init__(self, node: Node):
         self.node = node
@@ -126,6 +138,8 @@ class _State:
         self.passive: list[_Port] = []            # input ports fed by edges that do not trigger
         self.streams: dict[str, Any] = {}         # feed id -> the stream this activation is writing
         self.called: threading.Lock | None = None  # set when the node is the target of a call: one call at a time
+        self.since = 0.0                          # when the running activation began
+        self.time_limit: float | None = None      # how long an activation may take, in seconds
 
 
 class _Act:
@@ -165,10 +179,16 @@ class Engine:
 
     def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0,
                  stopping: Callable[[], bool] | None = None, transport: Transport | None = None,
-                 journal: Journal | None = None):
+                 journal: Journal | None = None, time_limit: float | None = None,
+                 observe: Callable[[Mapping], None] | None = None):
         if workers < 0:
             raise ValueError("workers cannot be negative")
+        if time_limit is not None and not time_limit > 0:
+            raise ValueError("time_limit must be a positive number of seconds")
         self.graph, self.workers = graph, workers
+        self._observe = observe
+        self._over = False                # set once the engine has returned: a node still running is on its own
+        self._alive = 0                   # worker threads that have not returned
         self._outer = stopping
         self._carry = transport.carry if transport is not None else None
         self._journal = journal
@@ -182,6 +202,12 @@ class Engine:
         self._limited: dict[str, None] = {}
         self._used = False
         self._states = {node.id: _State(node) for node in graph.nodes}
+        for state in self._states.values():
+            own = getattr(state.node, "time_limit", None)
+            state.time_limit = own if own is not None else time_limit
+            if state.time_limit is not None and not state.time_limit > 0:
+                raise RunError(f"{state.node.id}: time_limit must be a positive number of seconds", state.node.id)
+        self._timed = any(state.time_limit is not None for state in self._states.values())
         self._inputs: dict[str, _Feed] = {}
         for state in self._states.values():
             state.ports = {name: _Port(port, state) for name, port in state.node.inputs.items()}
@@ -350,6 +376,8 @@ class Engine:
         try:
             if ended:
                 pass
+            elif self._timed:
+                self._watch()
             elif self.workers:
                 threads = [threading.Thread(target=self._work, name=f"engine-{i}", daemon=True) for i in range(self.workers)]
                 for thread in threads:
@@ -359,12 +387,15 @@ class Engine:
             else:
                 self._work()
         finally:
+            with self._lock:
+                self._over = True
             self._close()
             if self._journal is not None:
                 if not ended and not self._stop and self._error is None:
                     self._journal.write({"kind": "end"})
                 self._journal.close()
         if self._error:
+            self._tell("ended", complete=False, error=str(self._error))
             cause = self._error.__cause__
             if cause is not None and not isinstance(cause, Exception):
                 raise cause                 # an interrupt or an exit request passes through as itself
@@ -373,7 +404,47 @@ class Engine:
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
         result.limited = tuple(self._limited)
         result.complete = not self._stop
+        self._tell("ended", complete=result.complete)
+        if self._error:                     # the observer failed on the last thing it was told
+            raise self._error
         return result
+
+    def _watch(self) -> None:
+        """Run the workers in threads of their own and watch the clock for them. The order of activations is
+        the same as without a limit: with no workers asked for, one thread does everything."""
+        lock = self._lock
+
+        def work():
+            try:
+                self._work()
+            finally:
+                with lock:
+                    self._alive -= 1
+                    lock.notify_all()
+
+        threads = [threading.Thread(target=work, name=f"engine-{i}", daemon=True) for i in range(self.workers or 1)]
+        self._alive = len(threads)
+        for thread in threads:
+            thread.start()
+        with lock:
+            while self._alive:
+                now, wait = time.monotonic(), None
+                for state in self._states.values():
+                    if state.running and state.time_limit is not None and state.time_limit != float("inf"):
+                        left = state.since + state.time_limit - now
+                        if left <= 0:
+                            if self._error is None:
+                                self._error = RunError(f"node {state.node.id} ran longer than {state.time_limit:g} seconds "
+                                                       f"in round {state.round}", state.node.id)
+                            self._stop = True
+                            lock.notify_all()
+                            deadline = now + 1.0             # idle workers leave at once; a node still running is left
+                            while (self._alive > sum(1 for s in self._states.values() if s.running)
+                                   and time.monotonic() < deadline):
+                                lock.wait(0.01)
+                            return
+                        wait = left if wait is None else min(wait, left)
+                lock.wait(wait)
 
     def stop(self) -> None:
         """Ask the run to end: nothing new starts; running nodes see ``ctx.stopping()``."""
@@ -395,6 +466,8 @@ class Engine:
                 state = self._ready.popleft()
                 state.queued, state.running, state.started = False, True, True
                 state.round += 1
+                if self._timed:
+                    state.since = time.monotonic()
                 self._active += 1
                 try:
                     taken, cause, took = self._take(state)
@@ -404,6 +477,8 @@ class Engine:
                 self._result.activations += 1
             act = _Act(state.node.id, state.round, took) if self._journal is not None else None
             node, ctx = state.node, _Context(self, state, cause, act)
+            if self._observe is not None:
+                self._tell("started", node=node.id, round=state.round, took=list(took))
             try:
                 if not state.opened:
                     state.opened = True
@@ -420,9 +495,17 @@ class Engine:
                         act.snaps[node.id] = dict(snapshot)
             except BaseException as exc:   # noqa: BLE001 - whatever a node raises ends the run, an interrupt included
                 with lock:
+                    if self._over:
+                        return
                     self._fail(state, exc)
+                if self._observe is not None:
+                    self._tell("failed", node=node.id, round=state.round, error=str(exc))
                 continue
+            if self._observe is not None:
+                self._tell("finished", node=node.id, round=state.round)
             with lock:
+                if self._over:             # it overran and the engine has gone: what it did is thrown away
+                    return
                 self._end_streams(state)
                 if act is not None:
                     try:
@@ -443,6 +526,19 @@ class Engine:
                              "sent": [pack(e) for e in act.sent],
                              "out": [[name, pack_body(payload)] for name, payload in act.out],
                              "limited": act.limited, "calls": act.calls, "snaps": act.snaps})
+
+    def _tell(self, event: str, **about) -> None:
+        observe = self._observe
+        if observe is None:
+            return
+        try:
+            observe({"event": event, **about})
+        except Exception as exc:   # noqa: BLE001 - an observer that fails must not go unnoticed
+            with self._lock:
+                if self._error is None:
+                    self._error = RunError(f"the observer failed on {event}: {exc}")
+                self._stop = True
+                self._lock.notify_all()
 
     def _end_streams(self, state: _State) -> None:
         if state.streams:
@@ -599,7 +695,11 @@ class Engine:
         carry = self._carry
         if carry is not None:
             bodies = [body if feed.stream else carry(feed.id, body) for (feed, _), body in zip(feeds, bodies)]
+        if self._observe is not None:
+            self._tell("emitted", node=state.node.id, round=round, port=port, payload=payload)
         with self._lock:
+            if self._over:
+                raise NodeError("the run has ended")
             for name in names:
                 self._result.outputs[name].append(payload)
                 if act is not None:
@@ -649,6 +749,9 @@ class Engine:
                 ctx = _Context(self, target, (f"{feed.id}#{feed.sent}",), act)
                 if act is not None:
                     act.calls.append(node.id)
+            if self._observe is not None:
+                self._tell("started", node=node.id, round=ctx.round, took=list(ctx._cause), by=state.node.id)
+            failed = True
             try:
                 if not target.opened:
                     target.opened = True
@@ -660,12 +763,16 @@ class Engine:
                     if snapshot:
                         act.snaps[node.id] = dict(snapshot)
                 if returned is None:
+                    failed = False
                     return None
                 if not isinstance(returned, Mapping):
                     raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
                 for name, item in returned.items():
                     self._emit(target, name, item, ctx.round, ctx._cause, act)
+                failed = False
                 return returned.get(feed.reply) if feed.reply is not None else None
             finally:
+                if self._observe is not None:
+                    self._tell("failed" if failed else "finished", node=node.id, round=ctx.round, by=state.node.id)
                 with self._lock:
                     self._end_streams(target)

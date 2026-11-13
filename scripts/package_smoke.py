@@ -42,6 +42,12 @@ with tempfile.TemporaryDirectory() as temporary:
     step("answer", *where, "--json", '{"approved": true}', expect=0)
     assert step("resume", *where, expect=0)["outputs"] == {"result": ["published: A note about tides."]}
 
+    # Defaults, a prompt taken from a file, and a pool of ten places of which three are used.
+    scouts = step("run", str(data / "scouts.json"), "--dir", str(Path(temporary) / "scouts"), "--allow", "steps",
+                  "--input", 'in=["north", "east", "south"]', "--time-limit", "60", expect=0)
+    assert sorted(scouts["outputs"]["out"][0]) == ["east", "north", "south"], scouts
+    assert sum(1 for id in scouts["rounds"] if id.startswith("scout-") and id != "scout-roster") == 3, scouts
+
     # The server: the same graph through the Model Context Protocol, over stdio.
     ask = lambda id, method, **params: json.dumps({"jsonrpc": "2.0", "id": id, "method": method, "params": params})  # noqa: E731
     sent = "\n".join([ask(1, "initialize", protocolVersion="2025-06-18", capabilities={}), ask(2, "tools/list"),

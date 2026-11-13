@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from ..base import ANY, Is, ListOf, Port, Record, Schema
-from ..nodes import (AgentNode, Branch, Collect, FunctionNode, GraphNode, HumanNode, Pass, ProcessNode, SinkNode,
+from ..nodes import (AgentNode, Branch, Collect, FunctionNode, GraphNode, HumanNode, Pass, ProcessNode, Roster, SinkNode,
                      SourceNode, Tool, Until)
 
 _TYPES = {t.__name__: t for t in (str, int, float, bool, list, dict, bytes, type(None))}
@@ -58,11 +58,12 @@ def function(d, catalog, graphs):
 def agent(d, catalog, graphs):
     c = d["config"]
     outputs = ports(d, "outputs")
+    memory = c.get("memory", True)
     return AgentNode(d["id"], catalog.model(c.get("model", "")), system=c.get("system", ""),
                      tools=[Tool(t["name"], t.get("description", ""), t.get("parameters") or {"type": "object", "properties": {}})
                             for t in c.get("tools", ())],
                      inputs=ports(d, "inputs"), outputs=[p for p in outputs if not p.call] if outputs is not None else None,
-                     firing=d.get("firing"), memory=c.get("memory", True), json=c.get("json", False),
+                     firing=d.get("firing"), memory=catalog.function(memory) if isinstance(memory, str) else memory, json=c.get("json", False),
                      max_steps=c.get("max_steps", 50), max_tokens=c.get("max_tokens", 4096))
 
 
@@ -112,6 +113,7 @@ def graph(d, catalog, graphs):
 BUILT_IN = {
     "function": function, "agent": agent, "process": process, "source": source, "sink": sink, "human": human,
     "graph": graph,
+    "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),
     "pass": lambda d, catalog, graphs: Pass(d["id"], schema=_first_schema(d, "inputs")),
     "collect": lambda d, catalog, graphs: Collect(d["id"], schema=_first_schema(d, "inputs")),
     "branch": lambda d, catalog, graphs: Branch(d["id"], catalog.function(d["config"]["condition"]), schema=_first_schema(d, "inputs")),
