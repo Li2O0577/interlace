@@ -70,7 +70,7 @@ class Busy(Exception):
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
     try:
-        return min(120.0, float(exc.headers.get("Retry-After")))
+        return min(120.0, float(exc.headers.get("Retry-After") or ""))
     except (TypeError, ValueError, AttributeError):
         return None
 
@@ -78,7 +78,7 @@ def _retry_after(exc: urllib.error.HTTPError) -> float | None:
 def _post(url: str, body: dict, headers: dict, timeout: float = TIMEOUT, attempts: int = 3) -> dict:
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={"Content-Type": "application/json", **headers})
-    last_error = None
+    last_error: Exception = ProviderError("the model service was not asked")
     for attempt in range(attempts):  # retry rate limits / overload with backoff
         try:
             with urllib.request.urlopen(request, timeout=timeout) as resp:
@@ -140,6 +140,7 @@ class StreamCut(ProviderError):
 class Provider:
     timeout: float = TIMEOUT   # per request; a connection test uses a short one
     attempts: int = 4          # tries on rate limits / overload (waits RETRY_WAITS between them)
+    name: str = ""             # what a graph's description records the model as
     thinking: str = "default"  # default (the service's own behaviour) | low | medium | high
     thinking_budgets: dict = THINKING_BUDGETS
 
@@ -499,6 +500,7 @@ def build(model_spec: str, providers: list[dict]) -> Provider:
     provider = next((p for p in providers if p.get("enabled", True) and pid in (p.get("id"), p.get("name"))), None)
     if provider is None:
         raise ProviderError(f"no provider called {pid}")
+    built: Provider
     if provider["type"] == "anthropic":
         built = AnthropicProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
     elif provider["type"] == "openai_compat":

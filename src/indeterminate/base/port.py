@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any
 
-from .schema import ANY, Schema, schema as as_schema
+from .schema import ANY, schema as as_schema
 
 NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
@@ -38,11 +38,11 @@ class Port:
     """
 
     name: str
-    schema: Schema = ANY
+    schema: Any = ANY    # a Schema, or what ``schema()`` makes one from (a type, a mapping); a Schema afterwards
     required: bool = True
     many: bool = False
     call: bool = False
-    check: Callable | tuple = ()
+    check: Any = ()      # a function of the payload, or several; kept as a tuple
     invalid: str = "fail"
     repairs: int | None = None
 

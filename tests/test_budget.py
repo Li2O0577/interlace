@@ -170,8 +170,9 @@ def test_one_process_at_a_time_runs_a_run_directory(tmp_path):
     finally:
         holder.kill()
         holder.wait()
-    if os.name == 'posix':
-        assert run.start({'in': 1})['status'] == 'done' and not lock.exists()      # the holder died: the lock is taken over
+    if os.name != 'posix':
+        lock.unlink()                           # where a dead holder cannot be told from a live one, a person removes it
+    assert run.start({'in': 1})['status'] == 'done' and not lock.exists()          # the holder died: the lock is taken over
     lock.write_text(json.dumps({'pid': 1, 'host': 'another-machine', 'since': 'earlier'}))
     with pytest.raises(SpecError, match='on another-machine'):
         Run(tmp_path / 'run').resume()                                             # cannot tell from here: left alone

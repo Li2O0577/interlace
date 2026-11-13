@@ -167,6 +167,10 @@ class Server:
 
     def serve(self, lines=None, out=None) -> None:
         """Read messages, one per line, until the input ends."""
+        if lines is None and out is None:
+            for stream in (sys.stdin, sys.stdout):          # the protocol is UTF-8 whatever the console's encoding is
+                if hasattr(stream, "reconfigure"):
+                    stream.reconfigure(encoding="utf-8", newline="\n")
         lines, out = lines if lines is not None else sys.stdin, out or sys.stdout
         with contextlib.redirect_stdout(sys.stderr):                # what a node prints must not reach the client
             for line in lines:

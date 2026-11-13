@@ -94,7 +94,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--workspace", metavar="DIRECTORY", help="where the nodes work and send file paths relative to "
                                                               "(default: files in the run's directory)")
     reach(run)
-    budget = dict(action="append", default=[], metavar="NAME=NUMBER", type=_limit,
+    budget: dict = dict(action="append", default=[], metavar="NAME=NUMBER", type=_limit,
                   help="the most the run may use of something its nodes report using, such as tokens=200000")
     run.add_argument("--budget", **budget)
     resume = commands.add_parser("resume", help="carry on a run that stopped, failed or was waiting")
@@ -143,7 +143,8 @@ def main(argv=None, out=None) -> int:
             code = EXIT.get(state["status"], 1) if args.command in ("run", "resume") else 0
     except (SpecError, JournalError, ValueError) as exc:
         state, code = {"status": "refused", "error": str(exc)}, 1
-    json.dump(state, out, ensure_ascii=False, indent=2)
+    encoding = (getattr(out, "encoding", None) or "utf-8").lower().replace("-", "")
+    json.dump(state, out, ensure_ascii=encoding != "utf8", indent=2)     # a console that is not UTF-8 gets escapes
     out.write("\n")
     return code
 

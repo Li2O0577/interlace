@@ -22,10 +22,11 @@ jobs:
           uv venv .venv --python ${{ matrix.python }}
           uv pip install --python .venv/bin/python -e . pytest
           .venv/bin/python -m pytest -q tests
-      - name: Unused names and undefined names
+      - name: Unused names, undefined names, and types
         run: |
-          uv pip install --python .venv/bin/python pyflakes
+          uv pip install --python .venv/bin/python pyflakes mypy
           .venv/bin/python -m pyflakes src tests scripts examples
+          .venv/bin/python -m mypy src/indeterminate
       - name: Build
         run: uv build -o dist
       - name: Installed wheel alone in a clean environment

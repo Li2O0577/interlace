@@ -643,6 +643,7 @@ class Engine:
                 state.round += 1
                 if self._timed:
                     state.since = time.monotonic()
+                    lock.notify_all()          # the watcher must learn that a clock has started
                 if state.rejected:
                     state.rejected = {}
                 state.delivered = False
@@ -727,6 +728,7 @@ class Engine:
                     lock.notify()
 
     def _commit(self, act: _Act) -> None:
+        assert self._journal is not None
         self._journal.write({"kind": "act", "node": act.node, "round": act.round, "took": list(act.took),
                              "sent": [pack(e) for e in act.sent],
                              "out": [[name, pack_body(payload)] for name, payload in act.out],

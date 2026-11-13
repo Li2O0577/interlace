@@ -174,8 +174,8 @@ class GraphBuilder:
         nodes, edges = tuple(self._nodes.values()), tuple(self._edges.values())
         if not nodes:
             raise GraphError("a graph needs at least one node")
-        out_index = {n.id: {port: [] for port in n.outputs} for n in nodes}
-        in_index = {n.id: {port: [] for port in n.inputs} for n in nodes}
+        out_index: dict[str, dict[str, list]] = {n.id: {port: [] for port in n.outputs} for n in nodes}
+        in_index: dict[str, dict[str, list]] = {n.id: {port: [] for port in n.inputs} for n in nodes}
         fed: dict[Endpoint, int] = {}           # forward feeds of each input port
         called: set[Endpoint] = set()           # input ports that are the target of a call
         for edge in edges:

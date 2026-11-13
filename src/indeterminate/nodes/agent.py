@@ -157,7 +157,7 @@ class AgentNode(Node):
             self.usage["output_tokens"] += spent_out
             ctx.use(calls=1, input_tokens=spent_in, output_tokens=spent_out, tokens=spent_in + spent_out)
             text, calls = getattr(result, "text", "") or "", list(getattr(result, "tool_calls", None) or ())
-            message = {"role": "assistant", "content": text}
+            message: dict[str, Any] = {"role": "assistant", "content": text}
             if calls:
                 message["tool_calls"] = [{"id": call.get("id", ""), "name": call["name"], "args": call.get("args") or {}}
                                          for call in calls]
