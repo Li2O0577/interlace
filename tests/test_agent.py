@@ -1,7 +1,7 @@
 """A model as a node: tools are call ports, several outputs are the model's to choose, consent is a node."""
 import pytest
 
-from indeterminate.agents.providers import ChatResult, FakeProvider
+from indeterminate.models import ChatResult, FakeProvider
 from indeterminate.base import Firing, GraphBuilder, GraphError, NodeError, Port
 from indeterminate.engine import Engine, Journal, RunError
 from indeterminate.methods import Chain, Governed, Loop, Tree

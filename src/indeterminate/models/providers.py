@@ -44,7 +44,7 @@ THINKING_BUDGETS = {"low": 2048, "medium": 8000, "high": 24000}
 
 
 def image_parts(m: dict) -> list[tuple[str, str]]:
-    """(mime, base64) pairs attached to a user message for this call (see AgentManager._with_images)."""
+    """(mime, base64) pairs attached to a user message for this call."""
     return m.get("image_data") or []
 
 
@@ -494,7 +494,7 @@ def _parse_args(text: str) -> dict:
 def build(model_spec: str, providers: list[dict]) -> Provider:
     """``model_spec`` is ``<provider id or name>:<model>``."""
     if not model_spec or ":" not in model_spec:
-        raise ProviderError("尚未选择模型（设置 → 默认 Agent 模型），格式为 提供方:模型")
+        raise ProviderError("没有指定模型，格式为 提供方:模型")
     pid, model = model_spec.split(":", 1)
     provider = next((p for p in providers if p.get("enabled", True) and pid in (p.get("id"), p.get("name"))), None)
     if provider is None:
@@ -503,7 +503,4 @@ def build(model_spec: str, providers: list[dict]) -> Provider:
         return AnthropicProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
     if provider["type"] == "openai_compat":
         return OpenAICompatProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
-    if provider["type"] in ("claude_code", "codex"):
-        from . import cli
-        return cli.build(provider, model)
     raise ProviderError(f"不支持的提供方类型：{provider['type']}")

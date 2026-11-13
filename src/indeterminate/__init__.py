@@ -1,61 +1,41 @@
-"""1ndeterminate: a task-neutral multi-agent orchestration kernel.
+"""1ndeterminate: nodes, edges and methods, and an engine that runs the graphs they make.
 
-A plan graph approved by the operator, a deterministic scheduler, per-node file
-boundaries, approvals, recoverable state and an audit log. The kernel constrains
-boundaries (who may start, read, write, talk and release), never the reasoning.
+A node is anything that takes information in and gives information out: a model, a function, an external
+program, a device, a person, another graph. An edge carries information from one node to another under a
+written protocol. A method is a reusable way of joining nodes: a chain, a loop, a fan, a tree.
 
 Layers, bottom up (each imports only from below):
 
-1. foundation      core (events, files, locks, sandbox), host adapters, model providers
-2. entities        Plan / Block / Node / Edge; agent kinds (Agent > Coordinator > Lead, SubLead;
-                   Worker; Reviewer; Keeper); the node protocol (NodeKind)
-3. orchestration   scheduler, rounds, approvals, release, plan changes, recovery; the agent runtime
-4. interface       Kernel, Operator, Extension, the stdio MCP server
+1. base        Node, Port, Schema, Edge, Protocol, Envelope, Graph, GraphBuilder, Method
+2. engine      Engine, Result, Journal, Transport
+3. parts       nodes, protocols, methods, models: the ones that come with the package
 
-Public names are importable from the package root. Standard library only; git is the one external program.
+Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 _PUBLIC = {
-    # interface
-    "Kernel": ("kernel", "Kernel"),
-    "Operator": ("kernel", "Operator"),
-    "HostAdapters": ("host", "HostAdapters"),
-    "Extension": ("extensions", "Extension"),
-    "TaskType": ("extensions", "TaskType"),
-    "ExtensionError": ("extensions", "ExtensionError"),
-    "Contract": ("extensions", "Contract"),
-    # entities: the plan
-    "Plan": ("plan", "Plan"),
-    "Block": ("plan", "Block"),
-    "Node": ("plan", "Node"),
-    "Edge": ("plan", "Edge"),
-    "GraphError": ("plan", "GraphError"),
-    # entities: agent kinds
-    "Agent": ("agents.kinds", "Agent"),
-    "Coordinator": ("agents.kinds", "Coordinator"),
-    "Lead": ("agents.kinds", "Lead"),
-    "SubLead": ("agents.kinds", "SubLead"),
-    "Worker": ("agents.kinds", "Worker"),
-    "Reviewer": ("agents.kinds", "Reviewer"),
-    "Keeper": ("agents.kinds", "Keeper"),
-    "AgentKinds": ("agents.kinds", "AgentKinds"),
-    # entities: the node protocol
-    "NodeKind": ("graph.nodes", "NodeKind"),
-    "NodeKinds": ("graph.nodes", "NodeKinds"),
-    # foundation: models (FakeProvider for tests and simulations)
-    "Provider": ("agents.providers", "Provider"),
-    "FakeProvider": ("agents.providers", "FakeProvider"),
-    "ChatResult": ("agents.providers", "ChatResult"),
+    # base
+    "Node": "base", "Port": "base", "Firing": "base", "Context": "base", "Schema": "base", "Edge": "base",
+    "Protocol": "base", "Protocols": "base", "Delivery": "base", "Envelope": "base", "Ref": "base",
+    "Graph": "base", "GraphBuilder": "base", "GraphError": "base", "NodeError": "base", "Method": "base",
+    # engine
+    "Engine": "engine", "Result": "engine", "RunError": "engine", "Journal": "engine", "Transport": "engine",
+    # parts
+    "FunctionNode": "nodes", "AgentNode": "nodes", "Tool": "nodes", "ProcessNode": "nodes", "SourceNode": "nodes",
+    "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes",
+    "Chain": "methods", "Loop": "methods", "Fan": "methods", "Tree": "methods", "Star": "methods",
+    "Governed": "methods",
+    "DEFAULT": "protocols", "standard": "protocols",
+    "Provider": "models", "FakeProvider": "models", "ChatResult": "models",
 }
 
 
 def __getattr__(name):
     if name in _PUBLIC:
         import importlib
-        module, attr = _PUBLIC[name]
-        return getattr(importlib.import_module(f"{__name__}.{module}"), attr)
+        return getattr(importlib.import_module(f"{__name__}.{_PUBLIC[name]}"), name)
     raise AttributeError(name)
 
 

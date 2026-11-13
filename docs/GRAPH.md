@@ -1,6 +1,6 @@
 # 节点、边、方法
 
-这是内核的新一层：把任何东西接成一张图并运行它。图里的节点可以是模型、函数、外部程序、设备、人，也可以是另一张图；边是写好的传递协议；方法是把节点接起来的现成结构。
+这个包把任何东西接成一张图并运行它。图里的节点可以是模型、函数、外部程序、设备、人，也可以是另一张图；边是写好的传递协议；方法是把节点接起来的现成结构。
 
 ```python
 from indeterminate.base import Port
@@ -22,7 +22,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 |---|---|---|
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
-| 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods` | 见下 |
+| 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
 
 引擎只认识抽象层，不认识任何具体的节点、协议或方法。`tests/test_engine.py` 里有一个测试检查各层的引用方向。
 
@@ -45,7 +45,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 节点 | 是什么 |
 |---|---|
 | `FunctionNode` | 一个 Python 函数 |
-| `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择 |
+| `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`indeterminate.models` 里有现成的 |
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `SourceNode`、`SinkNode` | 外部读数的来源、结果的去处（相机、机械臂这类设备接在这里） |
 | `HumanNode` | 人。请求交给 `ask(request)`，它返回时就是人的回答 |
