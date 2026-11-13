@@ -1,0 +1,10 @@
+{
+  "defaults": {"agent": {"model": "fake:echo", "max_steps": 10, "time_limit": 600}},
+  "method": "pool",
+  "size": 10,
+  "max_rounds": 3,
+  "places": "scout",
+  "root": {"id": "lead", "kind": "function", "function": "steps.lead", "context": true, "firing": "any",
+           "inputs": ["task", {"name": "reply", "required": false}], "outputs": ["out", "send"]},
+  "member": {"kind": "agent", "system": {"file": "prompts/scout.md"}}
+}

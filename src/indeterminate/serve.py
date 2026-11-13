@@ -1,10 +1,12 @@
 """The same operations as the command line, offered to a client over the Model Context Protocol.
 
-    1ndeterminate serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N]
+    1ndeterminate serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
+                        [--files DIRECTORY]
 
 The client (usually a model in some other application) sends graphs as data and gets runs back. What those
 graphs may reach is decided by whoever starts the server, on its command line, and never by the client: a
-client cannot widen ``--allow``, cannot turn ``--processes`` on, and cannot choose where a run is kept.
+client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot choose where a run is kept, and can
+take text only from files under ``--files`` (from none when it is not given).
 Model keys come from the server's environment. Every run is a directory under ``--runs``, the same directory
 the command line works on, so a run started here can be looked at or answered from a terminal.
 
@@ -69,8 +71,9 @@ class Refused(Exception):
 
 class Server:
     def __init__(self, runs, *, allow=(), processes: bool = False, workers: int = 0,
-                 models: Callable[[str], Any] | None = models_from_environment):
+                 models: Callable[[str], Any] | None = models_from_environment, time_limit: float | None = None, files=None):
         self.root = Path(runs)
+        self.time_limit, self.files = time_limit, files
         self.allow, self.processes, self.workers, self.models = list(allow), bool(processes), int(workers), models
 
     # ---- the operations ----------------------------------------------------------------------------------
@@ -88,7 +91,7 @@ class Server:
         return graph
 
     def check(self, arguments: Mapping) -> dict:
-        return check(self._graph(arguments), allow=self.allow, processes=self.processes)
+        return check(self._graph(arguments), allow=self.allow, processes=self.processes, files=self.files)
 
     def start(self, arguments: Mapping) -> dict:
         inputs = arguments.get("inputs") or {}
@@ -96,7 +99,7 @@ class Server:
             raise SpecError("inputs must be an object: a value for each graph input")
         id = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
         run = Run.create(self.root / id, self._graph(arguments), allow=self.allow, processes=self.processes,
-                         workers=self.workers, models=self.models)
+                         workers=self.workers, models=self.models, time_limit=self.time_limit, files=self.files)
         return {"run": id, **run.start(inputs)}
 
     def status(self, arguments: Mapping) -> dict:

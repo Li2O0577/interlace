@@ -89,6 +89,7 @@ class HumanNode(Node):
     node; the round tells one question of a node from its next."""
 
     kind = "human"
+    time_limit = float("inf")      # a person may take as long as they like, whatever limit the engine was given
 
     def __init__(self, id: str, ask: Callable[[Any], Any] | None = None, *, request=ANY, answer=ANY):
         super().__init__(id, inputs=[Port("request", request)], outputs=[Port("answer", answer)])

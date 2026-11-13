@@ -61,13 +61,25 @@ cd examples/data && export PYTHONPATH=.
 {"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
 ```
 
+搭自己的框架时，图文件只写结构和不想用默认值的地方。默认设置放在 `defaults` 里，提示词可以放在单独的文件里再引用，成员可以预留位置、用到时才出现：
+
+```json
+{
+  "defaults": {"agent": {"model": "anthropic:some-model", "time_limit": 600}},
+  "method": "pool", "size": 10, "max_rounds": 3,
+  "root": {"id": "lead", "kind": "agent", "system": {"file": "prompts/lead.md"}, "firing": "any",
+           "inputs": ["task", {"name": "reply", "required": false}], "outputs": ["out", "send"]},
+  "member": {"kind": "agent", "system": {"file": "prompts/scout.md"}}
+}
+```
+
 ## 组成
 
 | 层 | 包 | 主要名称 |
 |---|---|---|
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
-| 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed` |
+| 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
 | 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 

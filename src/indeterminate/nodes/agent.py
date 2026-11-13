@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from ..base import Firing, Node, NodeError, Port, canonical
+from .function import named
 
 _NO_PARAMETERS = {"type": "object", "properties": {}}
 ANY_OUTPUT = None   # the schema of a json output: anything
@@ -28,6 +29,24 @@ class Tool:
 
     def spec(self) -> dict:
         return {"name": self.name, "description": self.description, "parameters": dict(self.parameters)}
+
+
+def is_image(value: Any) -> bool:
+    """A picture, as it travels on an edge: ``{"mime": "image/png", "data": <base64 text>}``."""
+    return (isinstance(value, Mapping) and isinstance(value.get("data"), str)
+            and isinstance(value.get("mime"), str) and value["mime"].startswith("image/"))
+
+
+def _pictures(value: Any, found: list) -> Any:
+    """Take the pictures out of what arrived, leaving a note where each one was."""
+    if is_image(value):
+        found.append([value["mime"], value["data"]])
+        return f"[image {len(found)}]"
+    if isinstance(value, (list, tuple)):
+        return [_pictures(item, found) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _pictures(item, found) for key, item in value.items()}
+    return value
 
 
 def _text(value: Any) -> str:
@@ -54,14 +73,20 @@ class AgentNode(Node):
 
     A tool that fails answers the model with the error; the model decides what to do about it. With
     ``memory`` (the default) the conversation carries over from one activation to the next and is part of the
-    node's snapshot. ``usage`` adds up the tokens the model reports.
+    node's snapshot. ``memory`` may also be a function ``memory(messages) -> messages``: it is called before
+    every request to the model and what it returns becomes the conversation, so it is where a long
+    conversation is shortened, summarised or otherwise kept in hand. ``usage`` adds up the tokens the model
+    reports.
+
+    A picture that arrives (``{"mime": "image/...", "data": <base64>}``, alone or inside what arrived) is
+    shown to the model as a picture, where the model's interface takes pictures.
     """
 
     kind = "agent"
 
     def __init__(self, id: str, model: Any, *, system: str = "", tools: Iterable[Tool] = (),
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
-                 firing: Firing | None = None, memory: bool = True, json: bool = False, max_steps: int = 50,
+                 firing: Firing | None = None, memory: bool | Callable[[list], list] = True, json: bool = False, max_steps: int = 50,
                  max_tokens: int = 4096):
         if not callable(getattr(model, "chat", None)):
             raise NodeError(f"{id}: a model needs a chat method")
@@ -74,6 +99,7 @@ class AgentNode(Node):
         super().__init__(id, inputs=list(inputs) if inputs is not None else [Port("task")],
                          outputs=[*sends, *(Port(tool.name, call=True) for tool in tools)], firing=firing)
         self.model, self.system, self.tools = model, system, tools
+        self.keep = memory if callable(memory) else None       # what is done to the conversation before each request
         self.memory, self.json, self.max_steps, self.max_tokens = bool(memory), bool(json), max_steps, max_tokens
         self.messages: list[dict] = []
         self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
@@ -89,7 +115,7 @@ class AgentNode(Node):
 
     def config(self) -> Mapping:
         return {"model": str(getattr(self.model, "name", "") or getattr(self.model, "model", "")), "system": self.system,
-                "tools": [tool.spec() for tool in self.tools], "memory": self.memory, "json": self.json,
+                "tools": [tool.spec() for tool in self.tools], "memory": named(self.keep) if self.keep is not None else self.memory, "json": self.json,
                 "max_steps": self.max_steps, "max_tokens": self.max_tokens}
 
     def snapshot(self) -> Mapping:
@@ -102,15 +128,22 @@ class AgentNode(Node):
     # ---- one turn --------------------------------------------------------------------------------------
 
     def run(self, ctx, inputs: Mapping[str, Any]):
+        pictures: list = []
+        inputs = {name: _pictures(value, pictures) for name, value in inputs.items()}
         if len(inputs) == 1 and len(self.inputs) == 1:
             arrived = _text(next(iter(inputs.values())))
         else:
             arrived = "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in inputs.items())
         messages = self.messages if self.memory else []
-        messages.append({"role": "user", "content": arrived})
+        messages.append({"role": "user", "content": arrived, **({"image_data": pictures} if pictures else {})})
         for _ in range(self.max_steps):
             if ctx.stopping():
                 return None
+            if self.keep is not None:
+                kept = self.keep(messages)
+                if not isinstance(kept, list) or not kept:
+                    raise NodeError("memory must return the conversation: a list of messages that is not empty")
+                messages[:] = kept
             result = self.model.chat(self.system, messages, self._specs, self.max_tokens)
             self.usage["calls"] += 1
             self.usage["input_tokens"] += getattr(result, "input_tokens", 0) or 0
