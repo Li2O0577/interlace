@@ -183,7 +183,7 @@ class Run:
     # ---- people ----------------------------------------------------------------------------------------
 
     def _ask(self, node: str, round: int, request: Any) -> Any:
-        id = f"{node}-{round}"
+        id = f"{node}-{round}".replace("/", "__")       # a person inside a block: block.round__node-round
         answer = _read(self.directory / "answers" / f"{id}.json")
         if answer is not None:
             return answer["answer"]

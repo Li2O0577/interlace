@@ -45,6 +45,7 @@ class Context(ABC):
     node: str     # the node's id
     round: int    # which activation of this node this is, from 1
     problems: list  # when the activation is run again because what it sent was not accepted: what was wrong
+    within: tuple   # when the graph runs inside a node of another: (node id, round) of each, outermost first
 
     @abstractmethod
     def emit(self, port: str, payload: Any) -> None:

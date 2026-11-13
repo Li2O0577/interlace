@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time'):
         sys.modules.pop(name, None)
 
 
@@ -31,6 +31,13 @@ def test_blocks_joined():
     import blocks_joined
     result = blocks_joined.main()
     assert result.last('out') == ' | '.join(['One design, three uses.'] * 3) and result.rounds == {'first': 1, 'panel': 1, 'join': 1}
+
+
+def test_grown_at_run_time(capsys):
+    import grown_at_run_time
+    result, refused = grown_at_run_time.main()
+    assert result.last('out')['outputs'] == {'out': [['mean 6', 'largest 9', 'spread 6']]} and result.rounds == {'plan': 1, 'grow': 1}
+    assert 'exit cannot be found' in refused['error']
 
 
 def test_review_loop():

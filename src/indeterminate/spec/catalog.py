@@ -47,7 +47,8 @@ class Catalog:
         self.protocols = with_files(protocols, self.workspace) if self.workspace is not None else protocols
         self._kinds: dict[str, Callable[[Mapping, "Catalog", Mapping], Node]] = {}
         from .kinds import BUILT_IN
-        for kind, loader in BUILT_IN.items():
+        from .spawn import loader as spawn
+        for kind, loader in {**BUILT_IN, "spawn": spawn}.items():
             self.register(kind, loader)
 
     def register(self, kind: str, loader: Callable[[Mapping, "Catalog", Mapping], Node]) -> None:
