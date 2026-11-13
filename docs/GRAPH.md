@@ -24,7 +24,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
 | 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
-| 对外接口 | `indeterminate.runs`、`indeterminate.cli` | `Run`；命令 `1ndeterminate` |
+| 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 
 引擎只认识抽象层，不认识任何具体的节点、协议或方法。`tests/test_engine.py` 里有一个测试检查各层的引用方向。
 
@@ -172,6 +172,34 @@ state.json      运行的状态：done、waiting、stopped、failed
 
 在 Python 里用 `indeterminate.runs.Run` 做同样的事：`Run.create(目录, 描述, allow=...)`、`start(inputs)`、`resume()`、`questions()`、`answer(值)`、`status()`。
 
+## MCP 服务
+
+`1ndeterminate serve --runs 目录 [--allow 模块]... [--processes] [--workers N]` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
+
+```json
+{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
+```
+
+| 工具 | 参数 | 作用 |
+|---|---|---|
+| `check` | `graph` | 只建图不运行，返回摘要、节点、输入输出 |
+| `start` | `graph`、`inputs` | 开始一次运行，返回运行的名字和状态 |
+| `status` | `run` | 运行的状态和待答的问题 |
+| `resume` | `run` | 从日志接着跑 |
+| `answer` | `run`、`answer`、可选 `question` | 写下人对问题的回答，之后要再调 `resume` |
+| `runs` | 无 | 服务手里的所有运行和各自的状态 |
+
+客户端是不被信任的一方：
+
+- 图能够到哪些模块、能不能启动程序、用几个线程，都由启动服务的人在命令行上定。客户端在调用里多写什么都不起作用，默认什么都够不到。
+- 运行放在哪里由服务决定，名字由服务生成；客户端给的名字只用来在 `--runs` 目录下查找，带路径的名字一律查不到。
+- 模型的密钥来自服务进程的环境变量，客户端看不到，也传不进来。
+- 节点打印的东西去标准错误，标准输出上只有协议消息。
+
+每次运行就是 `--runs` 下的一个运行目录，和命令行用的是同一种，所以服务开始的运行可以在终端里用 `status`、`answer`、`resume` 查看和继续。
+
+一次工具调用会一直持续到运行完成、需要人回答或者失败，服务一次只处理一个调用。图里的人需要回答时，`start` 或 `resume` 返回 `waiting` 和问题，由客户端把问题交给人，拿到回答后调 `answer` 再调 `resume`。回答是否真的来自人，服务无法分辨，这要由接入它的应用来保证。
+
 ## 示例
 
 [examples/data/](../examples/data/) 是一张写成 JSON 的图和它用到的函数，用命令行运行：起草、等编辑同意、发布。
@@ -185,3 +213,4 @@ state.json      运行的状态：done、waiting、stopped、failed
 - 流和调用还不经过传输接口；目前只有进程内的实现。
 - 设备节点只用假设备测试过，智能体节点只用脚本化的假模型测试过。
 - 一个运行目录同一时间只能由一个进程运行或继续，目前没有加锁。
+- MCP 服务只有 stdio 一种传输，一次只处理一个调用，不能中途取消正在跑的运行。

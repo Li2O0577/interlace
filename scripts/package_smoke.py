@@ -42,4 +42,14 @@ with tempfile.TemporaryDirectory() as temporary:
     step("answer", *where, "--json", '{"approved": true}', expect=0)
     assert step("resume", *where, expect=0)["outputs"] == {"result": ["published: A note about tides."]}
 
-print(f"indeterminate {indeterminate.__version__}: {len(indeterminate.__all__) - 1} public names, {len(list(examples.glob('*.py')))} examples ran, the command line ran")
+    # The server: the same graph through the Model Context Protocol, over stdio.
+    ask = lambda id, method, **params: json.dumps({"jsonrpc": "2.0", "id": id, "method": method, "params": params})  # noqa: E731
+    sent = "\n".join([ask(1, "initialize", protocolVersion="2025-06-18", capabilities={}), ask(2, "tools/list"),
+                      ask(3, "tools/call", name="start", arguments={"graph": json.loads((data / "release.json").read_text()), "inputs": {"topic": "tides"}})])
+    served = subprocess.run(command + ["serve", "--runs", str(Path(temporary) / "served"), "--allow", "steps"], input=sent + "\n",
+                            capture_output=True, text=True, env={**os.environ, "PYTHONPATH": str(data)})
+    replies = [json.loads(line) for line in served.stdout.splitlines()]
+    assert served.returncode == 0 and len(replies[1]["result"]["tools"]) == 6, served.stderr
+    assert replies[2]["result"]["structuredContent"]["status"] == "waiting", replies[2]
+
+print(f"indeterminate {indeterminate.__version__}: {len(indeterminate.__all__) - 1} public names, {len(list(examples.glob('*.py')))} examples ran, the command line and the server ran")

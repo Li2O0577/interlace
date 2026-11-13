@@ -5,9 +5,10 @@
     1ndeterminate resume --dir RUN
     1ndeterminate answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
     1ndeterminate status --dir RUN
+    1ndeterminate serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N]
 
-Every command prints JSON. The exit status says how a run stands: 0 done, 1 failed or refused, 3 waiting for
-a person, 4 stopped.
+Every command but ``serve`` prints JSON; ``serve`` is the MCP server in ``indeterminate.serve``. The exit
+status says how a run stands: 0 done, 1 failed or refused, 3 waiting for a person, 4 stopped.
 """
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ from pathlib import Path
 
 from . import __version__
 from .engine import JournalError
-from .runs import DONE, STOPPED, WAITING, Run
-from .spec import Catalog, SpecError, load
+from .runs import DONE, STOPPED, WAITING, Run, check
+from .spec import SpecError
 
 EXIT = {DONE: 0, WAITING: 3, STOPPED: 4}
 
@@ -80,6 +81,10 @@ def _parser() -> argparse.ArgumentParser:
     given = answer.add_mutually_exclusive_group(required=True)
     given.add_argument("--json", metavar="VALUE", help="the answer, as JSON")
     given.add_argument("--text", help="the answer, as text")
+    serve = commands.add_parser("serve", help="offer these operations to an MCP client over stdio")
+    serve.add_argument("--runs", required=True, help="the directory under which the server keeps its runs")
+    serve.add_argument("--workers", type=int, default=0, help="threads that run nodes side by side (default: none)")
+    reach(serve)
     return parser
 
 
@@ -88,10 +93,11 @@ def main(argv=None, out=None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "check":
-            graph = load(_description(args.graph), Catalog(allow=args.allow, processes=args.processes, models=lambda name: _Unbuilt(name)))
-            state = {"digest": graph.digest, "nodes": {node.id: type(node).kind for node in graph.nodes},
-                     "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
-            code = 0
+            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes), 0
+        elif args.command == "serve":
+            from .serve import Server
+            Server(args.runs, allow=args.allow, processes=args.processes, workers=args.workers).serve()
+            return 0
         else:
             if args.command == "run":
                 inputs = _inputs(args)
@@ -110,15 +116,6 @@ def main(argv=None, out=None) -> int:
     out.write("\n")
     return code
 
-
-class _Unbuilt:
-    """Stands in for a model while a graph is only being checked: no key is needed and nothing is called."""
-
-    def __init__(self, name: str):
-        self.name = name
-
-    def chat(self, *args, **kwargs):
-        raise RuntimeError("a graph that is only being checked does not run")
 
 
 if __name__ == "__main__":

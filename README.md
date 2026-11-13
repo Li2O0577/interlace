@@ -55,6 +55,12 @@ cd examples/data && export PYTHONPATH=.
 1ndeterminate resume --dir /tmp/run                                                   # done，退出码 0
 ```
 
+同样的操作也可以作为 MCP 服务接到别的应用里。图能够到的范围由启动服务的人在命令行上决定，客户端改不了：
+
+```json
+{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
+```
+
 ## 组成
 
 | 层 | 包 | 主要名称 |
@@ -63,7 +69,7 @@ cd examples/data && export PYTHONPATH=.
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
 | 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed` |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
-| 对外接口 | `indeterminate.runs`、`indeterminate.cli` | `Run`；命令 `1ndeterminate` |
+| 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 
 每层只引用下面的层，引擎不认识任何具体的节点、协议或方法；`tests/test_engine.py` 里有测试检查这条规则。
 
@@ -82,7 +88,7 @@ python scripts/bench_engine.py       # 每个信封的调度开销
 - 中断后的恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
 - 目前只有进程内的传递；`Transport` 是留给跨进程、跨机器的接口。
 - 设备节点没有接过真实设备，智能体节点没有用真实模型跑过。
-- 对外接口目前只有命令行，MCP 服务还没有做。
+- MCP 服务只有 stdio 一种传输，一次处理一个调用，运行结束前这次调用不会返回。
 
 ## 许可
 

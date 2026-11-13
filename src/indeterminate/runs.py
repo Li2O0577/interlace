@@ -64,6 +64,23 @@ def models_from_environment(name: str) -> Any:
         raise SpecError(f"the model {name!r} cannot be built: {exc} (known providers: anthropic, openai, fake)") from None
 
 
+class _Unbuilt:
+    """Stands in for a model while a graph is only being checked: no key is needed and nothing is called."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def chat(self, *args, **kwargs):
+        raise RuntimeError("a graph that is only being checked does not run")
+
+
+def check(description: Mapping, *, allow=(), processes: bool = False) -> dict:
+    """Build the graph a description stands for, without running anything, and say what it is."""
+    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt))
+    return {"digest": graph.digest, "nodes": {node.id: type(node).kind for node in graph.nodes},
+            "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
+
+
 def _write(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.part")
