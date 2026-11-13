@@ -13,8 +13,8 @@
 ## 安装
 
 ```sh
-pip install -e .            # 从代码检出安装（尚未发布到公开索引）
-uv build -o dist            # 构建 wheel
+pip install 1ndeterminate
+pip install -e .            # 或者从代码检出安装
 ```
 
 需要 Python 3.11 或更高版本，支持 Linux、macOS 和 Windows。发行包名是 `1ndeterminate`，导入名是 `indeterminate`，因为 Python 模块名不能以数字开头。

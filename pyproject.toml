@@ -4,9 +4,29 @@ dynamic = ["version"]
 description = "Nodes, edges and methods: join models, programs, devices and people into graphs, and run them"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "li2o0577"}]
+keywords = ["agents", "graph", "workflow", "orchestration", "multi-agent", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
 requires-python = ">=3.11"
 # Standard library only.
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Li2O0577/1ndeterminate"
+Documentation = "https://github.com/Li2O0577/1ndeterminate/blob/main/docs/GRAPH.md"
+Changelog = "https://github.com/Li2O0577/1ndeterminate/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Li2O0577/1ndeterminate/issues"
 
 [project.scripts]
 1ndeterminate = "indeterminate.cli:main"
@@ -17,6 +37,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/indeterminate"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "examples", "scripts", "docs", "README.md", "README.zh-CN.md", "CHANGELOG.md", "LICENSE"]
 
 [tool.hatch.version]
 path = "src/indeterminate/__init__.py"
