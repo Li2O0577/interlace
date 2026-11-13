@@ -18,7 +18,7 @@ from indeterminate.protocols import DEFAULT, FileOf, with_files
 def build(work: Path):
     def measure(n):
         (work / "data").mkdir(exist_ok=True)
-        (work / "data" / "table.csv").write_text("x,y\n" + "".join(f"{i},{i * i}\n" for i in range(n)))
+        (work / "data" / "table.csv").write_text("x,y\n" + "".join(f"{i},{i * i}\n" for i in range(n)), newline="\n")
         return "data/table.csv"
 
     def draw(ctx, table):

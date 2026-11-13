@@ -45,8 +45,8 @@ class Context(ABC):
     node: str     # the node's id
     round: int    # which activation of this node this is, from 1
     problems: list  # when the activation is run again because what it sent was not accepted: what was wrong
-    within: tuple   # when the graph runs inside a node of another: (node id, round) of each, outermost first
-    key: str        # names this activation of this node in this run, and is the same when it runs again after
+    within: Any     # when the graph runs inside a node of another: (node id, round) of each, outermost first
+    key: Any        # names this activation of this node in this run, and is the same when it runs again after
                     # an interruption: give it to an outside service so that it does not do the same thing twice
 
     @abstractmethod
@@ -76,7 +76,7 @@ class Context(ABC):
         name the run fails, and this raises so that the node stops at once."""
 
 
-def _ports(given: Iterable[Port] | Mapping[str, Port] | None, declared: Iterable[Port]) -> Mapping[str, Port]:
+def _ports(given: Iterable[Port] | Mapping[str, Port] | None, declared: Iterable[Port] | Mapping[str, Port]) -> Mapping[str, Port]:
     ports = list(given.values() if isinstance(given, Mapping) else given) if given is not None else list(declared)
     out: dict[str, Port] = {}
     for port in ports:
@@ -97,8 +97,9 @@ class Node(ABC):
     """
 
     kind: ClassVar[str] = ""                 # the name this kind of node is registered and stored under
-    inputs: Iterable[Port] | Mapping[str, Port] = ()    # declared on the class as Ports; a mapping on an instance
-    outputs: Iterable[Port] | Mapping[str, Port] = ()
+    # A class may declare its ports as a tuple of Ports; on an instance they are a mapping from name to Port.
+    inputs: Mapping[str, Port] = ()     # type: ignore[assignment]
+    outputs: Mapping[str, Port] = ()    # type: ignore[assignment]
     firing: Firing = Firing.ALL
     repairs: int = 0                         # how often an output may be corrected, for ports that do not say
     time_limit: float | None = None          # the longest one activation may take, in seconds; None: the engine's

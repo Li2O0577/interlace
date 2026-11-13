@@ -96,6 +96,9 @@ class Record(Schema):
     """A mapping with named fields. Fields in ``optional`` may be absent; other keys are refused unless ``open``."""
 
     __slots__ = ("fields", "optional", "open", "_key")
+    fields: Mapping[str, Schema]
+    optional: frozenset
+    open: bool
 
     def __init__(self, fields: Mapping, optional=(), open: bool = False):
         built = {str(name): schema(value) for name, value in fields.items()}

@@ -32,7 +32,7 @@ class Journal:
 
     def __init__(self, path, *, sync: bool = False):
         self.path, self.sync = Path(path), sync
-        self._file = None
+        self._file: Any = None
 
     def read(self) -> list[dict]:
         """Every complete record, oldest first."""

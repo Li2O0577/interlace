@@ -265,15 +265,18 @@ def test_a_device_that_answers_can_be_called():
 
 
 def test_a_source_stops_reading_when_the_run_stops():
-    read = []
+    read, failed = [], threading.Event()
 
     def readings():
         for i in range(10_000):
             read.append(i)
+            if i == 100:
+                failed.wait(10)                 # however fast the source is, the other node gets its turn
             yield i
 
     def fail(x):
         if x == 3:
+            failed.set()
             raise ValueError('enough')
     with pytest.raises(RunError, match='enough'):
         run(GraphBuilder().add(SourceNode('s', readings), fn('f', fail, outputs=())).connect('s.out', 'f.x', 'value').compile(DEFAULT), workers=2)

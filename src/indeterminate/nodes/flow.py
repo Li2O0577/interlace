@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from ..base import ANY, Node, NodeError, Port
+from ..base import ANY, Firing, Node, NodeError, Port
 from .function import named
 
 
@@ -100,7 +100,7 @@ class Roster(Node):
         if type(size) is not int or size < 1:
             raise NodeError(f"{id}: size must be at least 1")
         super().__init__(id, inputs=[Port("task"), *(Port(f"r{i}", required=False) for i in range(1, size + 1))],
-                         outputs=[Port("reply"), *(Port(f"m{i}") for i in range(1, size + 1))], firing="any")
+                         outputs=[Port("reply"), *(Port(f"m{i}") for i in range(1, size + 1))], firing=Firing.ANY)
         self.size = size
         self.names: list[str] = []          # names[i - 1] holds place i
 

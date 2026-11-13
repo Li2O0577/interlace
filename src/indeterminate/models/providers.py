@@ -70,7 +70,7 @@ class Busy(Exception):
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
     try:
-        return min(120.0, float(exc.headers.get("Retry-After")))
+        return min(120.0, float(exc.headers.get("Retry-After") or ""))
     except (TypeError, ValueError, AttributeError):
         return None
 
@@ -78,25 +78,25 @@ def _retry_after(exc: urllib.error.HTTPError) -> float | None:
 def _post(url: str, body: dict, headers: dict, timeout: float = TIMEOUT, attempts: int = 3) -> dict:
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={"Content-Type": "application/json", **headers})
-    last_error = None
+    last_error: Exception = ProviderError("the model service was not asked")
     for attempt in range(attempts):  # retry rate limits / overload with backoff
         try:
             with urllib.request.urlopen(request, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             detail = exc.read(3000).decode("utf-8", "replace")
-            last_error = ProviderError(f"模型接口返回 {exc.code}：{detail[:500]}")
+            last_error = ProviderError(f"the model service answered {exc.code}: {detail[:500]}")
             if exc.code not in RETRY_CODES:
                 raise last_error from exc
             wait = _retry_after(exc)
         except urllib.error.URLError as exc:
-            last_error, wait = ProviderError(f"无法连接模型接口 {url}：{exc.reason}"), None
+            last_error, wait = ProviderError(f"cannot reach the model service at {url}: {exc.reason}"), None
         except TimeoutError:
-            last_error, wait = ProviderError(f"模型接口超时：{url}"), None
+            last_error, wait = ProviderError(f"the model service at {url} took too long"), None
         except (http.client.HTTPException, ConnectionError, OSError) as exc:
-            last_error, wait = ProviderError(f"与模型接口的连接中断：{type(exc).__name__}: {exc}"), None
+            last_error, wait = ProviderError(f"the connection to the model service broke: {type(exc).__name__}: {exc}"), None
         except ValueError as exc:
-            raise ProviderError(f"模型接口返回的不是有效的 JSON：{exc}") from exc
+            raise ProviderError(f"what the model service sent is not JSON: {exc}") from exc
         if attempt + 1 < attempts:
             time.sleep(wait or RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
     raise last_error
@@ -109,12 +109,12 @@ def _sse(url: str, body: dict, headers: dict):
     try:
         resp = urllib.request.urlopen(request, timeout=TIMEOUT)
     except urllib.error.HTTPError as exc:
-        error = ProviderError(f"模型接口返回 {exc.code}：{exc.read(3000).decode('utf-8', 'replace')[:500]}")
+        error = ProviderError(f"the model service answered {exc.code}: {exc.read(3000).decode('utf-8', 'replace')[:500]}")
         if exc.code in RETRY_CODES:
             raise Busy(error, _retry_after(exc)) from exc
         raise error from exc
     except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
-        raise ProviderError(f"无法连接模型接口 {url}：{exc}") from exc
+        raise ProviderError(f"cannot reach the model service at {url}: {exc}") from exc
     try:
         with resp:
             for raw in resp:
@@ -129,7 +129,7 @@ def _sse(url: str, body: dict, headers: dict):
                 except ValueError:
                     continue
     except (http.client.HTTPException, OSError) as exc:
-        raise StreamCut(f"流式输出中断：{type(exc).__name__}: {exc}") from exc
+        raise StreamCut(f"the stream broke: {type(exc).__name__}: {exc}") from exc
 
 
 class StreamCut(ProviderError):
@@ -140,6 +140,7 @@ class StreamCut(ProviderError):
 class Provider:
     timeout: float = TIMEOUT   # per request; a connection test uses a short one
     attempts: int = 4          # tries on rate limits / overload (waits RETRY_WAITS between them)
+    name: str = ""             # what a graph's description records the model as
     thinking: str = "default"  # default (the service's own behaviour) | low | medium | high
     thinking_budgets: dict = THINKING_BUDGETS
 
@@ -177,7 +178,7 @@ class Provider:
 
     def see(self, image: bytes, mime: str, prompt: str, system: str = "", max_tokens: int = 2000) -> ChatResult:
         """One question about one picture. Providers without image input raise ProviderError."""
-        raise ProviderError("这个模型提供方不支持看图")
+        raise ProviderError("this provider cannot look at pictures")
 
     def _stream(self, system, messages, tools, max_tokens, on_text) -> ChatResult:
         result = self._complete(system, messages, tools, max_tokens)
@@ -189,7 +190,7 @@ class Provider:
 class AnthropicProvider(Provider):
     def __init__(self, api_key: str, model: str, base_url: str = ""):
         if not api_key:
-            raise ProviderError("Anthropic 提供方缺少 API Key")
+            raise ProviderError("the Anthropic provider needs an API key")
         self.api_key, self.model = api_key, model
         self.url = (base_url.rstrip("/") or "https://api.anthropic.com") + "/v1/messages"
 
@@ -203,7 +204,7 @@ class AnthropicProvider(Provider):
             if dynamic:
                 sys_blocks.append({"type": "text", "text": dynamic})
         else:
-            sys_blocks = [{"type": "text", "text": str(system) or "（无）", "cache_control": cache}]
+            sys_blocks = [{"type": "text", "text": str(system) or "(none)", "cache_control": cache}]
         converted = self._convert(messages, keep_thinking=bool(self._thinking_budget(messages)))
         if converted and converted[-1]["content"]:
             last = converted[-1]["content"][-1]
@@ -258,9 +259,9 @@ class AnthropicProvider(Provider):
                 result.stop_reason = (ev.get("delta") or {}).get("stop_reason") or ""
                 result.output_tokens = (ev.get("usage") or {}).get("output_tokens", 0)
             elif kind == "error":
-                raise ProviderError(f"模型接口报错：{(ev.get('error') or {}).get('message', ev)}")
+                raise ProviderError(f"the model service reported an error: {(ev.get('error') or {}).get('message', ev)}")
         if not result.stop_reason:
-            raise StreamCut("流式输出在模型说完之前断开了")
+            raise StreamCut("the stream ended before the model had finished")
         for _, b in sorted(blocks.items()):
             if b["type"] == "tool_use":
                 result.tool_calls.append({"id": b["id"], "name": tool_name(b["name"] or ""), "args": _parse_args(b["json"])})
@@ -315,18 +316,18 @@ class AnthropicProvider(Provider):
         for m in messages:
             if m["role"] == "user":
                 push("user", [{"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
-                              for mime, data in image_parts(m)] + [{"type": "text", "text": m["content"] or "（空）"}])
+                              for mime, data in image_parts(m)] + [{"type": "text", "text": m["content"] or "(empty)"}])
             elif m["role"] == "assistant":
                 blocks = list(m.get("thinking_blocks") or []) if keep_thinking else []
                 blocks += [{"type": "text", "text": m["content"]}] if m.get("content") else []
                 blocks += [{"type": "tool_use", "id": c["id"], "name": api_name(c["name"]), "input": c["args"]}
                            for c in m.get("tool_calls", [])]
-                push("assistant", blocks or [{"type": "text", "text": "（继续）"}])
+                push("assistant", blocks or [{"type": "text", "text": "(continue)"}])
             elif m["role"] == "tool":
                 push("user", [{"type": "tool_result", "tool_use_id": m["tool_call_id"], "content": m["content"],
                                **({"is_error": True} if m.get("error") else {})}])
         if out and out[0]["role"] != "user":
-            out.insert(0, {"role": "user", "content": [{"type": "text", "text": "开始。"}]})
+            out.insert(0, {"role": "user", "content": [{"type": "text", "text": "Begin."}]})
         return out
 
 
@@ -338,7 +339,7 @@ class OpenAICompatProvider(Provider):
 
     def __init__(self, api_key: str, model: str, base_url: str):
         if not base_url:
-            raise ProviderError("OpenAI 兼容提供方缺少 base_url")
+            raise ProviderError("an OpenAI-compatible provider needs a base_url")
         self.api_key, self.model = api_key, model
         base = base_url.rstrip("/")
         self.url = base if base.endswith("/chat/completions") else base + "/chat/completions"
@@ -395,7 +396,7 @@ class OpenAICompatProvider(Provider):
                 if choice.get("finish_reason"):
                     result.stop_reason = choice["finish_reason"]
         if not result.stop_reason:
-            raise StreamCut("流式输出在模型说完之前断开了")
+            raise StreamCut("the stream ended before the model had finished")
         for i, (_, c) in enumerate(sorted(calls.items())):
             result.tool_calls.append({"id": c["id"] or f"call_{i}", "name": tool_name(c["name"]), "args": _parse_args(c["args"])})
         if not result.input_tokens:  # some compatible servers send no usage while streaming
@@ -465,8 +466,8 @@ class FakeProvider(Provider):
 
     def see(self, image, mime, prompt, system="", max_tokens=2000):
         """The policy sees the question with a stand-in for the picture."""
-        note = f"[图片 {mime}，{len(image)} 字节]\n{prompt}"
-        return self.policy(system or "评图", [{"role": "user", "content": note}], [])
+        note = f"[picture {mime}, {len(image)} bytes]\n{prompt}"
+        return self.policy(system or "look at the picture", [{"role": "user", "content": note}], [])
 
 
 def _openai_cached(usage: dict) -> int:
@@ -494,16 +495,17 @@ def _parse_args(text: str) -> dict:
 def build(model_spec: str, providers: list[dict]) -> Provider:
     """``model_spec`` is ``<provider id or name>:<model>``."""
     if not model_spec or ":" not in model_spec:
-        raise ProviderError("没有指定模型，格式为 提供方:模型")
+        raise ProviderError("no model was named; write provider:model")
     pid, model = model_spec.split(":", 1)
     provider = next((p for p in providers if p.get("enabled", True) and pid in (p.get("id"), p.get("name"))), None)
     if provider is None:
-        raise ProviderError(f"找不到已启用的模型提供方：{pid}")
+        raise ProviderError(f"no provider called {pid}")
+    built: Provider
     if provider["type"] == "anthropic":
         built = AnthropicProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
     elif provider["type"] == "openai_compat":
         built = OpenAICompatProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
     else:
-        raise ProviderError(f"不支持的提供方类型：{provider['type']}")
+        raise ProviderError(f"unknown kind of provider: {provider['type']}")
     built.name = model_spec       # what a graph's description records, so the same model is found again
     return built

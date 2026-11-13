@@ -26,7 +26,7 @@ class Artifact(Protocol):
         if isinstance(payload, str):
             return self.store.put(payload.encode("utf-8"), TEXT)
         if isinstance(payload, (bytes, bytearray, memoryview)):
-            return self.store.put(payload, BYTES)
+            return self.store.put(bytes(payload), BYTES)
         try:
             return self.store.put(canonical(payload).encode("utf-8"), JSON)
         except (TypeError, ValueError) as exc:

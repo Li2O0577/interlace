@@ -187,3 +187,19 @@ def test_a_run_that_died_before_its_first_record_starts_over_from_its_inputs(tmp
     journal = tmp_path / 'run' / 'journal.jsonl'
     journal.write_bytes(journal.read_bytes()[:20])          # as if the process had died while writing the first record
     assert Run(tmp_path / 'run').resume()['outputs'] == {'out': [4]}
+
+
+def test_the_clock_is_watched_however_the_threads_fall():
+    # the watcher used to go back to sleep between two activations and miss the start of the second
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)                 # threads change places as often as they can
+    try:
+        for attempt in range(150):
+            release = threading.Event()
+            quick = [FunctionNode(f'q{i}', lambda x: x, inputs=[Port('x')], outputs=[Port('y')]) for i in range(20)]
+            slow = FunctionNode('slow', lambda x: release.wait(0.3), inputs=[Port('x')], outputs=[Port('y')])
+            with pytest.raises(RunError, match='node slow ran longer than 0.05 seconds'):
+                Engine(Chain(*quick, slow).build(DEFAULT), DEFAULT, time_limit=0.05).run({'in': attempt})
+            release.set()
+    finally:
+        sys.setswitchinterval(interval)

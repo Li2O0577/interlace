@@ -52,7 +52,7 @@ class ProcessNode(Node):
     def _read(self, data: bytes) -> Any:
         if self.format == "bytes":
             return data
-        text = data.decode("utf-8")
+        text = data.decode("utf-8").replace("\r\n", "\n")     # a program on Windows ends its lines with \r\n
         if self.format == "text":
             return text
         try:
@@ -69,7 +69,10 @@ class ProcessNode(Node):
             except OSError as exc:
                 raise NodeError(f"cannot start {self.command[0]}: {exc}") from None
             expired = threading.Event()
-            timer = threading.Timer(self.timeout, lambda: (expired.set(), process.kill())) if self.timeout else None
+            def overrun():
+                expired.set()
+                process.kill()
+            timer = threading.Timer(self.timeout, overrun) if self.timeout else None
             if timer:
                 timer.start()
             try:
