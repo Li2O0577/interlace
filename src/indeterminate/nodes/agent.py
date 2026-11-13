@@ -7,11 +7,13 @@ chooses among them.
 """
 from __future__ import annotations
 
+import base64
 import json
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
-from ..base import Firing, Node, NodeError, Port, canonical
+from ..base import Firing, Invalid, Node, NodeError, Port, canonical
 from .function import named
 
 _NO_PARAMETERS = {"type": "object", "properties": {}}
@@ -35,18 +37,6 @@ def is_image(value: Any) -> bool:
     """A picture, as it travels on an edge: ``{"mime": "image/png", "data": <base64 text>}``."""
     return (isinstance(value, Mapping) and isinstance(value.get("data"), str)
             and isinstance(value.get("mime"), str) and value["mime"].startswith("image/"))
-
-
-def _pictures(value: Any, found: list) -> Any:
-    """Take the pictures out of what arrived, leaving a note where each one was."""
-    if is_image(value):
-        found.append([value["mime"], value["data"]])
-        return f"[image {len(found)}]"
-    if isinstance(value, (list, tuple)):
-        return [_pictures(item, found) for item in value]
-    if isinstance(value, Mapping):
-        return {key: _pictures(item, found) for key, item in value.items()}
-    return value
 
 
 def _text(value: Any) -> str:
@@ -79,15 +69,23 @@ class AgentNode(Node):
     reports.
 
     A picture that arrives (``{"mime": "image/...", "data": <base64>}``, alone or inside what arrived) is
-    shown to the model as a picture, where the model's interface takes pictures.
+    shown to the model as a picture, where the model's interface takes pictures. With ``files`` (a
+    directory), a picture that arrives as a file reference (``{"path": "plots/a.png", "media": "image/png"}``,
+    as the ``file`` protocol delivers it) is read from there and shown too.
+
+    What the model sends is checked like any node's output. When a check finds a problem and the port has
+    repairs left (an agent's ports have two unless they say otherwise), the model is told what is wrong, in
+    the port's own words, and answers again; it still has its tools, so it can write the file that was
+    missing. The same goes for an answer that should have been JSON and is not.
     """
 
     kind = "agent"
+    repairs = 2
 
     def __init__(self, id: str, model: Any, *, system: str = "", tools: Iterable[Tool] = (),
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None, memory: bool | Callable[[list], list] = True, json: bool = False, max_steps: int = 50,
-                 max_tokens: int = 4096):
+                 max_tokens: int = 4096, files=None, repairs: int | None = None):
         if not callable(getattr(model, "chat", None)):
             raise NodeError(f"{id}: a model needs a chat method")
         if type(max_steps) is not int or max_steps < 1:
@@ -101,6 +99,11 @@ class AgentNode(Node):
         self.model, self.system, self.tools = model, system, tools
         self.keep = memory if callable(memory) else None       # what is done to the conversation before each request
         self.memory, self.json, self.max_steps, self.max_tokens = bool(memory), bool(json), max_steps, max_tokens
+        self.files = files
+        if repairs is not None:
+            if type(repairs) is not int or repairs < 0:
+                raise NodeError(f"{id}: repairs must be a whole number, 0 or more")
+            self.repairs = repairs
         self.messages: list[dict] = []
         self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
         self._sends = [port.name for port in sends]
@@ -116,7 +119,7 @@ class AgentNode(Node):
     def config(self) -> Mapping:
         return {"model": str(getattr(self.model, "name", "") or getattr(self.model, "model", "")), "system": self.system,
                 "tools": [tool.spec() for tool in self.tools], "memory": named(self.keep) if self.keep is not None else self.memory, "json": self.json,
-                "max_steps": self.max_steps, "max_tokens": self.max_tokens}
+                "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs}
 
     def snapshot(self) -> Mapping:
         return {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
@@ -129,13 +132,16 @@ class AgentNode(Node):
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         pictures: list = []
-        inputs = {name: _pictures(value, pictures) for name, value in inputs.items()}
+        inputs = {name: self._pictures(value, pictures) for name, value in inputs.items()}
         if len(inputs) == 1 and len(self.inputs) == 1:
             arrived = _text(next(iter(inputs.values())))
         else:
             arrived = "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in inputs.items())
         messages = self.messages if self.memory else []
         messages.append({"role": "user", "content": arrived, **({"image_data": pictures} if pictures else {})})
+        for problem in ctx.problems:
+            messages.append({"role": "user", "content": f"What you sent was not accepted: {problem}"})
+        unparsed = self.repairs
         for _ in range(self.max_steps):
             if ctx.stopping():
                 return None
@@ -155,11 +161,47 @@ class AgentNode(Node):
                                          for call in calls]
             messages.append(message)
             if not calls:
-                return None if self._choose else {self._sends[0]: self._closing(text)}
+                if self._choose:
+                    return None
+                try:
+                    try:
+                        answer = self._closing(text)
+                    except NodeError as exc:
+                        if unparsed <= 0:
+                            raise
+                        unparsed -= 1
+                        raise Invalid(self._sends[0], str(exc), again=True) from None
+                    ctx.emit(self._sends[0], answer)
+                    return None
+                except Invalid as exc:
+                    if not exc.again:
+                        raise
+                    messages.append({"role": "user", "content": f"Your answer was not accepted: {exc.problem}\n"
+                                                                f"Put that right and give your answer again."})
+                    continue
             for call in message["tool_calls"]:
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
                                  "content": self._use(ctx, call["name"], call["args"])})
         raise NodeError(f"the model was still calling tools after {self.max_steps} steps")
+
+    def _pictures(self, value: Any, found: list) -> Any:
+        """Take the pictures out of what arrived, leaving a note where each one was."""
+        if is_image(value):
+            found.append([value["mime"], value["data"]])
+            return f"[image {len(found)}]"
+        if (self.files is not None and isinstance(value, Mapping) and isinstance(value.get("path"), str)
+                and str(value.get("media", "")).startswith("image/")):
+            root = Path(self.files).resolve()
+            path = (root / value["path"]).resolve()
+            if root in path.parents and path.is_file():
+                found.append([value["media"], base64.b64encode(path.read_bytes()).decode("ascii")])
+                return {**value, "shown": f"[image {len(found)}]"}
+            return value
+        if isinstance(value, (list, tuple)):
+            return [self._pictures(item, found) for item in value]
+        if isinstance(value, Mapping):
+            return {key: self._pictures(item, found) for key, item in value.items()}
+        return value
 
     def _closing(self, text: str) -> Any:
         if not self.json:
@@ -180,6 +222,10 @@ class AgentNode(Node):
             if name not in self.outputs or not self.outputs[name].call:
                 return f"error: there is no tool {name}"
             return _text(ctx.call(name, dict(args)))
+        except Invalid as exc:     # what it sent did not pass a check: its to correct while the port allows
+            if not exc.again:
+                raise
+            return f"not accepted: {exc.problem}. Put that right and send it again."
         except Exception as exc:   # noqa: BLE001 - whatever went wrong is the model's to read
             if ctx.stopping():
                 raise

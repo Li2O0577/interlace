@@ -50,6 +50,15 @@ class Protocol(ABC):
         """When a node receives: turn the envelope body back into what the node reads."""
         return body
 
+    def encode_anyway(self, payload: Any, source: Port) -> Any:
+        """The envelope body for a payload that failed ``encode`` and is sent on all the same, because its
+        port only warns. A protocol that cannot carry such a payload raises ``ProtocolError``."""
+        return payload
+
+    def decode_anyway(self, body: Any, target: Port) -> Any:
+        """What the node reads when ``decode`` failed and the receiving port only warns."""
+        return body
+
 
 class Protocols:
     """The protocols one engine knows, by name."""

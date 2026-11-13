@@ -116,7 +116,7 @@ def test_payloads_are_checked_against_the_port_that_sends_them_and_the_graph_inp
     with pytest.raises(RunError, match='graph input in: expected int') as caught:
         run(graph, {'in': 'three'})
     assert caught.value.node is None
-    with pytest.raises(RunError, match='node a failed in round 1: expected int, got str') as caught:
+    with pytest.raises(RunError, match='node a failed in round 1: y: expected int, got str') as caught:
         run(graph, {'in': 3})
     assert caught.value.node == 'a'
     with pytest.raises(RunError, match="no input \\['other'\\]"):

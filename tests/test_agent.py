@@ -88,7 +88,7 @@ def test_json_output_and_what_an_agent_refuses():
     agent = AgentNode('agent', scripted(say('{"score": 7}'), say('seven')), json=True)
     assert run(Chain(agent).build(DEFAULT), {'in': 'rate'}).outputs == {'out': [{'score': 7}]}
     with pytest.raises(RunError, match="the model's answer is not JSON"):
-        run(Chain(AgentNode('agent', scripted(say('seven')), json=True)).build(DEFAULT), {'in': 'rate'})
+        run(Chain(AgentNode('agent', scripted(say('seven')), json=True, repairs=0)).build(DEFAULT), {'in': 'rate'})
     with pytest.raises(NodeError, match='a model needs a chat method'):
         AgentNode('agent', object())
     with pytest.raises(NodeError, match='max_steps must be at least 1'):

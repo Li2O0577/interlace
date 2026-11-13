@@ -36,6 +36,7 @@ class ProcessNode(Node):
         super().__init__(id, inputs=[Port("x")] if takes_input else [], outputs=[Port("out")])
         self.command, self.format, self.lines, self.timeout = list(command), format, bool(lines), timeout
         self.cwd, self.env = cwd, dict(env) if env is not None else None
+        self.workspace: str | None = None     # where it runs when it was given no cwd of its own; set by whoever runs the graph
 
     def config(self) -> Mapping:
         return {"command": self.command, "format": self.format, "lines": self.lines, "timeout": self.timeout,
@@ -64,7 +65,7 @@ class ProcessNode(Node):
         with tempfile.TemporaryFile() as errors:
             try:
                 process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
-                                           cwd=self.cwd, env=self.env)
+                                           cwd=self.cwd or self.workspace, env=self.env)
             except OSError as exc:
                 raise NodeError(f"cannot start {self.command[0]}: {exc}") from None
             expired = threading.Event()

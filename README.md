@@ -43,7 +43,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
 
 `model` 是任何带 `chat(system, messages, tools, max_tokens)` 的对象；`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口和用于测试的 `FakeProvider`。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。四个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。五个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件。
 
 图也可以写成 JSON，用命令行检查和运行。每次运行放在一个目录里，图里的人还没回答时命令会停下来，回答之后再继续：
 
@@ -71,6 +71,14 @@ cd examples/data && export PYTHONPATH=.
            "inputs": ["task", {"name": "reply", "required": false}], "outputs": ["out", "send"]},
   "member": {"kind": "agent", "system": {"file": "prompts/scout.md"}}
 }
+```
+
+节点之间可以只传文件的相对路径。发出时检查文件在不在、是不是声明的类型；没通过时由端口决定是失败、警告放行，还是把问题告诉节点让它改：
+
+```python
+protocols = with_files(DEFAULT, "work")
+Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)          # 文件不对就让节点改，最多两次
+builder.connect("draw.chart", "report.chart", "file")
 ```
 
 ## 组成

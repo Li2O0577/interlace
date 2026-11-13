@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ..base import Node, Protocols
-from ..protocols import DEFAULT
+from ..protocols import DEFAULT, with_files
 
 
 class SpecError(ValueError):
@@ -29,17 +29,22 @@ class Catalog:
     ``protocols``   the protocols the graph is compiled with
     ``files``       the directory a description may take text from with ``{"file": "prompts/lead.md"}``; files
                     outside it are refused, and without it no file is read
+    ``workspace``   the directory the graph's nodes work in: the ``file`` protocol carries paths relative to it,
+                    agents are shown the pictures in it, programs are started in it
     ``defaults``    settings for every node of a kind, ``{"agent": {"model": "...", "max_steps": 20}}``; a
                     description's own ``defaults`` come on top of these, and a node's own settings on top of both
     """
 
     def __init__(self, *, allow: Iterable[str] = (), processes: bool = False,
                  models: Callable[[str], Any] | None = None, ask: Callable[[str, int, Any], Any] | None = None,
-                 protocols: Protocols = DEFAULT, files=None, defaults: Mapping[str, Mapping] | None = None):
+                 protocols: Protocols = DEFAULT, files=None, defaults: Mapping[str, Mapping] | None = None,
+                 workspace=None):
         self.allow, self.processes = tuple(allow), bool(processes)
         self.files = Path(files).resolve() if files is not None else None
         self.defaults = {kind: dict(settings) for kind, settings in (defaults or {}).items()}
-        self.models, self.ask, self.protocols = models, ask, protocols
+        self.models, self.ask = models, ask
+        self.workspace = Path(workspace).resolve() if workspace is not None else None
+        self.protocols = with_files(protocols, self.workspace) if self.workspace is not None else protocols
         self._kinds: dict[str, Callable[[Mapping, "Catalog", Mapping], Node]] = {}
         from .kinds import BUILT_IN
         for kind, loader in BUILT_IN.items():
