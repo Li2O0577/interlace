@@ -63,7 +63,7 @@ class SpawnNode(Node):
         """The graph a description stands for, within this node's limits."""
         if not isinstance(description, Mapping):
             raise SpecError("graph must be the description of a graph: nodes and edges, or a method and its parts")
-        graph = _load(description, _below(self.catalog, self.depth))
+        graph = _load(description, _below(self.catalog, self.depth, self.max_nodes, self.workers))
         if size(graph) > self.max_nodes:
             raise SpecError(f"the graph has {size(graph)} nodes, and at most {self.max_nodes} may be made here")
         return graph
@@ -87,7 +87,7 @@ class SpawnNode(Node):
                 raise NodeError(f"the graph cannot be built: {exc}") from None
             return {"result": {"error": f"the graph cannot be built: {exc}"}}
         try:
-            result = ctx.engine(graph, self.catalog.protocols, workers=self.workers).go(given, fresh=bool(ctx.problems))
+            result = ctx.engine(graph, self.catalog.protocols, workers=self.workers, firm=True).go(given, fresh=bool(ctx.problems))
         except RunError as exc:
             if self.strict or ctx.stopping():
                 raise
@@ -101,18 +101,23 @@ def _load(description: Mapping, catalog: Catalog) -> Graph:
     return load(description, catalog)
 
 
-def _below(catalog: Catalog, depth: int) -> Catalog:
-    """The catalog for a graph made by a spawn node that allows ``depth`` more levels below itself."""
+def _below(catalog: Catalog, depth: int, max_nodes: int, workers: int) -> Catalog:
+    """The catalog for a graph made by a spawn node that allows ``depth`` more levels below itself. What is
+    made there is held to what the node above was given: no larger a graph, no more threads."""
     import copy
     inner = copy.copy(catalog)
     inner._kinds = dict(catalog._kinds)
+    inner.max_workers = workers if catalog.max_workers is None else min(workers, catalog.max_workers)
+
+    def least(asked, most):
+        return min(asked, most) if type(asked) is int else asked       # what is not a number is refused further on
 
     def spawn(d, catalog_, graphs):
         if depth < 1:
             raise SpecError(f"{d['id']}: a graph made here may not make graphs of its own")
         c = d["config"]
-        return SpawnNode(d["id"], _below(catalog, depth - 1), max_nodes=c.get("max_nodes", 50), depth=min(c.get("depth", 0), depth - 1),
-                         max_runs=c.get("max_runs"), workers=c.get("workers", 0), strict=c.get("strict", False))
+        return SpawnNode(d["id"], inner, max_nodes=least(c.get("max_nodes", 50), max_nodes), depth=least(c.get("depth", 0), depth - 1),
+                         max_runs=c.get("max_runs"), workers=least(c.get("workers", 0), workers), strict=c.get("strict", False))
     inner._kinds["spawn"] = spawn
     return inner
 

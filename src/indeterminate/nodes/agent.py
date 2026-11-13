@@ -137,7 +137,9 @@ class AgentNode(Node):
             arrived = _text(next(iter(inputs.values())))
         else:
             arrived = "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in inputs.items())
-        messages = self.messages if self.memory else []
+        # the conversation is taken up on a copy and kept only when the turn ends well: a turn that fails or is
+        # stopped half way leaves nothing behind, so running it again starts from where the last good turn ended
+        messages = list(self.messages) if self.memory else []
         messages.append({"role": "user", "content": arrived, **({"image_data": pictures} if pictures else {})})
         for problem in ctx.problems:
             messages.append({"role": "user", "content": f"What you sent was not accepted: {problem}"})
@@ -164,6 +166,7 @@ class AgentNode(Node):
             messages.append(message)
             if not calls:
                 if self._choose:
+                    self.messages = messages if self.memory else []
                     return None
                 try:
                     try:
@@ -174,6 +177,7 @@ class AgentNode(Node):
                         unparsed -= 1
                         raise Invalid(self._sends[0], str(exc), again=True) from None
                     ctx.emit(self._sends[0], answer)
+                    self.messages = messages if self.memory else []
                     return None
                 except Invalid as exc:
                     if not exc.again:
@@ -208,6 +212,9 @@ class AgentNode(Node):
     def _closing(self, text: str) -> Any:
         if not self.json:
             return text
+        text = text.strip()
+        if text.startswith("```"):          # many models put their JSON in a fenced block
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
         try:
             return json.loads(text)
         except ValueError as exc:

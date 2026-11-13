@@ -31,6 +31,7 @@ class Catalog:
                     outside it are refused, and without it no file is read
     ``workspace``   the directory the graph's nodes work in: the ``file`` protocol carries paths relative to it,
                     agents are shown the pictures in it, programs are started in it
+    ``max_workers`` the most threads a block written in a description may ask for (``None``: as many as it asks)
     ``defaults``    settings for every node of a kind, ``{"agent": {"model": "...", "max_steps": 20}}``; a
                     description's own ``defaults`` come on top of these, and a node's own settings on top of both
     """
@@ -38,8 +39,8 @@ class Catalog:
     def __init__(self, *, allow: Iterable[str] = (), processes: bool = False,
                  models: Callable[[str], Any] | None = None, ask: Callable[[str, int, Any], Any] | None = None,
                  protocols: Protocols = DEFAULT, files=None, defaults: Mapping[str, Mapping] | None = None,
-                 workspace=None):
-        self.allow, self.processes = tuple(allow), bool(processes)
+                 workspace=None, max_workers: int | None = None):
+        self.allow, self.processes, self.max_workers = tuple(allow), bool(processes), max_workers
         self.files = Path(files).resolve() if files is not None else None
         self.defaults = {kind: dict(settings) for kind, settings in (defaults or {}).items()}
         self.models, self.ask = models, ask

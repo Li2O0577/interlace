@@ -231,8 +231,8 @@ class _Context(Context):
             return True
         return False
 
-    def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0) -> "Engine":
-        return self._engine._inner(self, graph, protocols, workers)
+    def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0, firm: bool = False) -> "Engine":
+        return self._engine._inner(self, graph, protocols, workers, firm)
 
     def use(self, **amounts: float) -> None:
         self._engine._use(self._state, self.round, amounts)
@@ -252,7 +252,8 @@ class Engine:
     def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0,
                  stopping: Callable[[], bool] | None = None, transport: Transport | None = None,
                  journal: Journal | None = None, time_limit: float | None = None,
-                 observe: Callable[[Mapping], None] | None = None, budget: Mapping[str, float] | None = None):
+                 observe: Callable[[Mapping], None] | None = None, budget: Mapping[str, float] | None = None,
+                 firm: bool = False):
         if workers < 0:
             raise ValueError("workers cannot be negative")
         if time_limit is not None and not time_limit > 0:
@@ -263,6 +264,7 @@ class Engine:
         self._meter: dict[str, float] = {}  # what the nodes have reported using
         self._id: str | None = None         # names this run: the first part of every activation's key
         self._limit = time_limit
+        self._firm = bool(firm)             # no node may give itself longer than time_limit
         self._parent: tuple | None = None   # (outer engine, the outer node's state, its activation's record)
         self._within: tuple = ()            # (node id, round) of each node this run is inside, outermost first
         self._pending: deque = deque()    # problems recorded under the lock, waiting to be told to the observer
@@ -283,6 +285,9 @@ class Engine:
         self._states = {node.id: _State(node) for node in graph.nodes}
         for state in self._states.values():
             own = getattr(state.node, "time_limit", None)
+            if own is not None and firm and time_limit is not None:
+                waits = own == float("inf") and getattr(type(state.node), "time_limit", None) == float("inf")
+                own = own if waits else min(own, time_limit)     # a kind of node that waits by nature keeps doing so
             state.time_limit = own if own is not None else time_limit
             if state.time_limit is not None and not state.time_limit > 0:
                 raise RunError(f"{state.node.id}: time_limit must be a positive number of seconds", state.node.id)
@@ -384,7 +389,7 @@ class Engine:
                 journal.path.unlink()
         return self.run(inputs)
 
-    def _inner(self, ctx: "_Context", graph: Graph, protocols: Protocols, workers: int) -> "Engine":
+    def _inner(self, ctx: "_Context", graph: Graph, protocols: Protocols, workers: int, firm: bool = False) -> "Engine":
         """An engine for a graph that runs inside one activation of one of this engine's nodes."""
         state = ctx._state
         journal = None
@@ -397,7 +402,7 @@ class Engine:
         told, id = self._observe, state.node.id
         observe = None if told is None else lambda event: told({**event, "within": [id, *event.get("within", ())]})
         inner = Engine(graph, protocols, workers=workers, stopping=ctx.stopping, journal=journal,
-                       time_limit=self._limit, observe=observe)
+                       time_limit=self._limit, observe=observe, firm=firm or self._firm)
         inner._parent = (self, state, ctx._act)
         inner._within = (*self._within, (state.node.id, ctx.round))
         inner._id = ctx.key
@@ -1033,6 +1038,8 @@ class Engine:
                     node.open(ctx)
                 value = feed.protocol.decode(body, feed.port.port)
                 returned = node.run(ctx, {feed.port.port.name: [value] if feed.port.port.many else value})
+                if ctx._cut:            # it was told to stop: the caller must not take what it left for an answer
+                    raise NodeError("the run is stopping")
                 if act is not None:
                     snapshot = node.snapshot()
                     if snapshot:

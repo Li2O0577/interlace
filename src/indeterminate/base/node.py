@@ -64,11 +64,12 @@ class Context(ABC):
         """True once the run is being stopped: a long activation should return soon."""
 
     @abstractmethod
-    def engine(self, graph: Any, protocols: Any, *, workers: int = 0) -> Any:
+    def engine(self, graph: Any, protocols: Any, *, workers: int = 0, firm: bool = False) -> Any:
         """An engine for a graph that runs inside this activation. It stops when the outer run stops, keeps
         its own journal beside the outer one when there is one, tells the outer observer what happens in it,
         and works under the same time limit. ``go(inputs)`` runs it, or takes it up where an interrupted
-        earlier attempt at this same activation left it."""
+        earlier attempt at this same activation left it. ``firm=True`` is for a graph that is not trusted:
+        none of its nodes may give itself more time than the run allows."""
 
     def use(self, **amounts: float) -> None:
         """Report what this activation used up, under names of the node's choosing (``tokens=1200``,

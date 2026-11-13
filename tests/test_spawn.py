@@ -163,3 +163,33 @@ def test_a_spawn_node_is_written_as_data_and_people_in_grown_graphs_are_told_apa
 
 def ask_twice(x):
     return {'graph': {'method': 'chain', 'nodes': [{'id': 'first', 'kind': 'human'}, {'id': 'second', 'kind': 'human'}]}, 'inputs': {'in': x}}
+
+
+def slow(x):
+    import time
+    time.sleep(0.4)
+    return x
+
+
+def test_a_graph_that_is_not_trusted_cannot_give_itself_more_time_or_threads(tmp_path):
+    patient = {'id': 'n1', 'kind': 'function', 'function': f'{HERE}.slow', 'inputs': ['x'], 'outputs': ['y'], 'time_limit': 60}
+    request = FunctionNode('plan', lambda x: {'graph': {'method': 'chain', 'nodes': [patient]}, 'inputs': {'in': x}}, inputs=[Port('x')], outputs=[Port('y')])
+    grown = Chain(request, SpawnNode('grow', Catalog(allow=[HERE]))).build(DEFAULT)
+    assert 'node n1 ran longer than 0.1 seconds' in Engine(grown, DEFAULT, time_limit=0.1).run({'in': 1}).last('out')['error']
+    written = FunctionNode('n1', slow, inputs=[Port('x')], outputs=[Port('y')])
+    written.time_limit = 60                                     # written in Python, by whoever runs it: it stands
+    assert Engine(Chain(written).build(DEFAULT), DEFAULT, time_limit=0.1).run({'in': 1}).last('out') == 1
+    with pytest.raises(RunError, match='node n1 ran longer than 0.1 seconds'):
+        Engine(Chain(written).build(DEFAULT), DEFAULT, time_limit=0.1, firm=True).run({'in': 1})
+
+    description = {'method': 'chain', 'nodes': [patient]}
+    assert Run.create(tmp_path / 'own', description, allow=[HERE], time_limit=0.1).start({'in': 1})['status'] == 'done'
+    state = Run.create(tmp_path / 'theirs', description, allow=[HERE], time_limit=0.1, strict=True).start({'in': 1})
+    assert state['status'] == 'failed' and 'ran longer than 0.1 seconds' in state['error']
+
+    spawn = SpawnNode('grow', Catalog(allow=[HERE]), max_nodes=6, depth=1, workers=2)
+    built = spawn.build({'nodes': [{'id': 'deep', 'kind': 'spawn', 'max_nodes': 10_000, 'workers': 500, 'depth': 9},
+                                   {'id': 'b', 'kind': 'block', 'workers': 500, 'graph': chain('double')}],
+                         'inputs': {'ask': 'deep.request', 'x': 'b.in'}})
+    deep, block = built.node('deep'), built.node('b')
+    assert (deep.max_nodes, deep.workers, deep.depth, block.workers) == (6, 2, 0, 2)

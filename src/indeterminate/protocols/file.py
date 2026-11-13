@@ -66,6 +66,9 @@ class FileOf(Schema):
         return {"file": {key: value for key, value in limits.items() if value}}
 
 
+_OURS = ("size", "sha256", "unchecked")     # what the protocol itself says about a file: a sender cannot say it
+
+
 def path_of(value: Any) -> str:
     """The path in a payload: the payload itself, or its ``path``."""
     path = value.get("path") if isinstance(value, Mapping) else value
@@ -144,8 +147,8 @@ class File(Protocol):
                 raise ProtocolError(f"{name} is {size} bytes, more than the {schema.max_size} allowed")
             if schema.min_size is not None and size < schema.min_size:
                 raise ProtocolError(f"{name} is {size} bytes, fewer than the {schema.min_size} required")
-        body = {**(payload if isinstance(payload, Mapping) else {}), "path": self._relative(path), "size": size,
-                "media": media_of(name)}
+        said = {key: value for key, value in payload.items() if key not in _OURS} if isinstance(payload, Mapping) else {}
+        body = {**said, "path": self._relative(path), "size": size, "media": media_of(name)}
         if self.hash:
             body["sha256"] = self._sha256(path)
         return body

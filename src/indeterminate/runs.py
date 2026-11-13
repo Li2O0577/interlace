@@ -177,20 +177,21 @@ class Run:
     def create(cls, directory, description: Mapping, *, allow=(), processes: bool = False, workers: int = 0,
                models: Callable[[str], Any] | None = models_from_environment, files=None,
                time_limit: float | None = None, observe: Callable[[Mapping], None] | None = None,
-               workspace=None, budget: Mapping[str, float] | None = None) -> "Run":
+               workspace=None, budget: Mapping[str, float] | None = None, strict: bool = False) -> "Run":
         """Check the description and set up a directory for one run of it. Nothing runs yet. ``files`` is
         the directory the description may take text from; the text is kept in the run, the files are not
         needed again. ``time_limit`` is the longest one activation may take, in seconds. ``workspace`` is the
         directory the nodes work in and send file paths relative to; it is ``files`` in the run's directory
         unless another is given. ``budget`` is the most the run may use of what its nodes report using,
-        by name: ``{"tokens": 200000}``."""
+        by name: ``{"tokens": 200000}``. ``strict=True`` is for a description that is not trusted: no node
+        in it may give itself more time than ``time_limit``, and no block more threads than ``workers``."""
         run = cls(directory, models=models, observe=observe)
         if (run.directory / "graph.json").exists():
             raise SpecError(f"{run.directory} already holds a run")
         if time_limit is not None and not time_limit > 0:
             raise SpecError("the time limit must be a positive number of seconds")
         options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers), "time_limit": time_limit,
-                   "budget": _budget(budget),
+                   "budget": _budget(budget), "strict": bool(strict),
                    "workspace": str(Path(workspace).resolve()) if workspace is not None else None}
         run.workspace(options).mkdir(parents=True, exist_ok=True)
         graph = load(description, run._catalog(options, files))
@@ -206,7 +207,7 @@ class Run:
 
     def _catalog(self, options: Mapping, files=None) -> Catalog:
         return Catalog(allow=options["allow"], processes=options["processes"], models=self.models, ask=self._ask, files=files,
-                       workspace=self.workspace(options))
+                       workspace=self.workspace(options), max_workers=options["workers"] if options.get("strict") else None)
 
     def _engine(self) -> Engine:
         description = _read(self.directory / "graph.json")
@@ -216,7 +217,7 @@ class Run:
         catalog = self._catalog(options)
         return Engine(load(description, catalog), catalog.protocols, workers=options["workers"],
                       journal=Journal(self.directory / "journal.jsonl"), time_limit=options.get("time_limit"),
-                      observe=self.observe, budget=options.get("budget"))
+                      observe=self.observe, budget=options.get("budget"), firm=bool(options.get("strict")))
 
     # ---- running ---------------------------------------------------------------------------------------
 
