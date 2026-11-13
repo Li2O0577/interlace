@@ -9,9 +9,9 @@ and sends back what came out. Ask for two measures and two nodes exist; ask for 
 What the written graph may reach is decided by the catalog ``grow`` was given, not by ``plan``: here, the
 functions of this module and no others.
 """
-from indeterminate import Chain, Engine, FunctionNode, Port
-from indeterminate.protocols import DEFAULT
-from indeterminate.spec import Catalog, SpawnNode
+from interlace import Chain, Engine, FunctionNode, Port
+from interlace.protocols import DEFAULT
+from interlace.spec import Catalog, SpawnNode
 
 HERE = __name__
 

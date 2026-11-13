@@ -5,11 +5,11 @@ import time
 
 import pytest
 
-from indeterminate.base import Firing, GraphBuilder, GraphError, NodeError, Port, ProtocolError, Ref
-from indeterminate.engine import Direct, Engine, RunError, Stream, Wire
-from indeterminate.methods import Chain
-from indeterminate.nodes import FunctionNode, HumanNode, ProcessNode, SinkNode, SourceNode
-from indeterminate.protocols import DEFAULT, Artifact, DirectoryStore, MemoryStore, StoreError, standard
+from interlace.base import Firing, GraphBuilder, GraphError, NodeError, Port, ProtocolError, Ref
+from interlace.engine import Direct, Engine, RunError, Stream, Wire
+from interlace.methods import Chain
+from interlace.nodes import FunctionNode, HumanNode, ProcessNode, SinkNode, SourceNode
+from interlace.protocols import DEFAULT, Artifact, DirectoryStore, MemoryStore, StoreError, standard
 
 WORKERS = [0, 1, 4]
 

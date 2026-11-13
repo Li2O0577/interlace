@@ -4,11 +4,11 @@ import time
 
 import pytest
 
-from indeterminate.base import Firing, GraphBuilder, GraphError, NodeError, Port
-from indeterminate.engine import Engine, RunError
-from indeterminate.methods import Chain, Fan, Loop, Star, Tree
-from indeterminate.nodes import Branch, Collect, FunctionNode, GraphNode, Pass, Until
-from indeterminate.protocols import DEFAULT
+from interlace.base import Firing, GraphBuilder, GraphError, NodeError, Port
+from interlace.engine import Engine, RunError
+from interlace.methods import Chain, Fan, Loop, Star, Tree
+from interlace.nodes import Branch, Collect, FunctionNode, GraphNode, Pass, Until
+from interlace.protocols import DEFAULT
 
 WORKERS = [0, 1, 4]
 

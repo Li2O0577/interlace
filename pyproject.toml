@@ -1,5 +1,5 @@
 [project]
-name = "1ndeterminate"
+name = "interlace"
 dynamic = ["version"]
 description = "Nodes, edges and methods: join models, programs, devices and people into graphs, and run them"
 readme = "README.md"
@@ -23,23 +23,23 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/Li2O0577/1ndeterminate"
-Documentation = "https://github.com/Li2O0577/1ndeterminate/blob/main/docs/GRAPH.md"
-Changelog = "https://github.com/Li2O0577/1ndeterminate/blob/main/CHANGELOG.md"
-Issues = "https://github.com/Li2O0577/1ndeterminate/issues"
+Homepage = "https://github.com/Li2O0577/interlace"
+Documentation = "https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md"
+Changelog = "https://github.com/Li2O0577/interlace/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Li2O0577/interlace/issues"
 
 [project.scripts]
-1ndeterminate = "indeterminate.cli:main"
+interlace = "interlace.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/indeterminate"]
+packages = ["src/interlace"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "examples", "scripts", "docs", "README.md", "README.zh-CN.md", "CHANGELOG.md", "LICENSE"]
 
 [tool.hatch.version]
-path = "src/indeterminate/__init__.py"
+path = "src/interlace/__init__.py"

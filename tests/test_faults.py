@@ -7,11 +7,11 @@ import time
 
 import pytest
 
-from indeterminate.base import GraphBuilder, Port
-from indeterminate.engine import Engine, Journal, RunError
-from indeterminate.methods import Chain, Fan, Loop
-from indeterminate.nodes import FunctionNode, GraphNode, ProcessNode
-from indeterminate.protocols import DEFAULT
+from interlace.base import GraphBuilder, Port
+from interlace.engine import Engine, Journal, RunError
+from interlace.methods import Chain, Fan, Loop
+from interlace.nodes import FunctionNode, GraphNode, ProcessNode
+from interlace.protocols import DEFAULT
 
 LOCK = threading.Lock()
 FUSE = {'left': None}
@@ -180,7 +180,7 @@ def count(x):
 
 
 def test_a_run_that_died_before_its_first_record_starts_over_from_its_inputs(tmp_path):
-    from indeterminate.runs import Run
+    from interlace.runs import Run
     description = {'method': 'chain', 'nodes': [{'id': 'a', 'kind': 'function', 'function': f'{__name__}.count', 'inputs': ['x'], 'outputs': ['y']}]}
     run = Run.create(tmp_path / 'run', description, allow=[__name__])
     assert run.start({'in': 'four'})['outputs'] == {'out': [4]}

@@ -8,15 +8,15 @@ import sys
 
 import pytest
 
-from indeterminate import cli
-from indeterminate.base import Port
-from indeterminate.engine import Engine, Journal, OverBudget, RunError
-from indeterminate.methods import Chain
-from indeterminate.models import ChatResult, FakeProvider
-from indeterminate.nodes import AgentNode, FunctionNode, GraphNode
-from indeterminate.protocols import DEFAULT
-from indeterminate.runs import Run
-from indeterminate.spec import Catalog, SpawnNode, SpecError
+from interlace import cli
+from interlace.base import Port
+from interlace.engine import Engine, Journal, OverBudget, RunError
+from interlace.methods import Chain
+from interlace.models import ChatResult, FakeProvider
+from interlace.nodes import AgentNode, FunctionNode, GraphNode
+from interlace.protocols import DEFAULT
+from interlace.runs import Run
+from interlace.spec import Catalog, SpawnNode, SpecError
 
 HERE = __name__
 KEYS = []

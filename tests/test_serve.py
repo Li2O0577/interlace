@@ -4,8 +4,8 @@ import json
 import subprocess
 import sys
 
-from indeterminate import cli
-from indeterminate.serve import TOOLS, Server
+from interlace import cli
+from interlace.serve import TOOLS, Server
 
 HERE = __name__
 CALLS = []
@@ -41,7 +41,7 @@ def test_the_handshake_and_the_tool_list(tmp_path):
     server = Server(tmp_path)
     hello = server.handle({'jsonrpc': '2.0', 'id': 0, 'method': 'initialize', 'params': {'protocolVersion': '2025-03-26', 'capabilities': {}}})
     assert hello['result']['protocolVersion'] == '2025-03-26' and hello['result']['capabilities'] == {'tools': {}}
-    assert hello['result']['serverInfo']['name'] == '1ndeterminate'
+    assert hello['result']['serverInfo']['name'] == 'interlace'
     assert server.handle({'jsonrpc': '2.0', 'id': 0, 'method': 'initialize', 'params': {'protocolVersion': '1999-01-01'}})['result']['protocolVersion'] == '2025-06-18'
     assert server.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) is None
     assert server.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'ping'})['result'] == {}
@@ -100,7 +100,7 @@ def test_the_server_speaks_over_stdio_and_only_the_protocol_reaches_the_client(t
                 {'jsonrpc': '2.0', 'method': 'notifications/initialized'},
                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'start', 'arguments': {'graph': REVIEWED, 'inputs': {'site': '桥'}}}}]
     sent = '\n'.join(json.dumps(m) for m in messages) + '\nthis is not json\n\n'
-    done = subprocess.run([sys.executable, '-m', 'indeterminate.cli', 'serve', '--runs', str(tmp_path), '--allow', HERE],
+    done = subprocess.run([sys.executable, '-m', 'interlace.cli', 'serve', '--runs', str(tmp_path), '--allow', HERE],
                           input=sent, capture_output=True, text=True, encoding='utf-8', cwd=str(tmp_path),
                           env={**__import__('os').environ, 'PYTHONPATH': str(__import__('pathlib').Path(__file__).parent)})
     replies = [json.loads(line) for line in done.stdout.splitlines()]

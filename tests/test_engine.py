@@ -4,11 +4,11 @@ import time
 
 import pytest
 
-from indeterminate.base import Firing, GraphBuilder, GraphError, Port
-from indeterminate.engine import Engine, RunError
-from indeterminate.methods import Chain
-from indeterminate.nodes import FunctionNode
-from indeterminate.protocols import DEFAULT
+from interlace.base import Firing, GraphBuilder, GraphError, Port
+from interlace.engine import Engine, RunError
+from interlace.methods import Chain
+from interlace.nodes import FunctionNode
+from interlace.protocols import DEFAULT
 
 WORKERS = [0, 1, 4]
 
@@ -192,7 +192,7 @@ def test_layers_above_the_abstractions_import_only_what_is_below_them():
     import ast
     from pathlib import Path
     import sys
-    src = Path(__file__).resolve().parents[1] / 'src' / 'indeterminate'
+    src = Path(__file__).resolve().parents[1] / 'src' / 'interlace'
     # nodes may use the engine (a graph as a node runs one); methods may use the nodes they place in a graph
     allowed = {'engine': {'base', 'engine'}, 'nodes': {'base', 'engine', 'nodes'}, 'protocols': {'base', 'protocols'},
                'methods': {'base', 'nodes', 'methods'}, 'models': {'models'}, 'base': {'base'},

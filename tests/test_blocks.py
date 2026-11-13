@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-from indeterminate.base import GraphError, Port
-from indeterminate.blocks import Block, par, seq
-from indeterminate.engine import Engine, Journal, RunError
-from indeterminate.methods import Chain, Fan, Loop
-from indeterminate.nodes import FunctionNode, GraphNode
-from indeterminate.protocols import DEFAULT
-from indeterminate.runs import Run
-from indeterminate.spec import Catalog, SpecError, block, dump, load
+from interlace.base import GraphError, Port
+from interlace.blocks import Block, par, seq
+from interlace.engine import Engine, Journal, RunError
+from interlace.methods import Chain, Fan, Loop
+from interlace.nodes import FunctionNode, GraphNode
+from interlace.protocols import DEFAULT
+from interlace.runs import Run
+from interlace.spec import Catalog, SpecError, block, dump, load
 
 HERE = __name__
 SEEN = []
@@ -141,7 +141,7 @@ def node(id, function, **more):
 
 
 def models(name):
-    from indeterminate.models import ChatResult, FakeProvider
+    from interlace.models import ChatResult, FakeProvider
     model = FakeProvider(lambda system, messages, tools: ChatResult(text=f'{name}:{messages[-1]["content"]}'))
     model.name = name
     return model

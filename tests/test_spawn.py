@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-from indeterminate.base import GraphBuilder, NodeError, Port
-from indeterminate.engine import Engine, Journal, RunError
-from indeterminate.methods import Chain
-from indeterminate.models import ChatResult, FakeProvider
-from indeterminate.nodes import AgentNode, FunctionNode, Tool
-from indeterminate.protocols import DEFAULT
-from indeterminate.runs import Run
-from indeterminate.spec import Catalog, SpawnNode, dump, load
+from interlace.base import GraphBuilder, NodeError, Port
+from interlace.engine import Engine, Journal, RunError
+from interlace.methods import Chain
+from interlace.models import ChatResult, FakeProvider
+from interlace.nodes import AgentNode, FunctionNode, Tool
+from interlace.protocols import DEFAULT
+from interlace.runs import Run
+from interlace.spec import Catalog, SpawnNode, dump, load
 
 HERE = __name__
 SEEN = []
