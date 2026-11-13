@@ -17,10 +17,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - name: Git identity for the test projects
-        run: |
-          git config --global user.name "CI"
-          git config --global user.email "ci@example.invalid"
       - name: Tests
         run: |
           uv venv .venv --python ${{ matrix.python }}
@@ -32,4 +28,4 @@ jobs:
         run: |
           uv venv .clean-env --python ${{ matrix.python }}
           uv pip install --python .clean-env/bin/python dist/*.whl
-          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/.clean-env/bin/python" "$GITHUB_WORKSPACE/scripts/kernel_package_smoke.py" --example "$GITHUB_WORKSPACE/examples/extension"
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/.clean-env/bin/python" "$GITHUB_WORKSPACE/scripts/package_smoke.py" "$GITHUB_WORKSPACE/examples/graphs"

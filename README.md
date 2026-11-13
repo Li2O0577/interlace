@@ -1,8 +1,12 @@
 # 1ndeterminate
 
-通用的多智能体编排内核。操作者确认一张计划图，内核按图确定性地调度节点，检查每个节点的文件边界，处理审批和放行，保存可恢复的状态和审计日志。
+把任何东西接成一张图并运行它。
 
-内核只约束边界：谁能启动、读、写、通信、放行。它不规定模型怎么推理，也不包含任何具体任务的方法。只依赖 Python 标准库，唯一用到的外部程序是 git。
+- **节点**是接收信息、给出信息的任何东西：模型、函数、外部程序、设备、人，或者另一张图。
+- **边**按写好的协议把信息从一个节点带到另一个节点：排队的数据、只留最新值、状态、信号、流、有回答的调用、按引用传递的文件。
+- **方法**是把节点接起来的现成结构：链、循环、扇出汇合、树、星形、需要人同意的树。
+
+引擎按图运行：事件驱动调度，可并行，可写日志并在中断后继续，可以在改过的图下继续。只依赖 Python 标准库。
 
 ## 安装
 
@@ -11,73 +15,62 @@ pip install -e .            # 在源码目录安装（尚未发布到公共索�
 uv build -o dist            # 构建 wheel
 ```
 
-需要 Python 3.11 及以上。发布名和命令是 `1ndeterminate`，导入名是 `indeterminate`（Python 模块名不能以数字开头）。
+需要 Python 3.11 及以上。发布名是 `1ndeterminate`，导入名是 `indeterminate`（Python 模块名不能以数字开头）。
+
+## 用法
+
+```python
+from indeterminate import DEFAULT, Chain, Engine, FunctionNode, Port
+
+double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
+show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
+
+graph = Chain(double, show).build(DEFAULT)
+print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
+```
+
+一个模型带两个工具，工具由图上的节点回答：
+
+```python
+from indeterminate import AgentNode, GraphBuilder, SinkNode, Tool
+
+agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "查词"), Tool("move", "移动机械臂")])
+graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
+         .connect("agent.lookup", "dictionary.x", "call")
+         .connect("agent.move", "arm.x", "call")
+         .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
+```
+
+`model` 是任何带 `chat(system, messages, tools, max_tokens)` 的对象；`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口和用于测试的 `FakeProvider`。
+
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。四个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂。
 
 ## 组成
 
-| 层 | 内容 | 主要名称 |
+| 层 | 包 | 主要名称 |
 |---|---|---|
-| 4 接口 | 嵌入式内核、操作者动作、扩展注册、stdio MCP 服务 | `Kernel`、`Operator`、`Extension`、`TaskType`、`Contract` |
-| 3 编排 | 调度、轮次、审批、放行、改图、恢复；智能体运行时 | `graph.*`、`agents.runtime` |
-| 2 实体与协议 | 计划图实体；智能体类；节点协议 | `Plan`、`Block`、`Node`、`Edge`；`Agent` 及子类；`NodeKind` |
-| 1 基础 | 事件、文件与锁、沙箱、宿主适配、模型提供方 | `core.*`、`HostAdapters`、`Provider` |
+| 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
+| 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
+| 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed` |
 
-每层只引用下面的层，`tests/test_layers.py` 检查这条规则。类层次、计划图的数据结构和节点协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-
-## 节点、边、方法
-
-仓库里正在建立新的一层：通用的节点、边（传递协议）、方法（连接结构）和运行它们的引擎。节点可以是模型、函数、外部程序、设备、人或另一张图。说明见 [docs/GRAPH.md](docs/GRAPH.md)，示例见 [examples/graphs/](examples/graphs/)。下文描述的是在它之前的那一层，两者目前并存。
-
-## 最小用法
-
-```python
-from indeterminate import Kernel, Extension, TaskType, Worker
-
-ext = Extension("translation")
-
-class Translator(Worker):
-    role = "translator"
-    title = "翻译"
-    tools = ("fs.list", "fs.read", "fs.write", "fs.edit")
-
-ext.kinds.append(Translator)
-ext.task_types.append(TaskType("translate", build_plan=my_plan_builder))
-
-with Kernel("./workspace", "./settings", extensions=[ext]) as kernel:
-    created = kernel.create_project("说明书翻译", "把 material/ 译成英文", task_type="translate", request_id="t-1")
-    # 操作者核对 created["plan_hash"] 后确认；内核不会自动确认
-    kernel.operator.confirm(created["project"]["id"], created["plan_hash"])
-```
-
-完整可运行示例见 [examples/extension/](examples/extension/)：自定义智能体类、带路径契约的工具和任务类型，只引用本包。
-
-扩展工具只有声明了读写哪些路径参数（`reads=`、`writes=`）才会出现在图节点里，节点边界按声明检查这些路径。这是路径检查，不是操作系统级沙箱：处理函数在声明之外做的事由宿主负责。
-
-## stdio MCP 服务
-
-```sh
-1ndeterminate --workspace /abs/workspace --home /abs/settings serve           # 真实提供方
-1ndeterminate --workspace /abs/demo --home /abs/demo-home serve --demo         # 模拟，不调用模型
-```
-
-对外 8 个工具：`project.create`、`project.list`、`project.open`、`graph.view`、`operation.request`、`events.read`、`artifact.list`、`artifact.read`。确认计划、批准改图、处理工具审批只能由操作者在另一终端用 `1ndeterminate confirm/approve-change/decide-tool/...` 完成，外部连接拿不到主控身份。细节见 [docs/MCP.md](docs/MCP.md)。
-
-设置目录默认 `~/.indeterminate`（环境变量 `INDETERMINATE_HOME`），工作区默认其下的 `workspace/`（`INDETERMINATE_WORKSPACE`）。
+每层只引用下面的层，引擎不认识任何具体的节点、协议或方法；`tests/test_engine.py` 里有测试检查这条规则。
 
 ## 测试
 
 ```sh
 python -m pip install -e . pytest
 python -m pytest -q tests
+python scripts/bench_engine.py       # 每个信封的调度开销
 ```
 
-测试只用脚本化的假模型（`FakeProvider`），不调用真实模型。
+测试只用脚本化的假模型和假设备，不调用真实模型。
 
 ## 限制
 
-- 文件边界是程序层面的路径与权限检查，不是操作系统隔离。
-- 操作者队列在工作区里，同等磁盘权限的程序也能写；尚无独立的操作者身份认证。
-- 尚未用真实模型做过完整运行。
+- 中断后的恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
+- 目前只有进程内的传递；`Transport` 是留给跨进程、跨机器的接口。
+- 设备节点没有接过真实设备，智能体节点没有用真实模型跑过。
+- 还没有命令行和 MCP 服务这类对外接口。
 
 ## 许可
 
