@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm'):
         sys.modules.pop(name, None)
 
 
@@ -38,6 +38,13 @@ def test_grown_at_run_time(capsys):
     result, refused = grown_at_run_time.main()
     assert result.last('out')['outputs'] == {'out': [['mean 6', 'largest 9', 'spread 6']]} and result.rounds == {'plan': 1, 'grow': 1}
     assert 'exit cannot be found' in refused['error']
+
+
+def test_planner_and_arm(capsys):
+    import planner_and_arm
+    result, bench = planner_and_arm.main()
+    assert result.last('out')['block'] == planner_and_arm.GOAL and bench.moves == 3 and result.used['plans'] == 2
+    assert [p['handled'] for p in result.problems] == ['rejected'] and 'must be 5 to 85 mm apart' in result.problems[0]['problem']
 
 
 def test_review_loop():
