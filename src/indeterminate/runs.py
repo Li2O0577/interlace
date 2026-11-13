@@ -4,12 +4,16 @@ Everything about a run is in its directory, so a run can be started by one proce
 and continued by a third::
 
     graph.json      the graph, as data
-    options.json    what the graph may reach (modules, processes), how many workers, the time limit
+    options.json    what the graph may reach (modules, processes), how many workers, the time limit, the budget
     journal.jsonl   what has happened so far
     questions/      one file per question that a person in the graph has been asked
     answers/        one file per answer given
     files/          the working directory of the graph's nodes: what the ``file`` protocol's paths are relative to
     state.json      where the run stands: done, waiting, stopped or failed
+    lock            there while a process is running the graph, and names that process
+
+One process at a time runs a run. A second that tries is refused and told who holds it; a lock left by a
+process that has died is taken over.
 
 A person is never waited for inside a running process. When a ``human`` node needs an answer that is not
 there yet, the run stops with the state ``waiting``; once the answer has been given, ``resume`` carries on
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -82,6 +87,67 @@ def check(description: Mapping, *, allow=(), processes: bool = False, files=None
             "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
 
 
+def _budget(budget: Mapping[str, float] | None) -> dict:
+    budget = dict(budget or {})
+    for name, limit in budget.items():
+        if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not limit >= 0:
+            raise SpecError(f"budget: {name} must be a number that is not negative, not {limit!r}")
+    return budget
+
+
+class _Lock:
+    """Held by the one process that is running the graph of a run directory."""
+
+    def __init__(self, directory: Path):
+        self.directory, self.path = directory, directory / "lock"
+
+    def __enter__(self):
+        me = {"pid": os.getpid(), "host": socket.gethostname(), "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        for _ in range(3):
+            try:
+                handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    holder = json.loads(self.path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    time.sleep(0.05)                       # being written or just released: look again
+                    continue
+                if holder.get("host") == me["host"] and holder.get("pid") != me["pid"] and not _alive(holder.get("pid")):
+                    stale = self.path.with_name(f"lock.stale-{me['pid']}-{time.monotonic_ns()}")
+                    try:
+                        os.rename(self.path, stale)        # only one of several taking it over gets this far
+                        os.unlink(stale)
+                    except OSError:
+                        pass
+                    continue
+                raise SpecError(f"{self.directory} is being run by process {holder.get('pid')} on {holder.get('host')} "
+                                f"since {holder.get('since')}; if that process is gone, delete {self.path}")
+            with os.fdopen(handle, "w", encoding="utf-8") as file:
+                json.dump(me, file)
+            return self
+        raise SpecError(f"{self.directory} is being run by another process")
+
+    def __exit__(self, *exc):
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        return False
+
+
+def _alive(pid) -> bool:
+    """Whether a process of this machine is still there. Where that cannot be asked safely, it is taken to be."""
+    if os.name != "posix" or type(pid) is not int or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _write(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.part")
@@ -110,18 +176,20 @@ class Run:
     def create(cls, directory, description: Mapping, *, allow=(), processes: bool = False, workers: int = 0,
                models: Callable[[str], Any] | None = models_from_environment, files=None,
                time_limit: float | None = None, observe: Callable[[Mapping], None] | None = None,
-               workspace=None) -> "Run":
+               workspace=None, budget: Mapping[str, float] | None = None) -> "Run":
         """Check the description and set up a directory for one run of it. Nothing runs yet. ``files`` is
         the directory the description may take text from; the text is kept in the run, the files are not
         needed again. ``time_limit`` is the longest one activation may take, in seconds. ``workspace`` is the
         directory the nodes work in and send file paths relative to; it is ``files`` in the run's directory
-        unless another is given."""
+        unless another is given. ``budget`` is the most the run may use of what its nodes report using,
+        by name: ``{"tokens": 200000}``."""
         run = cls(directory, models=models, observe=observe)
         if (run.directory / "graph.json").exists():
             raise SpecError(f"{run.directory} already holds a run")
         if time_limit is not None and not time_limit > 0:
             raise SpecError("the time limit must be a positive number of seconds")
         options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers), "time_limit": time_limit,
+                   "budget": _budget(budget),
                    "workspace": str(Path(workspace).resolve()) if workspace is not None else None}
         run.workspace(options).mkdir(parents=True, exist_ok=True)
         graph = load(description, run._catalog(options, files))
@@ -147,7 +215,7 @@ class Run:
         catalog = self._catalog(options)
         return Engine(load(description, catalog), catalog.protocols, workers=options["workers"],
                       journal=Journal(self.directory / "journal.jsonl"), time_limit=options.get("time_limit"),
-                      observe=self.observe)
+                      observe=self.observe, budget=options.get("budget"))
 
     # ---- running ---------------------------------------------------------------------------------------
 
@@ -158,27 +226,32 @@ class Run:
             raise SpecError(f"{self.directory} has already been started: resume it")
         return self._go(lambda engine: engine.run(inputs))
 
-    def resume(self) -> dict:
-        """Carry on from the journal."""
+    def resume(self, *, budget: Mapping[str, float] | None = None) -> dict:
+        """Carry on from the journal. ``budget`` replaces the limits it names: a run that failed for going
+        over its budget goes on under a larger one."""
         self._held()
         if not (self.directory / "journal.jsonl").exists():
             raise SpecError(f"{self.directory} has not been started")
-        return self._go(lambda engine: engine.resume())
+        return self._go(lambda engine: engine.resume(), budget)
 
     def _held(self) -> None:
         if not (self.directory / "graph.json").exists():
             raise SpecError(f"{self.directory} holds no run")
 
-    def _go(self, action) -> dict:
-        engine = self._engine()
-        try:
-            result = action(engine)
-        except Pending:
-            return self._state(WAITING)
-        except RunError as exc:
-            return self._state(FAILED, error=str(exc), node=exc.node, problems=exc.problems)
-        return self._state(DONE if result.complete else STOPPED, outputs=result.outputs, rounds=result.rounds,
-                           limited=list(result.limited), problems=result.problems)
+    def _go(self, action, budget: Mapping[str, float] | None = None) -> dict:
+        with _Lock(self.directory):
+            if budget:
+                options = _read(self.directory / "options.json")
+                _write(self.directory / "options.json", {**options, "budget": {**(options.get("budget") or {}), **_budget(budget)}})
+            engine = self._engine()
+            try:
+                result = action(engine)
+            except Pending:
+                return self._state(WAITING, used=dict(engine._meter))
+            except RunError as exc:
+                return self._state(FAILED, error=str(exc), node=exc.node, problems=exc.problems, used=exc.used)
+            return self._state(DONE if result.complete else STOPPED, outputs=result.outputs, rounds=result.rounds,
+                               limited=list(result.limited), problems=result.problems, used=result.used)
 
     # ---- people ----------------------------------------------------------------------------------------
 

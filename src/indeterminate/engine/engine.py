@@ -78,6 +78,7 @@ one, bodies are handed over as they are. Streams and calls do not pass through i
 """
 from __future__ import annotations
 
+import secrets
 import threading
 import time
 from collections import deque
@@ -92,6 +93,18 @@ from .transport import Transport
 _INPUT = "input:"   # prefix of the pseudo edge id of a graph input
 
 
+class OverBudget(NodeError):
+    """Raised in a node when what it reports using takes the run over its budget. The run has failed by
+    then; the node should return."""
+
+
+def _amounts(given: Mapping[str, float], what: str) -> dict[str, float]:
+    for name, amount in given.items():
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not amount >= 0 or amount == float("inf"):
+            raise ValueError(f"{what}: {name} must be a number that is not negative, not {amount!r}")
+    return dict(given)
+
+
 class RunError(RuntimeError):
     """A node failed, or the run was given something the graph does not take. ``node`` names the node."""
 
@@ -99,6 +112,7 @@ class RunError(RuntimeError):
         super().__init__(message)
         self.node = node
         self.problems: list[dict] = []     # what had failed a check before the run failed
+        self.used: dict[str, float] = {}   # what the run had used up when it failed
 
 
 @dataclass
@@ -110,6 +124,7 @@ class Result:
     limited: tuple[str, ...] = ()                            # back edges that reached max_rounds and dropped an envelope
     complete: bool = True                                    # False when the run was stopped with work left
     problems: list[dict] = field(default_factory=list)       # what failed a check and was repaired or let through
+    used: dict[str, float] = field(default_factory=dict)     # what the nodes reported using, added up
 
     def last(self, name: str, default: Any = None) -> Any:
         values = self.outputs.get(name)
@@ -202,6 +217,13 @@ class _Context(Context):
     def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0) -> "Engine":
         return self._engine._inner(self, graph, protocols, workers)
 
+    def use(self, **amounts: float) -> None:
+        self._engine._use(self._state, self.round, amounts)
+
+    @property
+    def key(self) -> str:
+        return f"{self._engine._id}/{self.node}#{self.round}"
+
     @property
     def within(self) -> tuple:
         return self._engine._within
@@ -213,13 +235,16 @@ class Engine:
     def __init__(self, graph: Graph, protocols: Protocols, *, workers: int = 0,
                  stopping: Callable[[], bool] | None = None, transport: Transport | None = None,
                  journal: Journal | None = None, time_limit: float | None = None,
-                 observe: Callable[[Mapping], None] | None = None):
+                 observe: Callable[[Mapping], None] | None = None, budget: Mapping[str, float] | None = None):
         if workers < 0:
             raise ValueError("workers cannot be negative")
         if time_limit is not None and not time_limit > 0:
             raise ValueError("time_limit must be a positive number of seconds")
         self.graph, self.workers = graph, workers
         self._observe = observe
+        self._budget = _amounts(budget or {}, "budget")
+        self._meter: dict[str, float] = {}  # what the nodes have reported using
+        self._id: str | None = None         # names this run: the first part of every activation's key
         self._limit = time_limit
         self._parent: tuple | None = None   # (outer engine, the outer node's state, its activation's record)
         self._within: tuple = ()            # (node id, round) of each node this run is inside, outermost first
@@ -318,9 +343,10 @@ class Engine:
                 except ValueError as exc:
                     raise RunError(f"graph input {name}: {exc}") from None
                 sent.append(self._deliver(feed, payload, 0, ()))
+            self._id = self._id or secrets.token_hex(8)
             if journal is not None:
                 try:
-                    journal.write({"kind": "run", "graph": self.graph.digest, "sent": [pack(e) for e in sent]})
+                    journal.write({"kind": "run", "id": self._id, "graph": self.graph.digest, "sent": [pack(e) for e in sent]})
                 except (TypeError, ValueError) as exc:
                     raise RunError(f"the graph's inputs cannot be journaled: {exc}") from None
             for state in self._states.values():
@@ -354,7 +380,38 @@ class Engine:
                        time_limit=self._limit, observe=observe)
         inner._parent = (self, state, ctx._act)
         inner._within = (*self._within, (state.node.id, ctx.round))
+        inner._id = ctx.key
         return inner
+
+    def _use(self, state: _State, round: int, amounts: Mapping[str, float]) -> None:
+        """Add what a node reports using to the run's count; over the budget, the run fails."""
+        amounts = _amounts(amounts, "use")
+        if not amounts:
+            return
+        over = None
+        with self._lock:
+            if self._over:
+                return
+            meter = self._meter
+            for name, amount in amounts.items():
+                meter[name] = meter.get(name, 0) + amount
+                limit = self._budget.get(name)
+                if over is None and limit is not None and meter[name] > limit:
+                    over = f"the run has used {meter[name]:g} {name}, and its budget is {limit:g}"
+            if self._journal is not None:
+                self._journal.write({"kind": "use", "node": state.node.id, "round": round, "amounts": amounts})
+            if over and self._error is None:        # the run ends even if the node goes on regardless
+                self._error = RunError(over, state.node.id)
+                self._stop = True
+                self._lock.notify_all()
+            total = dict(meter)
+        if self._observe is not None:
+            self._tell("used", node=state.node.id, round=round, amounts=amounts, total=total)
+        if self._parent is not None:
+            outer, outer_state, _ = self._parent
+            outer._use(outer_state, self._within[-1][1], amounts)
+        if over:
+            raise OverBudget(over)
 
     def _adopt(self, state: _State, act: _Act | None, problems: list[dict]) -> None:
         """Take on the problems of a run that happened inside one of this engine's nodes."""
@@ -383,6 +440,11 @@ class Engine:
         ended = records[-1]["kind"] == "end" and not changed
         with self._lock:
             dropped = self._restore(records)
+            if not ended:
+                for name, limit in self._budget.items():
+                    if self._meter.get(name, 0) > limit:
+                        raise RunError(f"the run has used {self._meter[name]:g} {name}, and its budget is {limit:g}: "
+                                       f"it goes on only under a larger budget")
             if changed:
                 journal.write({"kind": "change", "from": under, "graph": self.graph.digest, "dropped": dropped})
             if not ended:
@@ -404,6 +466,11 @@ class Engine:
         snaps: dict[str, Any] = {}
         for record in records:
             kind = record["kind"]
+            if kind == "run":
+                self._id = self._id or record.get("id") or record["graph"][:16]
+            elif kind == "use":
+                for name, amount in record["amounts"].items():
+                    self._meter[name] = self._meter.get(name, 0) + amount
             if kind == "act":
                 took.update(record["took"])
                 for name, body in record["out"]:
@@ -476,6 +543,7 @@ class Engine:
         if self._error:
             self._flush()
             self._error.problems = self._result.problems
+            self._error.used = dict(self._meter)
             self._tell("ended", complete=False, error=str(self._error))
             cause = self._error.__cause__
             if cause is not None and not isinstance(cause, Exception):
@@ -485,6 +553,7 @@ class Engine:
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
         result.limited = tuple(self._limited)
         result.complete = not self._stop
+        result.used = dict(self._meter)
         self._flush()
         self._tell("ended", complete=result.complete)
         if self._error:                     # the observer failed on the last thing it was told

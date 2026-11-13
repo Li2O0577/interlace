@@ -1,11 +1,11 @@
 """The same operations as the command line, offered to a client over the Model Context Protocol.
 
     1ndeterminate serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
-                        [--files DIRECTORY]
+                        [--files DIRECTORY] [--budget NAME=NUMBER]...
 
 The client (usually a model in some other application) sends graphs as data and gets runs back. What those
 graphs may reach is decided by whoever starts the server, on its command line, and never by the client: a
-client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot choose where a run is kept, and can
+client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot raise ``--budget``, cannot choose where a run is kept, and can
 take text only from files under ``--files`` (from none when it is not given).
 Model keys come from the server's environment. Every run is a directory under ``--runs``, the same directory
 the command line works on, so a run started here can be looked at or answered from a terminal.
@@ -71,8 +71,9 @@ class Refused(Exception):
 
 class Server:
     def __init__(self, runs, *, allow=(), processes: bool = False, workers: int = 0,
-                 models: Callable[[str], Any] | None = models_from_environment, time_limit: float | None = None, files=None):
-        self.root = Path(runs)
+                 models: Callable[[str], Any] | None = models_from_environment, time_limit: float | None = None, files=None,
+                 budget: Mapping[str, float] | None = None):
+        self.root, self.budget = Path(runs), dict(budget or {})
         self.time_limit, self.files = time_limit, files
         self.allow, self.processes, self.workers, self.models = list(allow), bool(processes), int(workers), models
 
@@ -99,7 +100,8 @@ class Server:
             raise SpecError("inputs must be an object: a value for each graph input")
         id = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
         run = Run.create(self.root / id, self._graph(arguments), allow=self.allow, processes=self.processes,
-                         workers=self.workers, models=self.models, time_limit=self.time_limit, files=self.files)
+                         workers=self.workers, models=self.models, time_limit=self.time_limit, files=self.files,
+                         budget=self.budget)
         return {"run": id, **run.start(inputs)}
 
     def status(self, arguments: Mapping) -> dict:
