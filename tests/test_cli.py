@@ -120,12 +120,14 @@ def test_models_come_from_the_environment_and_keys_stay_out_of_the_run(tmp_path,
         models_from_environment('nowhere:x')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'secret-key-value')
     monkeypatch.setenv('OPENAI_API_KEY', 'other-secret')
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:9')       # nothing listens there: no service is called
+    monkeypatch.setattr('indeterminate.models.providers.RETRY_WAITS', (0,))
     assert models_from_environment('anthropic:some-model').name == 'anthropic:some-model'
     assert models_from_environment('openai:some-model').url == 'https://api.openai.com/v1/chat/completions'
     graph, run = write(tmp_path / 'g.json', {'method': 'chain', 'nodes': [{'id': 'w', 'kind': 'agent', 'model': 'fake:echo'},
                                                                          {'id': 'k', 'kind': 'agent', 'model': 'anthropic:some-model', 'max_steps': 1}]}), tmp_path / 'run'
     code, said = call('run', graph, '--dir', run, '--input', 'in=hello')
-    assert said['status'] == 'failed' and said['node'] == 'k'            # the echo ran; the real service is not reachable here
+    assert said['status'] == 'failed' and said['node'] == 'k'            # the echo ran; the other has no service to reach
     everything = ''.join(p.read_text(encoding='utf-8') for p in run.rglob('*') if p.is_file())
     assert 'secret-key-value' not in everything and 'other-secret' not in everything and 'hello' in everything
 

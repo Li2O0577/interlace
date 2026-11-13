@@ -10,12 +10,13 @@ Layers, bottom up (each imports only from below):
 2. engine      Engine, Result, Journal, Transport
 3. parts       nodes, protocols, methods, models: the ones that come with the package
 4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
-5. runs, cli   a run kept in a directory, and the ``1ndeterminate`` command that works on one
+5. runs, cli, serve   a run kept in a directory, the ``1ndeterminate`` command that works on one, and the
+               same operations offered to an MCP client
 
 Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 _PUBLIC = {
     # base
