@@ -23,6 +23,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
 | 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
+| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
 
 引擎只认识抽象层，不认识任何具体的节点、协议或方法。`tests/test_engine.py` 里有一个测试检查各层的引用方向。
 
@@ -102,6 +103,40 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 `journal=Journal(path)` 让运行可恢复：每次完成的激活整条写入日志，新引擎用同一个日志 `resume()` 接着运行。做完的不重做，被打断的重跑。`resume(change=True)` 让运行在另一张图下继续。
 
 `transport` 是发送和接收之间的接口，进程内不需要它；跨进程或跨机器的传递方式放在这里。
+
+## 把图写成数据
+
+`indeterminate.spec` 把图写成 JSON，再从 JSON 建回同一张图：
+
+```python
+from indeterminate.spec import Catalog, dump, load, read, write
+
+write("graph.json", graph)                                   # 图的定义，加上嵌套子图的定义
+again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == graph.digest
+```
+
+写出来的就是图自己的描述（摘要正是由它算出的）：每个节点的种类、端口、配置，每条边，图的输入输出。函数用带模块的名字指明（`mypkg.steps.clean`），所以必须是模块顶层的函数，`lambda` 写不出去。模型用名字指明。
+
+描述里只有名字，建图时要把名字变成真东西，这等于让描述决定运行哪些代码。`Catalog` 是宿主划定范围的地方，默认什么都够不到：
+
+| 参数 | 含义 |
+|---|---|
+| `allow` | 函数可以来自哪些模块，`"mypkg"` 包括它下面的所有模块 |
+| `processes` | 是否允许 `process` 节点，它会在本机启动程序 |
+| `models` | `models(name)` 返回智能体用的模型；不给就建不了智能体 |
+| `ask` | `ask(node_id, request)` 替图里没有自带函数的 `human` 节点回答 |
+| `protocols` | 编译图用的协议表 |
+
+`catalog.register(kind, loader)` 加入自己的节点种类。
+
+手写时可以更短：节点的设置直接写在 `id`、`kind` 旁边，端口只写名字，边只写 `from` 和 `to`；也可以不写节点和边，直接指定方法：
+
+```json
+{"method": "loop", "max_rounds": 4, "until": "mypkg.checks.good_enough", "nodes": [
+  {"id": "draft", "kind": "agent", "model": "anthropic:some-model", "system": "..."},
+  {"id": "tidy", "kind": "function", "function": "mypkg.steps.tidy", "inputs": ["x"], "outputs": ["y"]}
+]}
+```
 
 ## 示例
 

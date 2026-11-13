@@ -195,7 +195,8 @@ def test_layers_above_the_abstractions_import_only_what_is_below_them():
     src = Path(__file__).resolve().parents[1] / 'src' / 'indeterminate'
     # nodes may use the engine (a graph as a node runs one); methods may use the nodes they place in a graph
     allowed = {'engine': {'base', 'engine'}, 'nodes': {'base', 'engine', 'nodes'}, 'protocols': {'base', 'protocols'},
-               'methods': {'base', 'nodes', 'methods'}, 'models': {'models'}, 'base': {'base'}}
+               'methods': {'base', 'nodes', 'methods'}, 'models': {'models'}, 'base': {'base'},
+               'spec': {'base', 'engine', 'nodes', 'protocols', 'methods', 'models', 'spec'}}
     for package, may in allowed.items():
         for path in (src / package).glob('*.py'):
             for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):

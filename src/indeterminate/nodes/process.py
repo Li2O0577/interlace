@@ -38,7 +38,8 @@ class ProcessNode(Node):
         self.cwd, self.env = cwd, dict(env) if env is not None else None
 
     def config(self) -> Mapping:
-        return {"command": self.command, "format": self.format, "lines": self.lines, "timeout": self.timeout}
+        return {"command": self.command, "format": self.format, "lines": self.lines, "timeout": self.timeout,
+                "cwd": self.cwd}
 
     def _write(self, value: Any) -> bytes:
         if self.format == "bytes":

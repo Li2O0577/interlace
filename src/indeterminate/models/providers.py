@@ -500,7 +500,10 @@ def build(model_spec: str, providers: list[dict]) -> Provider:
     if provider is None:
         raise ProviderError(f"找不到已启用的模型提供方：{pid}")
     if provider["type"] == "anthropic":
-        return AnthropicProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
-    if provider["type"] == "openai_compat":
-        return OpenAICompatProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
-    raise ProviderError(f"不支持的提供方类型：{provider['type']}")
+        built = AnthropicProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
+    elif provider["type"] == "openai_compat":
+        built = OpenAICompatProvider(provider.get("api_key", ""), model, provider.get("base_url", ""))
+    else:
+        raise ProviderError(f"不支持的提供方类型：{provider['type']}")
+    built.name = model_spec       # what a graph's description records, so the same model is found again
+    return built

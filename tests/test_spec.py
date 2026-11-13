@@ -1,0 +1,182 @@
+"""A graph written out as data builds back into the same graph, and a catalog limits what data may reach."""
+import json
+import sys
+
+import pytest
+
+from indeterminate.base import Firing, GraphBuilder, Port
+from indeterminate.engine import Engine
+from indeterminate.methods import Chain, Fan, Governed, Loop
+from indeterminate.models import ChatResult, FakeProvider
+from indeterminate.nodes import (AgentNode, Branch, FunctionNode, GraphNode, HumanNode, ProcessNode, SinkNode, SourceNode,
+                                 Tool)
+from indeterminate.protocols import DEFAULT
+from indeterminate.spec import Catalog, SpecError, dump, load, read, write
+
+HERE = __name__                     # the functions below are found by name in this module
+
+
+def add_one(x):
+    return x + 1
+
+
+def double(x):
+    return x * 2
+
+
+def big(x):
+    return x >= 10
+
+
+def numbers():
+    return iter([1, 2, 3])
+
+
+WRITTEN = []
+
+
+def keep(x):
+    WRITTEN.append(x)
+    return len(WRITTEN)
+
+
+def hello(request):
+    return {'approved': True}
+
+
+def lead(ctx, task=None, reply=None):
+    if task is not None:
+        ctx.emit('send', task)
+    elif ctx.call('approve', {'result': reply})['approved']:
+        ctx.emit('out', reply)
+
+
+def scripted(name):
+    provider = FakeProvider(lambda system, messages, tools: ChatResult(text=f"{name}: {messages[-1]['content']}"))
+    provider.name = name
+    return provider
+
+
+def fn(id, function, inputs=('x',), outputs=('y',), **options):
+    ports = lambda names: [p if isinstance(p, Port) else Port(p) for p in names]   # noqa: E731
+    return FunctionNode(id, function, inputs=ports(inputs), outputs=ports(outputs), **options)
+
+
+def catalog(**options):
+    return Catalog(**{'allow': [HERE], 'processes': True, 'models': scripted, **options})
+
+
+def everything():
+    """One graph with every kind of node that comes with the package."""
+    inner = GraphNode('refine', Loop(fn('inc', add_one, inputs=[Port('x', int)], outputs=[Port('y', int)]), until=big, max_rounds=20), DEFAULT)
+    program = ProcessNode('echo', [sys.executable, '-c', 'import sys; sys.stdout.write(sys.stdin.read())'], format='json', timeout=20)
+    agent = AgentNode('agent', scripted('m1'), system='be brief', tools=[Tool('ask', 'ask a person', {'type': 'object', 'properties': {'q': {}}})])
+    builder = GraphBuilder().add(SourceNode('source', numbers, schema=int), inner, program, Branch('gate', big), agent,
+                                 HumanNode('person', hello), SinkNode('sink', keep, answers=True))
+    builder.connect('source.out', 'refine.in', 'value').connect('refine.out', 'echo.x', 'value').connect('echo.out', 'gate.x', 'value')
+    builder.connect('gate.yes', 'agent.task', 'value').connect('agent.ask', 'person.request', 'call').connect('agent.out', 'sink.x', 'latest')
+    return builder.output('out', 'sink.out').output('small', 'gate.no').compile(DEFAULT)
+
+
+def test_a_graph_written_out_builds_back_into_the_same_graph(tmp_path):
+    graph = everything()
+    data = dump(graph)
+    assert json.loads(json.dumps(data)) == data and data['digest'] == graph.digest and len(data['graphs']) == 1
+    again = load(data, catalog())
+    assert again.digest == graph.digest and again is not graph
+    write(tmp_path / 'graph.json', graph)
+    assert read(tmp_path / 'graph.json', catalog()).digest == graph.digest
+    WRITTEN.clear()
+    result = Engine(again, DEFAULT).run()
+    assert WRITTEN == ['m1: 10', 'm1: 10', 'm1: 10'] and result.outputs == {'out': [1, 2, 3], 'small': []}
+
+
+def test_methods_and_coordination_survive_the_round_trip():
+    hub = fn('lead', lead, inputs=['task', Port('reply', required=False)], outputs=['out', 'send', Port('approve', call=True)],
+             firing=Firing.ANY, context=True)
+    graph = Governed(hub, fn('a', add_one), operator=HumanNode('operator'), max_rounds=2).build(DEFAULT)
+    asked = []
+    again = load(dump(graph), catalog(ask=lambda node, request: (asked.append((node, request)), {'approved': True})[1]))
+    assert again.digest == graph.digest
+    assert Engine(again, DEFAULT).run({'in': 1}).outputs == {'out': [2]} and asked == [('operator', {'result': 2})]
+    with pytest.raises(Exception, match='nobody is there to ask'):
+        Engine(load(dump(graph), catalog()), DEFAULT).run({'in': 1})
+    fan = Fan(fn('a', add_one), fn('b', double)).build(DEFAULT)
+    assert Engine(load(dump(fan), catalog()), DEFAULT).run({'in': 3}).outputs == {'out': [[4, 6]]}
+
+
+def test_a_description_can_be_written_by_hand_in_a_shorter_form():
+    node = lambda id, function: {'id': id, 'kind': 'function', 'function': f'{HERE}.{function}', 'inputs': ['x'], 'outputs': ['y']}   # noqa: E731
+    chain = load({'method': 'chain', 'nodes': [node('a', 'add_one'), node('b', 'double')]}, catalog())
+    assert chain.digest == Chain(fn('a', add_one), fn('b', double)).build(DEFAULT).digest
+    loop = load({'method': 'loop', 'nodes': [node('a', 'double')], 'until': f'{HERE}.big', 'max_rounds': 9}, catalog())
+    assert Engine(loop, DEFAULT).run({'in': 1}).outputs == {'out': [16]}
+    plain = load({'nodes': [node('a', 'add_one'), node('b', 'double'), {'id': 'p', 'kind': 'process', 'command': [sys.executable, '-c', 'print(7)'], 'inputs': []}],
+                  'edges': [{'from': 'a.y', 'to': 'b.x'}], 'inputs': {'in': 'a.x'}, 'outputs': {'out': 'b.y', 'seven': 'p.out'}}, catalog())
+    assert Engine(plain, DEFAULT).run({'in': 1}).outputs == {'out': [4], 'seven': ['7\n']}
+    tree = load({'method': 'star', 'max_rounds': 1, 'root': {
+        'id': 'lead', 'kind': 'agent', 'model': 'm', 'firing': 'any', 'inputs': ['task', {'name': 'reply', 'required': False}], 'outputs': ['out', 'send']},
+        'children': [node('a', 'add_one')]}, catalog())
+    assert [n.id for n in tree.nodes] == ['lead', 'a'] and tree.node('lead').firing is Firing.ANY
+    typed = load({'nodes': [{'id': 'a', 'kind': 'pass', 'inputs': [{'name': 'x', 'schema': {'record': {'n': 'int', 'tags': {'list': 'str'}}, 'optional': ['tags']}}]}],
+                  'inputs': {'in': 'a.x'}, 'outputs': {'out': 'a.y'}})
+    assert Engine(typed, DEFAULT).run({'in': {'n': 1}}).outputs == {'out': [{'n': 1}]}
+
+
+def test_a_catalog_decides_what_a_description_may_reach():
+    node = {'id': 'a', 'kind': 'function', 'function': f'{HERE}.add_one', 'inputs': ['x'], 'outputs': ['y']}
+    wrap = lambda *nodes: {'nodes': list(nodes)}   # noqa: E731
+    with pytest.raises(SpecError, match='a: .*add_one is not in a module this catalog allows \\(none\\)'):
+        load(wrap(node))
+    with pytest.raises(SpecError, match='os.system is not in a module this catalog allows'):
+        load(wrap({**node, 'function': 'os.system'}), catalog())
+    with pytest.raises(SpecError, match='p starts a program, and this catalog does not allow processes'):
+        load(wrap({'id': 'p', 'kind': 'process', 'command': ['ls']}), Catalog())
+    with pytest.raises(SpecError, match="g: this catalog has no models, so the agent's model 'x:y' cannot be built"):
+        load(wrap({'id': 'g', 'kind': 'agent', 'model': 'x:y'}), Catalog())
+    for name, wrong in ((f'{HERE}.missing', 'cannot be found'), (f'{HERE}.HERE', 'is not callable'), (f'{HERE}.<lambda>', 'top of a module')):
+        with pytest.raises(SpecError, match=wrong):
+            load(wrap({**node, 'function': name}), catalog())
+
+
+def test_a_description_that_is_wrong_says_where():
+    node = {'id': 'a', 'kind': 'function', 'function': f'{HERE}.add_one', 'inputs': ['x'], 'outputs': ['y']}
+    cases = [({'nodes': [{'id': 'a', 'kind': 'teleport'}]}, "unknown kind of node: 'teleport'"),
+             ({'nodes': [{'kind': 'function'}]}, 'a node needs an id and a kind'),
+             ({'nodes': [{'id': 'a', 'kind': 'function', 'inputs': ['x']}]}, "a: a function node needs 'function'"),
+             ({'nodes': [node], 'edges': [{'from': 'a.y'}]}, "lacks 'to'"),
+             ({'nodes': [node], 'edges': [{'from': 'a.y', 'to': 'b.x'}]}, "no node 'b'"),
+             ({'nodes': [{**node, 'inputs': [{'name': 'x', 'schema': 'colour'}]}]}, "a: unknown type in a schema: 'colour'"),
+             ({'method': 'spiral', 'nodes': [node]}, "unknown method: 'spiral'"),
+             ({'method': 'loop', 'nodes': [node]}, "lacks 'max_rounds'"),
+             ({'nodes': [{'id': 'g', 'kind': 'graph', 'graph': 'f' * 64}]}, 'the description has no graph ffffffffffff'),
+             ([], 'a description is a mapping')]
+    for description, message in cases:
+        with pytest.raises(SpecError, match=message):
+            load(description, catalog())
+
+
+def test_a_host_can_add_its_own_kind_of_node(tmp_path):
+    from indeterminate.nodes import Pass
+
+    class Stamp(Pass):
+        kind = 'stamp'
+
+        def config(self):
+            return {'mark': self.mark}
+
+        def run(self, ctx, inputs):
+            return {'y': f"{inputs['x']}{self.mark}"}
+
+    def stamp(description, catalog, graphs):
+        node = Stamp(description['id'])
+        node.mark = description['config']['mark']
+        return node
+    mine = catalog()
+    mine.register('stamp', stamp)
+    graph = load({'method': 'chain', 'nodes': [{'id': 's', 'kind': 'stamp', 'mark': '!'}]}, mine)
+    assert Engine(graph, DEFAULT).run({'in': 'hi'}).outputs == {'out': ['hi!']}
+    assert load(dump(graph), mine).digest == graph.digest
+    (tmp_path / 'bad.json').write_text('{not json')
+    with pytest.raises(SpecError, match='not JSON'):
+        read(tmp_path / 'bad.json')

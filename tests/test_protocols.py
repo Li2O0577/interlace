@@ -309,7 +309,7 @@ def test_a_program_is_a_node():
     assert run(Chain(raw).build(DEFAULT), {'in': b'\x00\x01\x02'}).last('out') == b'\x02\x01\x00'
     alone = ProcessNode('alone', [PY, '-c', 'print("ready")'], takes_input=False)
     assert not alone.inputs and run(Chain(alone).build(DEFAULT)).last('out') == 'ready\n'
-    assert upper.config() == {'command': upper.command, 'format': 'text', 'lines': False, 'timeout': None}
+    assert upper.config() == {'command': upper.command, 'format': 'text', 'lines': False, 'timeout': None, 'cwd': None}
 
 
 def test_a_program_can_send_its_output_line_by_line():

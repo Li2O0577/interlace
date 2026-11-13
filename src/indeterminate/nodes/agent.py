@@ -42,7 +42,8 @@ def _text(value: Any) -> str:
 class AgentNode(Node):
     """``model`` is anything with ``chat(system, messages, tools, max_tokens)`` that returns an object with
     ``text`` and ``tool_calls`` (a list of ``{"id", "name", "args"}``); messages are
-    ``{"role": "user" | "assistant" | "tool", "content": ...}``.
+    ``{"role": "user" | "assistant" | "tool", "content": ...}``. Its ``name`` (or else its ``model``) attribute is
+    what the node's description records as the model, and what a catalog is asked for when the graph is loaded.
 
     One activation is one turn: what arrived becomes a user message, the model is asked, every tool it calls
     is answered through the call port of that name, and it is asked again until it calls nothing more.
@@ -87,7 +88,7 @@ class AgentNode(Node):
                             for name in self._sends]
 
     def config(self) -> Mapping:
-        return {"model": str(getattr(self.model, "model", "")), "system": self.system,
+        return {"model": str(getattr(self.model, "name", "") or getattr(self.model, "model", "")), "system": self.system,
                 "tools": [tool.spec() for tool in self.tools], "memory": self.memory, "json": self.json,
                 "max_steps": self.max_steps, "max_tokens": self.max_tokens}
 
