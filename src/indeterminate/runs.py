@@ -5,6 +5,7 @@ and continued by a third::
 
     graph.json      the graph, as data
     options.json    what the graph may reach (modules, processes), how many workers, the time limit, the budget
+    inputs.json     what the run was started with
     journal.jsonl   what has happened so far
     questions/      one file per question that a person in the graph has been asked
     answers/        one file per answer given
@@ -224,6 +225,10 @@ class Run:
         self._held()
         if (self.directory / "journal.jsonl").exists():
             raise SpecError(f"{self.directory} has already been started: resume it")
+        try:
+            _write(self.directory / "inputs.json", dict(inputs or {}))
+        except (TypeError, ValueError) as exc:
+            raise SpecError(f"the inputs are not plain data: {exc}") from None
         return self._go(lambda engine: engine.run(inputs))
 
     def resume(self, *, budget: Mapping[str, float] | None = None) -> dict:
@@ -232,6 +237,9 @@ class Run:
         self._held()
         if not (self.directory / "journal.jsonl").exists():
             raise SpecError(f"{self.directory} has not been started")
+        journal = Journal(self.directory / "journal.jsonl")
+        if not journal.read():                      # the process died before the first record was whole
+            return self._go(lambda engine: engine.run(_read(self.directory / "inputs.json", {})), budget)
         return self._go(lambda engine: engine.resume(), budget)
 
     def _held(self) -> None:
