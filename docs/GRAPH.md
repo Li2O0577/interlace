@@ -3,11 +3,11 @@
 这个包把任何东西接成一张图并运行它。图里的节点可以是模型、函数、外部程序、设备、人，也可以是另一张图；边是写好的传递协议；方法是把节点接起来的现成结构。
 
 ```python
-from indeterminate.base import Port
-from indeterminate.engine import Engine
-from indeterminate.methods import Chain
-from indeterminate.nodes import FunctionNode
-from indeterminate.protocols import DEFAULT
+from interlace.base import Port
+from interlace.engine import Engine
+from interlace.methods import Chain
+from interlace.nodes import FunctionNode
+from interlace.protocols import DEFAULT
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
 show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
@@ -20,12 +20,12 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 
 | 层 | 包 | 内容 |
 |---|---|---|
-| 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
-| 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
-| 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
-| 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
-| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
-| 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
+| 抽象 | `interlace.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method` |
+| 引擎 | `interlace.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
+| 现成部件 | `interlace.nodes`、`interlace.protocols`、`interlace.methods`、`interlace.models` | 见下 |
+| 块 | `interlace.blocks` | `Block`、`seq`、`par` |
+| 数据格式 | `interlace.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
+| 对外接口 | `interlace.runs`、`interlace.cli`、`interlace.serve` | `Run`；命令 `interlace`；MCP 服务 |
 
 引擎只认识抽象层，不认识任何具体的节点、协议或方法。`tests/test_engine.py` 里有一个测试检查各层的引用方向。
 
@@ -48,12 +48,12 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 节点 | 是什么 |
 |---|---|
 | `FunctionNode` | 一个 Python 函数 |
-| `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`indeterminate.models` 里有现成的。`memory` 可以是一个函数，见下 |
+| `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`interlace.models` 里有现成的。`memory` 可以是一个函数，见下 |
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `SourceNode`、`SinkNode` | 外部读数的来源、结果的去处（相机、机械臂这类设备接在这里） |
 | `HumanNode` | 人。请求交给 `ask(request)`，它返回时就是人的回答 |
 | `GraphNode` | 一整张图当成一个节点，方法由此嵌套；块的每一次使用就是它 |
-| `SpawnNode` | 运行中收到一张写成数据的图，建出来、运行、发回结果（在 `indeterminate.spec` 里，见“运行中增长”） |
+| `SpawnNode` | 运行中收到一张写成数据的图，建出来、运行、发回结果（在 `interlace.spec` 里，见“运行中增长”） |
 | `Pass`、`Collect`、`Branch`、`Until` | 只负责流向：原样转发、汇合成列表、二选一、循环是否继续 |
 | `Roster` | 管着固定数目的位置，按名字把位置发出去；`Pool` 用它 |
 
@@ -116,7 +116,7 @@ Port("y", int, check=positive)                 # 可以是一个函数，也可�
 `file` 协议让节点之间传文件的相对路径，而不是文件内容。所有节点在同一个工作目录里干活；发送方把文件写在工作目录下，发出路径（一个字符串，或者带 `path` 的映射，映射里其他内容会一起带过去）。信封里是路径加上发送那一刻的大小、哈希和类型，是很小的普通数据，照常进日志。
 
 ```python
-from indeterminate.protocols import DEFAULT, FileOf, with_files
+from interlace.protocols import DEFAULT, FileOf, with_files
 
 protocols = with_files(DEFAULT, "work")                       # 工作目录
 Port("chart", FileOf(".png", ".svg", max_size=5_000_000))     # 这个口发的是图片，最大 5MB
@@ -164,7 +164,7 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 节点是某张图里的一个东西，有自己的名字和状态，所以同一个节点不能出现在两个地方。块是设计本身：一份每次都重新造出图来的配方，每用一次得到一个独立的节点。
 
 ```python
-from indeterminate import Block, seq, par
+from interlace import Block, seq, par
 
 review = Block(lambda: Loop(writer(), critic(), max_rounds=3), name="review")
 
@@ -201,7 +201,7 @@ study = seq(clean, par(review, review), publish)   # 可以嵌套
 ]}
 ```
 
-`file` 是块的图文件，从 `Catalog(files=...)` 允许的目录里读。`defaults` 写在使用处时，会盖过块文件里自己的 `defaults`，所以同一个设计可以换一套设置来用；块里节点自己写明的设置不受影响。`times` 对任何节点都可以用，一次造出 `名字-1` 到 `名字-n`。在 Python 里，`indeterminate.spec.block("blocks/review.json", catalog)` 把文件读成一个 `Block`。
+`file` 是块的图文件，从 `Catalog(files=...)` 允许的目录里读。`defaults` 写在使用处时，会盖过块文件里自己的 `defaults`，所以同一个设计可以换一套设置来用；块里节点自己写明的设置不受影响。`times` 对任何节点都可以用，一次造出 `名字-1` 到 `名字-n`。在 Python 里，`interlace.spec.block("blocks/review.json", catalog)` 把文件读成一个 `Block`。
 
 节点自己也可以在一次激活里跑一张图：`ctx.engine(graph, protocols).go(inputs)`，上面这些性质都由引擎给出，`GraphNode` 就是这样实现的。
 
@@ -210,7 +210,7 @@ study = seq(clean, par(review, review), publish)   # 可以嵌套
 图在编译时就定下来了。要做的事到运行中途才知道时，不去改外面的图，而是让一个节点把需要的图写成数据，交给 `SpawnNode`：它按描述建图、运行，再把结果发回去。新图只存在于这个节点的一次激活里，和块的里面一样，外面的图一个节点也不多。
 
 ```python
-from indeterminate.spec import Catalog, SpawnNode
+from interlace.spec import Catalog, SpawnNode
 
 grow = SpawnNode("grow", Catalog(allow=["my_steps"], models=models), max_nodes=20)
 graph = Chain(planner, grow).build(DEFAULT)
@@ -269,10 +269,10 @@ graph = Chain(planner, grow).build(DEFAULT)
 
 ## 把图写成数据
 
-`indeterminate.spec` 把图写成 JSON，再从 JSON 建回同一张图：
+`interlace.spec` 把图写成 JSON，再从 JSON 建回同一张图：
 
 ```python
-from indeterminate.spec import Catalog, dump, load, read, write
+from interlace.spec import Catalog, dump, load, read, write
 
 write("graph.json", graph)                                   # 图的定义，加上嵌套子图的定义
 again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == graph.digest
@@ -337,7 +337,7 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 
 ## 命令行和运行目录
 
-安装后有命令 `1ndeterminate`（也可以用 `python -m indeterminate.cli`）。每个命令都输出 JSON。
+安装后有命令 `interlace`（也可以用 `python -m interlace.cli`）。每个命令都输出 JSON。
 
 | 命令 | 作用 |
 |---|---|
@@ -373,14 +373,14 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 
 模型的名字写成 `提供方:模型`，密钥只从环境变量读取，不写进图文件、运行目录或日志：`anthropic:` 用 `ANTHROPIC_API_KEY`（可选 `ANTHROPIC_BASE_URL`），`openai:` 用 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`（任何兼容接口），`fake:echo` 不调用任何服务，原样返回收到的话，用来试图的接法。
 
-在 Python 里用 `indeterminate.runs.Run` 做同样的事：`Run.create(目录, 描述, allow=...)`、`start(inputs)`、`resume()`、`questions()`、`answer(值)`、`status()`。
+在 Python 里用 `interlace.runs.Run` 做同样的事：`Run.create(目录, 描述, allow=...)`、`start(inputs)`、`resume()`、`questions()`、`answer(值)`、`status()`。
 
 ## MCP 服务
 
-`1ndeterminate serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
+`interlace serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
 
 ```json
-{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
+{"mcpServers": {"interlace": {"command": "interlace", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
 ```
 
 | 工具 | 参数 | 作用 |

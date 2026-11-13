@@ -7,11 +7,11 @@ per message whatever the graph's size, the microseconds per message stay level f
 """
 import time
 
-from indeterminate.base import Port
-from indeterminate.engine import Engine
-from indeterminate.methods import Chain
-from indeterminate.nodes import FunctionNode
-from indeterminate.protocols import DEFAULT
+from interlace.base import Port
+from interlace.engine import Engine
+from interlace.methods import Chain
+from interlace.nodes import FunctionNode
+from interlace.protocols import DEFAULT
 
 
 def source(ctx, x):

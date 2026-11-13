@@ -1,12 +1,12 @@
 """A model as a node: tools are call ports, several outputs are the model's to choose, consent is a node."""
 import pytest
 
-from indeterminate.models import ChatResult, FakeProvider
-from indeterminate.base import Firing, GraphBuilder, GraphError, NodeError, Port
-from indeterminate.engine import Engine, Journal, RunError
-from indeterminate.methods import Chain, Governed, Loop, Tree
-from indeterminate.nodes import AgentNode, FunctionNode, HumanNode, SinkNode, Tool
-from indeterminate.protocols import DEFAULT
+from interlace.models import ChatResult, FakeProvider
+from interlace.base import Firing, GraphBuilder, GraphError, NodeError, Port
+from interlace.engine import Engine, Journal, RunError
+from interlace.methods import Chain, Governed, Loop, Tree
+from interlace.nodes import AgentNode, FunctionNode, HumanNode, SinkNode, Tool
+from interlace.protocols import DEFAULT
 
 
 def fn(id, function, inputs=('x',), outputs=('y',), **options):

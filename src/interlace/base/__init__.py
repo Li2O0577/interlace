@@ -6,7 +6,7 @@
     Graph, GraphBuilder     nodes joined by edges, checked once, then read-only
     Method                  a reusable way of joining nodes
 
-This package imports nothing else from ``indeterminate``.
+This package imports nothing else from ``interlace``.
 """
 from .canonical import canonical, digest
 from .edge import Edge, EdgeError, Endpoint

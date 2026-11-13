@@ -9,10 +9,10 @@ third only reads what arrives. Nothing but paths and a few numbers travels along
 import tempfile
 from pathlib import Path
 
-from indeterminate.base import GraphBuilder, Port
-from indeterminate.engine import Engine
-from indeterminate.nodes import FunctionNode
-from indeterminate.protocols import DEFAULT, FileOf, with_files
+from interlace.base import GraphBuilder, Port
+from interlace.engine import Engine
+from interlace.nodes import FunctionNode
+from interlace.protocols import DEFAULT, FileOf, with_files
 
 
 def build(work: Path):

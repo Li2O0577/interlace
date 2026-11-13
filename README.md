@@ -1,6 +1,6 @@
-# 1ndeterminate
+# interlace
 
-**English** · [中文](https://github.com/Li2O0577/1ndeterminate/blob/main/README.zh-CN.md)
+**English** · [中文](https://github.com/Li2O0577/interlace/blob/main/README.zh-CN.md)
 
 Join anything into a graph and run it.
 
@@ -13,16 +13,16 @@ The engine runs the graph and looks after the run: outputs are checked, usage is
 ## Install
 
 ```sh
-pip install 1ndeterminate
+pip install interlace
 pip install -e .            # or from a checkout
 ```
 
-Python 3.11 or later, on Linux, macOS and Windows. The distribution is called `1ndeterminate`; the import name is `indeterminate`, because a Python module name cannot begin with a digit.
+Python 3.11 or later, on Linux, macOS and Windows.
 
 ## A first graph
 
 ```python
-from indeterminate import DEFAULT, Chain, Engine, FunctionNode, Port
+from interlace import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
 show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
@@ -36,7 +36,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 **A model with tools.** A tool is a call edge to an ordinary node, so a dictionary, a program and a robot arm are all answered the same way.
 
 ```python
-from indeterminate import AgentNode, GraphBuilder, SinkNode, Tool
+from interlace import AgentNode, GraphBuilder, SinkNode, Tool
 
 agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "Look a word up"), Tool("move", "Move the arm")])
 graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
@@ -45,7 +45,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
          .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
 ```
 
-`model` is any object with `chat(system, messages, tools, max_tokens)`. `indeterminate.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
+`model` is any object with `chat(system, messages, tools, max_tokens)`. `interlace.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
 
 **Outputs that are checked.** A port says what may leave through it and what happens when something else does: the node fails, the payload goes on with a warning, or the node is told what is wrong and may send again.
 
@@ -102,10 +102,10 @@ A node that must not do something twice outside the graph uses `ctx.key`, which 
 
 ```sh
 cd examples/data && export PYTHONPATH=.
-1ndeterminate check  release.json --allow steps
-1ndeterminate run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
-1ndeterminate answer --dir /tmp/run --json '{"approved": true}'
-1ndeterminate resume --dir /tmp/run                                                   # done, exit code 0
+interlace check  release.json --allow steps
+interlace run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
+interlace answer --dir /tmp/run --json '{"approved": true}'
+interlace resume --dir /tmp/run                                                   # done, exit code 0
 ```
 
 A run is a directory. A person in the graph who has not answered yet does not keep a process waiting: the command exits, and the run goes on once the answer has been given. One process at a time runs a directory.
@@ -113,7 +113,7 @@ A run is a directory. A person in the graph who has not answered yet does not ke
 **As an MCP server.** The same operations can be offered to a model in another application. What its graphs may reach, how much they may use and how long a node may take are set on the command line by whoever starts the server, and the client cannot change them.
 
 ```json
-{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate",
+{"mcpServers": {"interlace": {"command": "interlace",
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
@@ -121,11 +121,11 @@ Model keys are read from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` 
 
 ## What it is for
 
-Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/1ndeterminate/blob/main/docs/CASES.md) (in Chinese). In short:
+Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/interlace/blob/main/docs/CASES.md) (in Chinese). In short:
 
 | Case | How it is built |
 |---|---|
-| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/1ndeterminate/blob/main/examples/graphs/planner_and_arm.py) |
+| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/interlace/blob/main/examples/graphs/planner_and_arm.py) |
 | A modelling assistant: a lead, one owner per question, a solver and a critic who argue until the answer is proved, a person who may step in anywhere | each question is a `Block` holding a `Loop(solve, critic)`; "no proof, not done" is a port check; questions run in `seq`; the person is the operator of a `Governed` tree; the run directory survives restarts |
 | A mathematician: a lead sends out explorers in parallel, each hands its work to a proof checker and reports back when it passes | `Pool(lead, explorer, size=10)` with `workers`; each explorer is a `Loop(prove, check)`; three directions given, three explorers exist |
 
@@ -135,16 +135,16 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 | Layer | Package | Main names |
 |---|---|---|
-| Abstractions | `indeterminate.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
-| Engine | `indeterminate.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `indeterminate.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
-| Blocks | `indeterminate.blocks` | `Block`, `seq`, `par` |
-| Graphs as data | `indeterminate.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
-| Outside | `indeterminate.runs`, `indeterminate.cli`, `indeterminate.serve` | `Run`; the command `1ndeterminate`; the MCP server |
+| Abstractions | `interlace.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
+| Engine | `interlace.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
+| Parts | `interlace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Blocks | `interlace.blocks` | `Block`, `seq`, `par` |
+| Graphs as data | `interlace.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
+| Outside | `interlace.runs`, `interlace.cli`, `interlace.serve` | `Run`; the command `interlace`; the MCP server |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/1ndeterminate/blob/main/docs/GRAPH.md) (in Chinese). Eight examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/1ndeterminate/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/1ndeterminate/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md) (in Chinese). Eight examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlace/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlace/tree/main/examples/data).
 
 ## Tests
 

@@ -10,10 +10,10 @@ The camera and the arm here are stand-ins (a list of frames, a class that keeps 
 goes in the same place: ``read`` yields what the device produces, ``write`` sends it a command, ``connect``
 and ``disconnect`` open and close it.
 """
-from indeterminate.base import GraphBuilder, Port
-from indeterminate.engine import Engine
-from indeterminate.nodes import FunctionNode, SinkNode, SourceNode
-from indeterminate.protocols import DEFAULT
+from interlace.base import GraphBuilder, Port
+from interlace.engine import Engine
+from interlace.nodes import FunctionNode, SinkNode, SourceNode
+from interlace.protocols import DEFAULT
 
 FRAME = {"target": int}
 

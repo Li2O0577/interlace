@@ -147,7 +147,7 @@ Engine(graph, DEFAULT, workers=4, budget={"tokens": 2_000_000}, journal=Journal(
 
 ## 四、接进已有的应用
 
-三个案例里的图都可以写成 JSON。`1ndeterminate serve --runs 目录 --allow 模块 --budget tokens=...` 把检查、开始、查看、回答、继续这几个操作作为 MCP 工具提供出去，别的应用里的模型自己写图、自己跑。图能够到什么、能花多少、单个节点能跑多久，由启动服务的人在命令行上定，客户端改不了。
+三个案例里的图都可以写成 JSON。`interlace serve --runs 目录 --allow 模块 --budget tokens=...` 把检查、开始、查看、回答、继续这几个操作作为 MCP 工具提供出去，别的应用里的模型自己写图、自己跑。图能够到什么、能花多少、单个节点能跑多久，由启动服务的人在命令行上定，客户端改不了。
 
 ## 共同的界线
 

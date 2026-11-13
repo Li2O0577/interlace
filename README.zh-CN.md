@@ -1,4 +1,4 @@
-# 1ndeterminate
+# interlace
 
 [English](README.md) · **中文**
 
@@ -13,16 +13,16 @@
 ## 安装
 
 ```sh
-pip install 1ndeterminate
+pip install interlace
 pip install -e .            # 或者从代码检出安装
 ```
 
-需要 Python 3.11 或更高版本，支持 Linux、macOS 和 Windows。发行包名是 `1ndeterminate`，导入名是 `indeterminate`，因为 Python 模块名不能以数字开头。
+需要 Python 3.11 或更高版本，支持 Linux、macOS 和 Windows。
 
 ## 第一张图
 
 ```python
-from indeterminate import DEFAULT, Chain, Engine, FunctionNode, Port
+from interlace import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
 show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
@@ -36,7 +36,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 **带工具的模型。** 工具是一条通向普通节点的调用边，所以一本词典、一个程序和一条机械臂的应答方式完全一样。
 
 ```python
-from indeterminate import AgentNode, GraphBuilder, SinkNode, Tool
+from interlace import AgentNode, GraphBuilder, SinkNode, Tool
 
 agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "查一个词"), Tool("move", "移动机械臂")])
 graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
@@ -45,7 +45,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
          .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
 ```
 
-`model` 是任何带有 `chat(system, messages, tools, max_tokens)` 的对象。`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口，以及测试用的 `FakeProvider`。
+`model` 是任何带有 `chat(system, messages, tools, max_tokens)` 的对象。`interlace.models` 里有 Anthropic 接口、OpenAI 兼容接口，以及测试用的 `FakeProvider`。
 
 **经过检查的输出。** 端口写明什么可以从它出去，以及出去的是别的东西时怎么办：节点失败，或者带着警告继续走，或者告诉节点哪里不对并允许它重发。
 
@@ -102,10 +102,10 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 ```sh
 cd examples/data && export PYTHONPATH=.
-1ndeterminate check  release.json --allow steps
-1ndeterminate run    release.json --dir /tmp/run --allow steps --input topic=tides    # 在等人回答，退出码 3
-1ndeterminate answer --dir /tmp/run --json '{"approved": true}'
-1ndeterminate resume --dir /tmp/run                                                   # 完成，退出码 0
+interlace check  release.json --allow steps
+interlace run    release.json --dir /tmp/run --allow steps --input topic=tides    # 在等人回答，退出码 3
+interlace answer --dir /tmp/run --json '{"approved": true}'
+interlace resume --dir /tmp/run                                                   # 完成，退出码 0
 ```
 
 一次运行就是一个目录。图里的人还没有回答时，不会有进程一直等着：命令退出，等回答给出后运行再继续。同一个目录同一时间只由一个进程运行。
@@ -113,7 +113,7 @@ cd examples/data && export PYTHONPATH=.
 **作为 MCP 服务。** 同样的操作可以提供给另一个应用里的模型。它的图能触及什么、能用多少、一个节点能跑多久，由启动服务的人在命令行上设定，客户端改不了。
 
 ```json
-{"mcpServers": {"1ndeterminate": {"command": "1ndeterminate",
+{"mcpServers": {"interlace": {"command": "interlace",
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
@@ -135,12 +135,12 @@ cd examples/data && export PYTHONPATH=.
 
 | 层 | 包 | 主要名字 |
 |---|---|---|
-| 抽象 | `indeterminate.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
-| 引擎 | `indeterminate.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
-| 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
-| 写成数据的图 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
-| 对外 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
+| 抽象 | `interlace.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
+| 引擎 | `interlace.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
+| 部件 | `interlace.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 块 | `interlace.blocks` | `Block`、`seq`、`par` |
+| 写成数据的图 | `interlace.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
+| 对外 | `interlace.runs`、`interlace.cli`、`interlace.serve` | `Run`；命令 `interlace`；MCP 服务 |
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。
 

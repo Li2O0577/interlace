@@ -10,11 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from indeterminate.base import Firing, Port
-from indeterminate.engine import Engine, Journal
-from indeterminate.methods import Governed
-from indeterminate.nodes import AgentNode, FunctionNode, HumanNode, Tool
-from indeterminate.protocols import DEFAULT
+from interlace.base import Firing, Port
+from interlace.engine import Engine, Journal
+from interlace.methods import Governed
+from interlace.nodes import AgentNode, FunctionNode, HumanNode, Tool
+from interlace.protocols import DEFAULT
 
 from review_loop import Scripted
 

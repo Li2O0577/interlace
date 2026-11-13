@@ -1,6 +1,6 @@
 """The same operations as the command line, offered to a client over the Model Context Protocol.
 
-    1ndeterminate serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
+    interlace serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
                         [--files DIRECTORY] [--budget NAME=NUMBER]...
 
 The client (usually a model in some other application) sends graphs as data and gets runs back. What those
@@ -142,7 +142,7 @@ class Server:
         if method == "initialize":
             asked = params.get("protocolVersion")
             return {"protocolVersion": asked if asked in VERSIONS else VERSIONS[0],
-                    "capabilities": {"tools": {}}, "serverInfo": {"name": "1ndeterminate", "version": __version__},
+                    "capabilities": {"tools": {}}, "serverInfo": {"name": "interlace", "version": __version__},
                     "instructions": "Runs graphs of nodes written as data. check a graph, start it, and when a run "
                                     "is waiting put its questions to the person, answer, then resume."}
         if method == "ping":

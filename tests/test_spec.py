@@ -4,14 +4,14 @@ import sys
 
 import pytest
 
-from indeterminate.base import Firing, GraphBuilder, Port
-from indeterminate.engine import Engine
-from indeterminate.methods import Chain, Fan, Governed, Loop
-from indeterminate.models import ChatResult, FakeProvider
-from indeterminate.nodes import (AgentNode, Branch, FunctionNode, GraphNode, HumanNode, ProcessNode, SinkNode, SourceNode,
+from interlace.base import Firing, GraphBuilder, Port
+from interlace.engine import Engine
+from interlace.methods import Chain, Fan, Governed, Loop
+from interlace.models import ChatResult, FakeProvider
+from interlace.nodes import (AgentNode, Branch, FunctionNode, GraphNode, HumanNode, ProcessNode, SinkNode, SourceNode,
                                  Tool)
-from indeterminate.protocols import DEFAULT
-from indeterminate.spec import Catalog, SpecError, dump, load, read, write
+from interlace.protocols import DEFAULT
+from interlace.spec import Catalog, SpecError, dump, load, read, write
 
 HERE = __name__                     # the functions below are found by name in this module
 
@@ -157,7 +157,7 @@ def test_a_description_that_is_wrong_says_where():
 
 
 def test_a_host_can_add_its_own_kind_of_node(tmp_path):
-    from indeterminate.nodes import Pass
+    from interlace.nodes import Pass
 
     class Stamp(Pass):
         kind = 'stamp'

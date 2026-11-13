@@ -6,9 +6,9 @@ import sys
 
 import pytest
 
-from indeterminate import cli
-from indeterminate.runs import Run, models_from_environment
-from indeterminate.spec import SpecError
+from interlace import cli
+from interlace.runs import Run, models_from_environment
+from interlace.spec import SpecError
 
 HERE = __name__
 CALLS = []
@@ -121,7 +121,7 @@ def test_models_come_from_the_environment_and_keys_stay_out_of_the_run(tmp_path,
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'secret-key-value')
     monkeypatch.setenv('OPENAI_API_KEY', 'other-secret')
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:9')       # nothing listens there: no service is called
-    monkeypatch.setattr('indeterminate.models.providers.RETRY_WAITS', (0,))
+    monkeypatch.setattr('interlace.models.providers.RETRY_WAITS', (0,))
     assert models_from_environment('anthropic:some-model').name == 'anthropic:some-model'
     assert models_from_environment('openai:some-model').url == 'https://api.openai.com/v1/chat/completions'
     graph, run = write(tmp_path / 'g.json', {'method': 'chain', 'nodes': [{'id': 'w', 'kind': 'agent', 'model': 'fake:echo'},
@@ -134,7 +134,7 @@ def test_models_come_from_the_environment_and_keys_stay_out_of_the_run(tmp_path,
 
 def test_the_installed_command_runs(tmp_path):
     graph = write(tmp_path / 'g.json', {'method': 'chain', 'nodes': [{'id': 'w', 'kind': 'agent', 'model': 'fake:echo'}]})
-    done = subprocess.run([sys.executable, '-m', 'indeterminate.cli', 'run', str(graph), '--dir', str(tmp_path / 'run'), '--input', 'in=你好'],
+    done = subprocess.run([sys.executable, '-m', 'interlace.cli', 'run', str(graph), '--dir', str(tmp_path / 'run'), '--input', 'in=你好'],
                           capture_output=True, text=True, encoding='utf-8')
     assert done.returncode == 0 and json.loads(done.stdout)['outputs'] == {'out': ['你好']}
-    assert subprocess.run([sys.executable, '-m', 'indeterminate.cli', '--version'], capture_output=True, text=True).stdout.strip()
+    assert subprocess.run([sys.executable, '-m', 'interlace.cli', '--version'], capture_output=True, text=True).stdout.strip()

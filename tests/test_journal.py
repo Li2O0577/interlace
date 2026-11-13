@@ -7,11 +7,11 @@ import threading
 
 import pytest
 
-from indeterminate.base import GraphBuilder, GraphError, Node, Port
-from indeterminate.engine import Engine, Journal, JournalError, RunError
-from indeterminate.methods import Chain, Loop
-from indeterminate.nodes import FunctionNode
-from indeterminate.protocols import DEFAULT, standard
+from interlace.base import GraphBuilder, GraphError, Node, Port
+from interlace.engine import Engine, Journal, JournalError, RunError
+from interlace.methods import Chain, Loop
+from interlace.nodes import FunctionNode
+from interlace.protocols import DEFAULT, standard
 
 
 def fn(id, function, inputs=('x',), outputs=('y',), **options):
@@ -83,10 +83,10 @@ def test_what_was_finished_is_not_done_again_and_what_was_cut_off_is(tmp_path):
 def test_a_run_survives_the_process_being_killed(tmp_path):
     (tmp_path / 'shared.py').write_text(textwrap.dedent('''
         import os, sys
-        from indeterminate.base import Port
-        from indeterminate.methods import Chain
-        from indeterminate.nodes import FunctionNode
-        from indeterminate.protocols import DEFAULT
+        from interlace.base import Port
+        from interlace.methods import Chain
+        from interlace.nodes import FunctionNode
+        from interlace.protocols import DEFAULT
 
         here = os.path.dirname(__file__)
 
@@ -106,8 +106,8 @@ def test_a_run_survives_the_process_being_killed(tmp_path):
             return Chain(node('count', count, context=True), node('square', square)).build(DEFAULT)
     '''), encoding='utf-8')
     script = ('import sys; sys.path.insert(0, sys.argv[1]); import shared\n'
-              'from indeterminate.engine import Engine, Journal\n'
-              'from indeterminate.protocols import DEFAULT\n'
+              'from interlace.engine import Engine, Journal\n'
+              'from interlace.protocols import DEFAULT\n'
               'engine = Engine(shared.graph(), DEFAULT, journal=Journal(sys.argv[1] + "/run.jsonl"))\n'
               'result = engine.run({"in": 6}) if sys.argv[2] == "run" else engine.resume()\n'
               'print(result.outputs["out"], result.rounds)\n')
@@ -206,7 +206,7 @@ def test_round_limits_count_across_a_restart(tmp_path):
 
 
 def test_a_stream_and_an_artifact_come_back_from_the_journal(tmp_path):
-    from indeterminate.protocols import DirectoryStore
+    from interlace.protocols import DirectoryStore
     path, protocols = tmp_path / 'run.jsonl', standard(DirectoryStore(tmp_path / 'store'))
     reader = Flaky(lambda x: ''.join(x))
     keeper = Flaky(lambda x: x.upper())
