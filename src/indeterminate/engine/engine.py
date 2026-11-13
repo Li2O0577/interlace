@@ -202,6 +202,10 @@ class _Context(Context):
     def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0) -> "Engine":
         return self._engine._inner(self, graph, protocols, workers)
 
+    @property
+    def within(self) -> tuple:
+        return self._engine._within
+
 
 class Engine:
     """One run of one graph. Build a new Engine to run again."""
@@ -218,6 +222,7 @@ class Engine:
         self._observe = observe
         self._limit = time_limit
         self._parent: tuple | None = None   # (outer engine, the outer node's state, its activation's record)
+        self._within: tuple = ()            # (node id, round) of each node this run is inside, outermost first
         self._pending: deque = deque()    # problems recorded under the lock, waiting to be told to the observer
         self._over = False                # set once the engine has returned: a node still running is on its own
         self._alive = 0                   # worker threads that have not returned
@@ -348,6 +353,7 @@ class Engine:
         inner = Engine(graph, protocols, workers=workers, stopping=ctx.stopping, journal=journal,
                        time_limit=self._limit, observe=observe)
         inner._parent = (self, state, ctx._act)
+        inner._within = (*self._within, (state.node.id, ctx.round))
         return inner
 
     def _adopt(self, state: _State, act: _Act | None, problems: list[dict]) -> None:

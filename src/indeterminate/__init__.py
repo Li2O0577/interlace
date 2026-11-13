@@ -17,7 +17,7 @@ Layers, bottom up (each imports only from below):
 Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 _PUBLIC = {
     # base
@@ -36,7 +36,7 @@ _PUBLIC = {
     "with_files": "protocols",
     "Provider": "models", "FakeProvider": "models", "ChatResult": "models",
     # graphs as data
-    "Catalog": "spec", "SpecError": "spec", "dump": "spec", "load": "spec",
+    "Catalog": "spec", "SpecError": "spec", "SpawnNode": "spec", "dump": "spec", "load": "spec",
 }
 
 

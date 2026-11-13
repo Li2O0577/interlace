@@ -104,5 +104,7 @@ class HumanNode(Node):
         if self.ask is None:
             if self.host is None:
                 raise NodeError("nobody is there to ask: this node was given no ask")
-            return {"answer": self.host(self.id, ctx.round, inputs["request"])}
+            # inside a block the same id may be asked in several places: say where
+            where = "/".join([*(f"{node}.{round}" for node, round in getattr(ctx, "within", ())), self.id])
+            return {"answer": self.host(where, ctx.round, inputs["request"])}
         return {"answer": self.ask(inputs["request"])}

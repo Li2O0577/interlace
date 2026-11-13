@@ -43,7 +43,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
 
 `model` 是任何带 `chat(system, messages, tools, max_tokens)` 的对象；`indeterminate.models` 里有 Anthropic 接口、OpenAI 兼容接口和用于测试的 `FakeProvider`。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。六个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件、把设计做成块。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。七个可以直接运行的示例在 [examples/graphs/](examples/graphs/)：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件、把设计做成块、运行中增长。
 
 图也可以写成 JSON，用命令行检查和运行。每次运行放在一个目录里，图里的人还没回答时命令会停下来，回答之后再继续：
 
@@ -89,6 +89,13 @@ Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)          # 文件�
 builder.connect("draw.chart", "report.chart", "file")
 ```
 
+图的结构到运行中途才知道时，让一个节点把图写成数据交给 `SpawnNode`，它在目录允许的范围内建图、运行、发回结果：
+
+```python
+grow = SpawnNode("grow", Catalog(allow=["my_steps"]), max_nodes=20)       # 能用什么由目录决定，不由写图的一方决定
+graph = Chain(planner, grow).build(DEFAULT)                               # planner 发出 {"graph": ..., "inputs": ...}
+```
+
 ## 组成
 
 | 层 | 包 | 主要名称 |
@@ -97,7 +104,7 @@ builder.connect("draw.chart", "report.chart", "file")
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport` |
 | 现成部件 | `indeterminate.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `indeterminate.blocks` | `Block`、`seq`、`par` |
-| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
+| 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
 | 对外接口 | `indeterminate.runs`、`indeterminate.cli`、`indeterminate.serve` | `Run`；命令 `1ndeterminate`；MCP 服务 |
 
 每层只引用下面的层，引擎不认识任何具体的节点、协议或方法；`tests/test_engine.py` 里有测试检查这条规则。
