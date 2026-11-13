@@ -36,6 +36,16 @@ def _value(text: str):
         return text
 
 
+def _limit(text: str) -> tuple:
+    name, sep, number = text.partition("=")
+    try:
+        if not sep or not name:
+            raise ValueError
+        return name, float(number) if "." in number or "e" in number.lower() else int(number)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not NAME=NUMBER") from None
+
+
 def _inputs(args) -> dict:
     inputs = {}
     if args.inputs:
@@ -84,8 +94,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--workspace", metavar="DIRECTORY", help="where the nodes work and send file paths relative to "
                                                               "(default: files in the run's directory)")
     reach(run)
-    for name, text in (("resume", "carry on a run that stopped, failed or was waiting"), ("status", "say where a run stands")):
-        commands.add_parser(name, help=text).add_argument("--dir", required=True)
+    budget = dict(action="append", default=[], metavar="NAME=NUMBER", type=_limit,
+                  help="the most the run may use of something its nodes report using, such as tokens=200000")
+    run.add_argument("--budget", **budget)
+    resume = commands.add_parser("resume", help="carry on a run that stopped, failed or was waiting")
+    resume.add_argument("--dir", required=True)
+    resume.add_argument("--budget", **budget)
+    commands.add_parser("status", help="say where a run stands").add_argument("--dir", required=True)
     answer = commands.add_parser("answer", help="answer a question a person in the graph was asked")
     answer.add_argument("--dir", required=True)
     answer.add_argument("question", nargs="?", help="the question's id; not needed when only one is open")
@@ -97,6 +112,7 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--workers", type=int, default=0, help="threads that run nodes side by side (default: none)")
     serve.add_argument("--time-limit", type=float, metavar="SECONDS", help="the longest one activation of a node may take")
     serve.add_argument("--files", metavar="DIRECTORY", help="a directory graphs may take text from (default: none)")
+    serve.add_argument("--budget", **budget)
     reach(serve)
     return parser
 
@@ -110,16 +126,16 @@ def main(argv=None, out=None) -> int:
         elif args.command == "serve":
             from .serve import Server
             Server(args.runs, allow=args.allow, processes=args.processes, workers=args.workers, time_limit=args.time_limit,
-                   files=args.files).serve()
+                   files=args.files, budget=dict(args.budget)).serve()
             return 0
         else:
             if args.command == "run":
                 inputs = _inputs(args)
                 state = Run.create(args.dir, _description(args.graph), allow=args.allow, processes=args.processes,
                                    workers=args.workers, files=_beside(args.graph), time_limit=args.time_limit,
-                                   workspace=args.workspace).start(inputs)
+                                   workspace=args.workspace, budget=dict(args.budget)).start(inputs)
             elif args.command == "resume":
-                state = Run(args.dir).resume()
+                state = Run(args.dir).resume(budget=dict(args.budget))
             elif args.command == "answer":
                 state = Run(args.dir).answer(json.loads(args.json) if args.json is not None else args.text, args.question)
             else:

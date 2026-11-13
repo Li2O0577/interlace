@@ -46,6 +46,8 @@ class Context(ABC):
     round: int    # which activation of this node this is, from 1
     problems: list  # when the activation is run again because what it sent was not accepted: what was wrong
     within: tuple   # when the graph runs inside a node of another: (node id, round) of each, outermost first
+    key: str        # names this activation of this node in this run, and is the same when it runs again after
+                    # an interruption: give it to an outside service so that it does not do the same thing twice
 
     @abstractmethod
     def emit(self, port: str, payload: Any) -> None:
@@ -67,6 +69,11 @@ class Context(ABC):
         its own journal beside the outer one when there is one, tells the outer observer what happens in it,
         and works under the same time limit. ``go(inputs)`` runs it, or takes it up where an interrupted
         earlier attempt at this same activation left it."""
+
+    def use(self, **amounts: float) -> None:
+        """Report what this activation used up, under names of the node's choosing (``tokens=1200``,
+        ``calls=1``, ``seconds=3.5``). The run adds it up; when a total goes over the run's budget for that
+        name the run fails, and this raises so that the node stops at once."""
 
 
 def _ports(given: Iterable[Port] | Mapping[str, Port] | None, declared: Iterable[Port]) -> Mapping[str, Port]:

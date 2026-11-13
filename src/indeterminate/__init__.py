@@ -17,7 +17,7 @@ Layers, bottom up (each imports only from below):
 Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 _PUBLIC = {
     # base
@@ -25,7 +25,7 @@ _PUBLIC = {
     "Invalid": "base", "Protocol": "base", "Protocols": "base", "Delivery": "base", "Envelope": "base", "Ref": "base",
     "Graph": "base", "GraphBuilder": "base", "GraphError": "base", "NodeError": "base", "Method": "base",
     # engine
-    "Engine": "engine", "Result": "engine", "RunError": "engine", "Journal": "engine", "Transport": "engine",
+    "Engine": "engine", "Result": "engine", "RunError": "engine", "OverBudget": "engine", "Journal": "engine", "Transport": "engine",
     # parts
     "FunctionNode": "nodes", "AgentNode": "nodes", "Tool": "nodes", "ProcessNode": "nodes", "SourceNode": "nodes",
     "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes",

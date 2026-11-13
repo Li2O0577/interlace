@@ -246,6 +246,10 @@ graph = Chain(planner, grow).build(DEFAULT)
 
 `observe` 是一个函数，引擎把正在发生的事逐件告诉它：`started`、`emitted`、`finished`、`failed`（都带 `node` 和 `round`），最后是 `ended`。界面或日志要实时跟随一次运行就挂在这里，不必去读日志文件。它在运行节点的线程里被调用，不应当抛出异常；抛出了，运行会失败并说明原因。
 
+`budget` 是整次运行的用量上限。节点用 `ctx.use(tokens=1200, calls=1)` 报告自己用掉了什么，名字由节点自己定，引擎只管按名字累加；`AgentNode` 每次调用模型都会报告 `calls`、`input_tokens`、`output_tokens` 和 `tokens`。`Engine(..., budget={"tokens": 200000})` 时，任何一项的累计超过上限，运行就以失败结束并说明用了多少，即使那个节点自己不停下来也一样。块和 `SpawnNode` 里面用掉的算在外面的运行上。累计值在 `Result.used` 里，失败时在 `RunError.used` 里，观察函数会收到 `used` 事件。用量逐条写进日志，所以恢复之后接着累加；被打断后重跑的激活花了两次钱，账上也是两次。超出预算而失败的运行，要给更大的预算才能 `resume()`。
+
+`ctx.key` 是这一次激活的名字，形如 `运行标识/节点#轮次`，块里面的会带上外层的位置。同一次激活在中断后重跑时名字不变，不同的运行名字不同。恢复是“至少一次”，所以节点要对图外做不能重复的事（下单、发消息、写数据库）时，把它作为幂等键交给对方，或者自己先查这个名字是否已经做过。内核只提供这个名字，不替节点去重。
+
 `transport` 是发送和接收之间的接口，进程内不需要它；跨进程或跨机器的传递方式放在这里。
 
 ## 把图写成数据
@@ -323,8 +327,8 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | 命令 | 作用 |
 |---|---|
 | `check graph.json` | 只建图不运行，输出摘要、节点、输入输出；不需要密钥 |
-| `run graph.json --dir RUN` | 在新目录里开始一次运行；`--input 名=值`（值按 JSON 读，读不成就当文字）或 `--inputs 文件`；`--time-limit 秒` 是一次激活的时间上限；`--workspace 目录` 是节点的工作目录，不给就是运行目录里的 `files/` |
-| `resume --dir RUN` | 从日志接着跑：等人回答之后、失败修好之后、被中断之后都用它 |
+| `run graph.json --dir RUN` | 在新目录里开始一次运行；`--input 名=值`（值按 JSON 读，读不成就当文字）或 `--inputs 文件`；`--time-limit 秒` 是一次激活的时间上限；`--budget 名=数`（可以重复）是整次运行的用量上限，例如 `--budget tokens=200000`；`--workspace 目录` 是节点的工作目录，不给就是运行目录里的 `files/` |
+| `resume --dir RUN` | 从日志接着跑：等人回答之后、失败修好之后、被中断之后都用它；`--budget 名=数` 换一个更大的预算再继续 |
 | `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
 
@@ -336,15 +340,18 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 
 ```
 graph.json      图的定义
-options.json    图能够到的范围和线程数
+options.json    图能够到的范围、线程数、时间上限和预算
 journal.jsonl   已经发生的事
 questions/      图里的人被问到的问题，一个问题一个文件，名字是 <节点>-<轮次>
 answers/        已经给出的回答
 state.json      运行的状态：done、waiting、stopped、failed，以及检查发现的问题
 files/          节点的工作目录，file 协议的路径相对于它
+lock            有进程正在运行这张图时存在，里面写着是哪个进程
 ```
 
-图文件里的图总是带着 `file` 协议，工作目录就是上面这个；`process` 节点默认在这里启动，智能体能看到这里的图片。`status` 的输出里有 `problems`，列出每个没通过检查的输出和它的结局。
+图文件里的图总是带着 `file` 协议，工作目录就是上面这个；`process` 节点默认在这里启动，智能体能看到这里的图片。`status` 的输出里有 `problems`，列出每个没通过检查的输出和它的结局，还有 `used`，是到目前为止的用量。
+
+一个运行目录同一时间只由一个进程运行。第二个进程来 `run` 或 `resume` 会被拒绝，并被告知是哪台机器上的哪个进程从什么时候开始占着；`status` 和 `answer` 不受影响。占着的进程如果已经死了（同一台机器上能查出来），锁会被自动接管；在另一台机器上查不出来，就要人确认后删掉 `lock` 文件。
 
 图里没有自带函数的 `human` 节点由运行目录代答：回答还没有时，运行停在 `waiting`，进程退出，不会有进程挂着等人；`answer` 写下回答，`resume` 继续，已经完成的节点不会重跑。
 
@@ -354,7 +361,7 @@ files/          节点的工作目录，file 协议的路径相对于它
 
 ## MCP 服务
 
-`1ndeterminate serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录]` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
+`1ndeterminate serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
 
 ```json
 {"mcpServers": {"1ndeterminate": {"command": "1ndeterminate", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
@@ -390,10 +397,11 @@ files/          节点的工作目录，file 协议的路径相对于它
 
 ## 限制
 
-- 恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
+- 恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次，除非节点用 `ctx.key` 自己去重。
 - 流和调用还不经过传输接口；目前只有进程内的实现。
-- 设备节点只用假设备测试过，智能体节点只用脚本化的假模型测试过。
-- 一个运行目录同一时间只能由一个进程运行或继续，目前没有加锁。
+- 设备节点只用假设备测试过。两种模型接口各对一个真实的兼容服务做过一次很小的验证（普通回答、流式、图里的工具调用、JSON 输出、密钥错误、命令行跑一条链），自动测试仍然只用脚本化的假模型；思考内容、图片输入、限流重试没有对真实服务验证过。
+- 运行目录的锁只在 `Run`、命令行和 MCP 服务这一层；直接用 `Engine` 和 `Journal` 时，同一个日志文件不能给两个引擎同时用。Windows 上不会自动接管死进程留下的锁。
+- 预算在节点报告用量的那一刻检查，所以会超出一次调用的量；不报告用量的节点不受预算约束。
 - MCP 服务只有 stdio 一种传输，一次只处理一个调用，不能中途取消正在跑的运行。
 - 超时的节点只是被放弃，它所在的线程要等它自己返回才结束；它是外部程序时，`ProcessNode` 自己的 `timeout` 才会真正杀掉进程。
 - `Pool` 的成员在一次运行里不会被收回：名字用过的位置一直属于那个名字。外面的图的大小仍然在建图时确定；运行中要多出节点，用 `SpawnNode` 在一次激活里跑一张新图，或者停下来用 `resume(change=True)`。

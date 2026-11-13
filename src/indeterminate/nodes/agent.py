@@ -151,9 +151,11 @@ class AgentNode(Node):
                     raise NodeError("memory must return the conversation: a list of messages that is not empty")
                 messages[:] = kept
             result = self.model.chat(self.system, messages, self._specs, self.max_tokens)
+            spent_in, spent_out = getattr(result, "input_tokens", 0) or 0, getattr(result, "output_tokens", 0) or 0
             self.usage["calls"] += 1
-            self.usage["input_tokens"] += getattr(result, "input_tokens", 0) or 0
-            self.usage["output_tokens"] += getattr(result, "output_tokens", 0) or 0
+            self.usage["input_tokens"] += spent_in
+            self.usage["output_tokens"] += spent_out
+            ctx.use(calls=1, input_tokens=spent_in, output_tokens=spent_out, tokens=spent_in + spent_out)
             text, calls = getattr(result, "text", "") or "", list(getattr(result, "tool_calls", None) or ())
             message = {"role": "assistant", "content": text}
             if calls:
