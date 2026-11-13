@@ -78,7 +78,9 @@ one, bodies are handed over as they are. Streams and calls do not pass through i
 """
 from __future__ import annotations
 
+import os
 import secrets
+import shutil
 import threading
 import time
 from collections import deque
@@ -96,6 +98,15 @@ _INPUT = "input:"   # prefix of the pseudo edge id of a graph input
 class OverBudget(NodeError):
     """Raised in a node when what it reports using takes the run over its budget. The run has failed by
     then; the node should return."""
+
+
+def _discard(journal) -> None:
+    """Remove the journal of a run that happened inside an activation, and those of the runs inside that."""
+    shutil.rmtree(journal.with_name(journal.name + ".d"), ignore_errors=True)
+    try:
+        journal.unlink()
+    except OSError:
+        pass
 
 
 def _amounts(given: Mapping[str, float], what: str) -> dict[str, float]:
@@ -160,7 +171,8 @@ class _Port:
 
 class _State:
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
-                 "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered")
+                 "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
+                 "inner")
 
     def __init__(self, node: Node):
         self.node = node
@@ -180,6 +192,7 @@ class _State:
         self.time_limit: float | None = None      # how long an activation may take, in seconds
         self.rejected: dict[str, int] = {}        # this activation: output port -> times a payload was given back
         self.delivered = False                    # this activation has sent something on
+        self.inner: list = []                     # this activation: the journals of the runs it made inside itself
 
 
 class _Act:
@@ -198,10 +211,11 @@ class _Act:
 
 
 class _Context(Context):
-    __slots__ = ("node", "round", "problems", "_engine", "_state", "_cause", "_act")
+    __slots__ = ("node", "round", "problems", "_engine", "_state", "_cause", "_act", "_cut")
 
     def __init__(self, engine, state, cause, act=None):
         self.node, self.round, self.problems = state.node.id, state.round, []
+        self._cut = False       # the node has been told the run is stopping: what it did may not be all of it
         self._engine, self._state, self._cause, self._act = engine, state, cause, act
 
     def emit(self, port: str, payload: Any) -> None:
@@ -212,7 +226,10 @@ class _Context(Context):
 
     def stopping(self) -> bool:
         engine = self._engine
-        return engine._stop or (engine._outer is not None and bool(engine._outer()))
+        if engine._stop or (engine._outer is not None and bool(engine._outer())):
+            self._cut = True
+            return True
+        return False
 
     def engine(self, graph: Graph, protocols: Protocols, *, workers: int = 0) -> "Engine":
         return self._engine._inner(self, graph, protocols, workers)
@@ -374,6 +391,9 @@ class Engine:
         if self._journal is not None:
             outer = self._journal.path
             journal = Journal(outer.with_name(outer.name + ".d") / f"{state.node.id}-{ctx.round}.jsonl", sync=self._journal.sync)
+            with self._lock:
+                if journal.path not in state.inner:
+                    state.inner.append(journal.path)
         told, id = self._observe, state.node.id
         observe = None if told is None else lambda event: told({**event, "within": [id, *event.get("within", ())]})
         inner = Engine(graph, protocols, workers=workers, stopping=ctx.stopping, journal=journal,
@@ -536,6 +556,10 @@ class Engine:
             if self._journal is not None:
                 if not ended and not self._stop and self._error is None:
                     self._journal.write({"kind": "end"})
+                    try:
+                        os.rmdir(self._journal.path.with_name(self._journal.path.name + ".d"))
+                    except OSError:
+                        pass                # never made, or something is still in it
                 self._journal.close()
         if self._parent is not None and self._result.problems:
             outer, state, act = self._parent
@@ -622,6 +646,8 @@ class Engine:
                 if state.rejected:
                     state.rejected = {}
                 state.delivered = False
+                if state.inner:
+                    state.inner = []
                 self._active += 1
                 try:
                     taken, cause, took = self._take(state)
@@ -664,6 +690,20 @@ class Engine:
                 if self._observe is not None:
                     self._tell("failed", node=node.id, round=state.round, error=str(exc))
                 continue
+            if ctx._cut:
+                # it was told to stop and may have left its work half done: it is not on record as having run,
+                # so it runs again when the run is taken up
+                with lock:
+                    if self._over:
+                        return
+                    self._end_streams(state)
+                    state.running = False
+                    self._active -= 1
+                    self._stop = True
+                    lock.notify_all()
+                if self._observe is not None:
+                    self._tell("stopped", node=node.id, round=state.round)
+                continue
             if self._observe is not None:
                 self._tell("finished", node=node.id, round=state.round)
             with lock:
@@ -676,6 +716,8 @@ class Engine:
                     except Exception as exc:   # noqa: BLE001 - something it sent is not plain data
                         self._fail(state, RunError(f"cannot be journaled: {exc}"))
                         continue
+                    for path in state.inner:       # the activation is on record: what ran inside it is not needed again
+                        _discard(path)
                 state.running = False
                 self._active -= 1
                 self._consider(state)
