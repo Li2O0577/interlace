@@ -24,6 +24,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | 引擎 | `indeterminate.engine` | `Engine`、`Result`、`Journal`、`Transport`、`Stream` |
 | 现成部件 | `indeterminate.nodes`、`indeterminate.protocols`、`indeterminate.methods`、`indeterminate.models` | 见下 |
 | 数据格式 | `indeterminate.spec` | `dump`、`load`、`read`、`write`、`Catalog` |
+| 对外接口 | `indeterminate.runs`、`indeterminate.cli` | `Run`；命令 `1ndeterminate` |
 
 引擎只认识抽象层，不认识任何具体的节点、协议或方法。`tests/test_engine.py` 里有一个测试检查各层的引用方向。
 
@@ -124,7 +125,7 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `allow` | 函数可以来自哪些模块，`"mypkg"` 包括它下面的所有模块 |
 | `processes` | 是否允许 `process` 节点，它会在本机启动程序 |
 | `models` | `models(name)` 返回智能体用的模型；不给就建不了智能体 |
-| `ask` | `ask(node_id, request)` 替图里没有自带函数的 `human` 节点回答 |
+| `ask` | `ask(node_id, round, request)` 替图里没有自带函数的 `human` 节点回答 |
 | `protocols` | 编译图用的协议表 |
 
 `catalog.register(kind, loader)` 加入自己的节点种类。
@@ -138,7 +139,43 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 ]}
 ```
 
+## 命令行和运行目录
+
+安装后有命令 `1ndeterminate`（也可以用 `python -m indeterminate.cli`）。每个命令都输出 JSON。
+
+| 命令 | 作用 |
+|---|---|
+| `check graph.json` | 只建图不运行，输出摘要、节点、输入输出；不需要密钥 |
+| `run graph.json --dir RUN` | 在新目录里开始一次运行；`--input 名=值`（值按 JSON 读，读不成就当文字）或 `--inputs 文件` |
+| `resume --dir RUN` | 从日志接着跑：等人回答之后、失败修好之后、被中断之后都用它 |
+| `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
+| `status --dir RUN` | 输出运行的状态和待答的问题 |
+
+`check` 和 `run` 用 `--allow 模块`（可以重复）和 `--processes` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
+
+`run` 和 `resume` 的退出码说明运行停在哪里：0 完成，1 失败或被拒绝，3 在等人回答，4 因为轮数或停止条件而停下。
+
+一次运行的全部内容都在它的目录里，所以可以由一个进程开始、另一个进程回答、第三个进程继续：
+
+```
+graph.json      图的定义
+options.json    图能够到的范围和线程数
+journal.jsonl   已经发生的事
+questions/      图里的人被问到的问题，一个问题一个文件，名字是 <节点>-<轮次>
+answers/        已经给出的回答
+state.json      运行的状态：done、waiting、stopped、failed
+```
+
+图里没有自带函数的 `human` 节点由运行目录代答：回答还没有时，运行停在 `waiting`，进程退出，不会有进程挂着等人；`answer` 写下回答，`resume` 继续，已经完成的节点不会重跑。
+
+模型的名字写成 `提供方:模型`，密钥只从环境变量读取，不写进图文件、运行目录或日志：`anthropic:` 用 `ANTHROPIC_API_KEY`（可选 `ANTHROPIC_BASE_URL`），`openai:` 用 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`（任何兼容接口），`fake:echo` 不调用任何服务，原样返回收到的话，用来试图的接法。
+
+在 Python 里用 `indeterminate.runs.Run` 做同样的事：`Run.create(目录, 描述, allow=...)`、`start(inputs)`、`resume()`、`questions()`、`answer(值)`、`status()`。
+
 ## 示例
+
+[examples/data/](../examples/data/) 是一张写成 JSON 的图和它用到的函数，用命令行运行：起草、等编辑同意、发布。
+
 
 [examples/graphs/](../examples/graphs/) 下有四个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂。
 
@@ -147,3 +184,4 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 - 恢复是“至少一次”：被打断的节点会重跑，它对图外做过的事会再做一次。
 - 流和调用还不经过传输接口；目前只有进程内的实现。
 - 设备节点只用假设备测试过，智能体节点只用脚本化的假模型测试过。
+- 一个运行目录同一时间只能由一个进程运行或继续，目前没有加锁。

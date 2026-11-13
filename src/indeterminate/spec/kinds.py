@@ -92,8 +92,8 @@ def human(d, catalog, graphs):
     name = d["config"].get("ask")
     node = HumanNode(d["id"], catalog.function(name) if name else None,
                      request=_first_schema(d, "inputs"), answer=_first_schema(d, "outputs"))
-    if not name and catalog.ask is not None:
-        node.ask = lambda request, id=d["id"]: catalog.ask(id, request)
+    if not name:
+        node.host = catalog.ask
     return node
 
 

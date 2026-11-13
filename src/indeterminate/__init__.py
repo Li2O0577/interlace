@@ -10,6 +10,7 @@ Layers, bottom up (each imports only from below):
 2. engine      Engine, Result, Journal, Transport
 3. parts       nodes, protocols, methods, models: the ones that come with the package
 4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
+5. runs, cli   a run kept in a directory, and the ``1ndeterminate`` command that works on one
 
 Public names are importable from the package root. Standard library only.
 """
