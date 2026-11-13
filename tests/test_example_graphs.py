@@ -11,13 +11,20 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked'):
         sys.modules.pop(name, None)
 
 
 def test_chain_with_program(capsys):
     import chain_with_program
     assert chain_with_program.main().outputs == {'out': ['the x3, and x2, cat x1']}
+
+
+def test_files_checked(tmp_path):
+    import files_checked
+    result = files_checked.main(tmp_path)
+    assert result.last('out') == 'chart.svg (28 bytes) drawn from data/table.csv (25 bytes)'
+    assert [(p['node'], p['handled']) for p in result.problems] == [('draw', 'rejected')] and result.rounds['draw'] == 1
 
 
 def test_review_loop():

@@ -52,6 +52,20 @@ afterwards is thrown away. Nothing it did was journaled, so a resumed run starts
 last, ``ended``. It is called from the threads that run the nodes and must not raise; it is how a screen
 or a log follows a run without reading the journal.
 
+What a node sends is checked as it is sent: by the port's schema, by the protocol of each edge it leaves
+on, and by the port's own checks. When a check finds a problem the port decides (see ``Port``):
+
+* while the port has repairs left in this activation, the node is told: ``emit`` raises ``Invalid`` with
+  ``again`` true. A node that can put things right (an agent) does, and sends again. A node that lets the
+  exception go is run again from the same inputs, with ``ctx.problems`` saying what was wrong, provided it
+  had not yet delivered anything;
+* then, a port that warns sends the payload on as it is and the problem is recorded;
+* otherwise the node fails and the run stops, to be resumed once the cause is dealt with.
+
+Every problem, whatever became of it, is in ``Result.problems``, in the journal, and told to ``observe``
+(``rejected`` when it was given back to the node, ``warned`` when it was let through). The same applies on
+arrival, when a protocol finds that what arrived is not what was sent: the receiving port fails or warns.
+
 ``transport`` stands between sending and receiving: every envelope body passes through its ``carry``. Without
 one, bodies are handed over as they are. Streams and calls do not pass through it yet.
 """
@@ -63,7 +77,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from ..base import Context, Delivery, Envelope, Firing, Graph, Node, NodeError, Protocols, Ref, digest
+from ..base import Context, Delivery, Envelope, Firing, Graph, Invalid, Node, NodeError, Protocols, Ref, digest
 from .journal import Journal, pack, pack_body, unpack_body
 from .stream import Stream
 from .transport import Transport
@@ -77,6 +91,7 @@ class RunError(RuntimeError):
     def __init__(self, message: str, node: str | None = None):
         super().__init__(message)
         self.node = node
+        self.problems: list[dict] = []     # what had failed a check before the run failed
 
 
 @dataclass
@@ -87,6 +102,7 @@ class Result:
     rounds: dict[str, int] = field(default_factory=dict)     # how many times each node ran
     limited: tuple[str, ...] = ()                            # back edges that reached max_rounds and dropped an envelope
     complete: bool = True                                    # False when the run was stopped with work left
+    problems: list[dict] = field(default_factory=list)       # what failed a check and was repaired or let through
 
     def last(self, name: str, default: Any = None) -> Any:
         values = self.outputs.get(name)
@@ -122,7 +138,7 @@ class _Port:
 
 class _State:
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
-                 "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit")
+                 "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered")
 
     def __init__(self, node: Node):
         self.node = node
@@ -140,12 +156,14 @@ class _State:
         self.called: threading.Lock | None = None  # set when the node is the target of a call: one call at a time
         self.since = 0.0                          # when the running activation began
         self.time_limit: float | None = None      # how long an activation may take, in seconds
+        self.rejected: dict[str, int] = {}        # this activation: output port -> times a payload was given back
+        self.delivered = False                    # this activation has sent something on
 
 
 class _Act:
     """What one activation did, for the journal."""
 
-    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps")
+    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems")
 
     def __init__(self, node, round, took):
         self.node, self.round, self.took = node, round, took
@@ -154,13 +172,14 @@ class _Act:
         self.limited: list[str] = []
         self.calls: list[str] = []
         self.snaps: dict[str, Any] = {}
+        self.problems: list[dict] = []
 
 
 class _Context(Context):
-    __slots__ = ("node", "round", "_engine", "_state", "_cause", "_act")
+    __slots__ = ("node", "round", "problems", "_engine", "_state", "_cause", "_act")
 
     def __init__(self, engine, state, cause, act=None):
-        self.node, self.round = state.node.id, state.round
+        self.node, self.round, self.problems = state.node.id, state.round, []
         self._engine, self._state, self._cause, self._act = engine, state, cause, act
 
     def emit(self, port: str, payload: Any) -> None:
@@ -187,6 +206,7 @@ class Engine:
             raise ValueError("time_limit must be a positive number of seconds")
         self.graph, self.workers = graph, workers
         self._observe = observe
+        self._pending: deque = deque()    # problems recorded under the lock, waiting to be told to the observer
         self._over = False                # set once the engine has returned: a node still running is on its own
         self._alive = 0                   # worker threads that have not returned
         self._outer = stopping
@@ -337,6 +357,7 @@ class Engine:
                 for id in record["limited"]:
                     if id in self._feeds:
                         self._limited[id] = None
+                result.problems.extend(record.get("problems", ()))
                 for id in (record["node"], *record["calls"]):
                     state = states.get(id)
                     if state is not None:
@@ -395,6 +416,8 @@ class Engine:
                     self._journal.write({"kind": "end"})
                 self._journal.close()
         if self._error:
+            self._flush()
+            self._error.problems = self._result.problems
             self._tell("ended", complete=False, error=str(self._error))
             cause = self._error.__cause__
             if cause is not None and not isinstance(cause, Exception):
@@ -404,6 +427,7 @@ class Engine:
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
         result.limited = tuple(self._limited)
         result.complete = not self._stop
+        self._flush()
         self._tell("ended", complete=result.complete)
         if self._error:                     # the observer failed on the last thing it was told
             raise self._error
@@ -468,6 +492,9 @@ class Engine:
                 state.round += 1
                 if self._timed:
                     state.since = time.monotonic()
+                if state.rejected:
+                    state.rejected = {}
+                state.delivered = False
                 self._active += 1
                 try:
                     taken, cause, took = self._take(state)
@@ -478,17 +505,26 @@ class Engine:
             act = _Act(state.node.id, state.round, took) if self._journal is not None else None
             node, ctx = state.node, _Context(self, state, cause, act)
             if self._observe is not None:
+                self._flush()
                 self._tell("started", node=node.id, round=state.round, took=list(took))
             try:
                 if not state.opened:
                     state.opened = True
                     node.open(ctx)
-                returned = node.run(ctx, taken)
-                if returned is not None:
-                    if not isinstance(returned, Mapping):
-                        raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
-                    for port, payload in returned.items():
-                        self._emit(state, port, payload, state.round, cause, act)
+                while True:
+                    try:
+                        returned = node.run(ctx, taken)
+                        if returned is not None:
+                            if not isinstance(returned, Mapping):
+                                raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
+                            for port, payload in returned.items():
+                                self._emit(state, port, payload, state.round, cause, act)
+                        break
+                    except Invalid as exc:
+                        # the node did not put it right itself: run it again, if that repeats nothing
+                        if not exc.again or state.delivered or any(isinstance(v, Stream) for v in taken.values()):
+                            raise
+                        ctx.problems.append(str(exc))
                 if act is not None:
                     snapshot = node.snapshot()
                     if snapshot:
@@ -525,7 +561,8 @@ class Engine:
         self._journal.write({"kind": "act", "node": act.node, "round": act.round, "took": list(act.took),
                              "sent": [pack(e) for e in act.sent],
                              "out": [[name, pack_body(payload)] for name, payload in act.out],
-                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps})
+                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps,
+                             **({"problems": act.problems} if act.problems else {})})
 
     def _tell(self, event: str, **about) -> None:
         observe = self._observe
@@ -653,7 +690,12 @@ class Engine:
         def read(feed):
             envelope = self._pop(feed)
             cause.append(envelope.id)
-            return envelope.body if feed.protocol is None else feed.protocol.decode(envelope.body, feed.port.port)
+            if feed.protocol is None:
+                return envelope.body
+            try:
+                return feed.protocol.decode(envelope.body, feed.port.port)
+            except ValueError as exc:
+                return self._arrived_wrong(state, feed, envelope.body, exc)
 
         if state.any:
             while state.arrivals:
@@ -677,10 +719,61 @@ class Engine:
             for feed in port.passive:
                 if feed.box:
                     cause.append(feed.box[0].id)
-                    values.append(feed.protocol.decode(feed.box[0].body, port.port))
+                    try:
+                        values.append(feed.protocol.decode(feed.box[0].body, port.port))
+                    except ValueError as exc:
+                        values.append(self._arrived_wrong(state, feed, feed.box[0].body, exc))
             if values:
                 inputs[port.port.name] = values if port.port.many else values[0]
         return inputs, tuple(cause), took
+
+    def _arrived_wrong(self, state: _State, feed: _Feed, body: Any, exc: ValueError) -> Any:
+        """What arrived did not pass its protocol: the receiving port fails (the exception goes on) or warns."""
+        port = feed.port.port
+        if port.invalid != "warn":
+            raise Invalid(port.name, str(exc)) from None
+        value = feed.protocol.decode_anyway(body, port)
+        self._problem(state, port.name, str(exc), "warned", None, state.round)
+        return value
+
+    def _problem(self, state: _State, port: str, problem: str, handled: str, act: _Act | None, round: int) -> None:
+        """Record a problem and what became of it. Called under the lock."""
+        record = {"node": state.node.id, "round": round, "port": port, "problem": problem, "handled": handled}
+        self._result.problems.append(record)
+        if act is not None:
+            act.problems.append(record)
+        if self._observe is not None:
+            self._pending.append(record)
+
+    def _invalid(self, state: _State, port: str, payload: Any, feeds, exc: ValueError, act: _Act | None, round: int) -> list:
+        """A payload failed a check on its way out. Give it back to the node, let it through with a warning
+        (returning the bodies to send), or fail the node."""
+        source = state.node.outputs[port]
+        problem = exc.problem if isinstance(exc, Invalid) else str(exc)
+        repairs = source.repairs if source.repairs is not None else getattr(state.node, "repairs", 0)
+        with self._lock:
+            given_back = state.rejected.get(port, 0)
+            if given_back < repairs:
+                state.rejected[port] = given_back + 1
+                self._problem(state, port, problem, "rejected", act, round)
+            elif source.invalid == "warn":
+                try:
+                    bodies = [feed.protocol.encode_anyway(payload, port_) for feed, port_ in feeds]
+                except ValueError as cannot:
+                    raise Invalid(port, f"{problem}; and it cannot be sent on as it is: {cannot}") from None
+                self._problem(state, port, problem, "warned", act, round)
+                return bodies
+            else:
+                raise Invalid(port, problem if not given_back else f"{problem} (after {given_back} corrections)") from None
+        self._flush()
+        raise Invalid(port, problem, again=True) from None
+
+    def _flush(self) -> None:
+        """Tell the observer of the problems recorded under the lock."""
+        if self._observe is not None:
+            while self._pending:
+                record = self._pending.popleft()
+                self._tell(record["handled"], **{k: v for k, v in record.items() if k != "handled"})
 
     def _emit(self, state: _State, port: str, payload: Any, round: int, cause: tuple, act: _Act | None = None) -> None:
         try:
@@ -689,9 +782,18 @@ class Engine:
             raise NodeError(f"{state.node.id} has no output port {port!r}") from None
         if port in state.calls:
             raise NodeError(f"{state.node.id}.{port} makes a call: use ctx.call, not emit")
-        bodies = [feed.protocol.encode(payload, source) for feed, source in feeds]   # validate before anything is sent
-        if not feeds:
-            state.node.outputs[port].schema.check(payload)
+        try:
+            out = state.node.outputs[port]
+            bodies = [feed.protocol.encode(payload, source) for feed, source in feeds]   # validate before anything is sent
+            if not feeds:
+                out.schema.check(payload)
+            if out.check:                     # the port's own checks come last: they may rely on the shape
+                found = out.problem(payload)
+                if found:
+                    raise Invalid(port, found)
+        except ValueError as exc:
+            bodies = self._invalid(state, port, payload, feeds, exc, act, round)
+            self._flush()
         carry = self._carry
         if carry is not None:
             bodies = [body if feed.stream else carry(feed.id, body) for (feed, _), body in zip(feeds, bodies)]
@@ -700,6 +802,7 @@ class Engine:
         with self._lock:
             if self._over:
                 raise NodeError("the run has ended")
+            state.delivered = True
             for name in names:
                 self._result.outputs[name].append(payload)
                 if act is not None:
@@ -749,6 +852,7 @@ class Engine:
                 ctx = _Context(self, target, (f"{feed.id}#{feed.sent}",), act)
                 if act is not None:
                     act.calls.append(node.id)
+                target.rejected = {}
             if self._observe is not None:
                 self._tell("started", node=node.id, round=ctx.round, took=list(ctx._cause), by=state.node.id)
             failed = True
@@ -771,6 +875,8 @@ class Engine:
                     self._emit(target, name, item, ctx.round, ctx._cause, act)
                 failed = False
                 return returned.get(feed.reply) if feed.reply is not None else None
+            except Invalid as exc:      # the called node did not put its own output right: that is its failure,
+                raise NodeError(f"{node.id} could not answer: {exc}") from None      # not something for the caller to repair
             finally:
                 if self._observe is not None:
                     self._tell("failed" if failed else "finished", node=node.id, round=ctx.round, by=state.node.id)

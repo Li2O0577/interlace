@@ -210,11 +210,11 @@ def test_memory_may_be_a_function_that_keeps_the_conversation_in_hand():
     agent = AgentNode('agent', FakeProvider(policy), memory=shorten)
     assert agent.config()['memory'] == f'{HERE}.shorten'
     for n in range(4):
-        agent.run(type('Ctx', (), {'stopping': lambda self: False})(), {'task': f'question {n}'})
+        agent.run(type('Ctx', (), {'stopping': lambda self: False, 'problems': (), 'emit': lambda self, port, payload: None})(), {'task': f'question {n}'})
     assert seen == [1, 2, 2, 2] and [m['content'] for m in agent.messages] == ['answer 3', 'question 3', 'answer 4']
     from indeterminate.base import NodeError
     with pytest.raises(NodeError, match='memory must return the conversation'):
-        AgentNode('bad', FakeProvider(policy), memory=lambda messages: None).run(type('Ctx', (), {'stopping': lambda self: False})(), {'task': 'x'})
+        AgentNode('bad', FakeProvider(policy), memory=lambda messages: None).run(type('Ctx', (), {'stopping': lambda self: False, 'problems': (), 'emit': lambda self, port, payload: None})(), {'task': 'x'})
 
 
 def test_a_picture_that_arrives_is_shown_to_the_model_as_a_picture():

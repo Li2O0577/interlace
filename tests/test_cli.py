@@ -83,7 +83,7 @@ def test_a_run_stops_for_a_person_and_goes_on_once_they_have_answered(tmp_path):
     assert code == 0 and said['status'] == 'done' and said['outputs'] == {'out': ['surveyed the bridge: released']}
     assert CALLS == ['survey'] and said['rounds'] == {'lead': 2, 'survey': 1, 'operator': 1}
     assert call('resume', '--dir', run)[1]['outputs'] == {'out': ['surveyed the bridge: released']}     # done stays done
-    assert sorted(p.name for p in run.iterdir()) == ['answers', 'graph.json', 'journal.jsonl', 'options.json', 'questions', 'state.json']
+    assert sorted(p.name for p in run.iterdir()) == ['answers', 'files', 'graph.json', 'journal.jsonl', 'options.json', 'questions', 'state.json']
 
 
 def test_a_failed_run_says_where_and_can_be_resumed(tmp_path):

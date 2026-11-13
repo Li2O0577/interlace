@@ -74,11 +74,62 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | `signal` | 没有内容，只有到达这件事 |
 | `stream` | 发送方一次激活发出的内容是一个序列，接收方边写边读 |
 | `call` | 请求和回答：发送方等待，接收节点为这次请求运行，返回值是回答 |
+| `artifact` | 内容放进仓库，边上只传哈希引用（`standard(store)`） |
+| `file` | 边上传的是文件的相对路径，文件本身不动（`with_files(DEFAULT, 工作目录)`，见“按路径传文件”） |
 | `artifact` | 内容存进内容库，信封里只有引用（哈希、大小、类型） |
 
 `DEFAULT` 是前六种的注册表；`standard(store)` 另外带上 `artifact`。自己的协议继承 `Protocol`，实现 `check`、`encode`、`decode`，注册进 `Protocols`。
 
 回边：`connect(..., back=True, max_rounds=N)`。去掉回边后图必须无环，每条回边必须真的闭合一个环，并且带轮数上限，所以任何图都不会无限运行。
+
+## 输出检查
+
+节点发出的每一份内容，在发出的那一刻被检查三次：端口的 `schema`（形状对不对），每条边的协议（比如 `file` 协议看文件在不在），最后是端口自己挂的检查函数：
+
+```python
+def positive(value):
+    return None if value > 0 else f"{value} 不是正数"      # 返回字符串说明哪里不对；返回 False 或抛出异常也算没通过
+
+Port("y", int, check=positive)                 # 可以是一个函数，也可以是几个
+```
+
+检查没通过时怎么办，由端口决定：
+
+| 写法 | 效果 |
+|---|---|
+| `invalid="fail"`（默认） | 节点失败，运行停下。错误信息指出节点、轮次、端口和原因。问题处理好后可以 `resume()` |
+| `invalid="warn"` | 内容照原样发出，问题记录在案，运行继续 |
+| `repairs=N` | 在上面两种处理之前，先把问题告诉这个节点，让它改了重发，一次激活里最多 N 次 |
+
+`repairs` 的纠正有两种走法。节点自己会改的（智能体就是这样），`ctx.emit` 抛出 `Invalid`，它读 `problem`，在 `again` 为真时改正后重发。节点不处理这个异常的，引擎用同样的输入把它重跑一次，`ctx.problems` 里是上次的问题；但如果它这次激活已经发出过别的内容，就不重跑而是直接失败，以免同一份内容发两遍。
+
+`repairs` 不写时由节点决定：普通节点是 0，`AgentNode` 是 2。智能体被纠正时，问题的原话会作为一条消息交给模型，它手里的工具都还在，所以可以去把缺的文件写出来。要求 JSON 而模型答的不是 JSON，走的也是这条路。
+
+每个问题不论结局如何都留下记录，去处有四个：`Result.problems`、日志、监听口的事件（`rejected` 是打回给节点，`warned` 是放行），以及运行失败时异常上的 `problems`。每条记录是 `{"node", "round", "port", "problem", "handled"}`。
+
+输入口上只有 `invalid` 起作用：到达的内容和发出时不一样（比如文件在路上被改了），接收端口是 `fail` 就让接收节点失败，是 `warn` 就照样交给节点并记录。
+
+### 按路径传文件
+
+`file` 协议让节点之间传文件的相对路径，而不是文件内容。所有节点在同一个工作目录里干活；发送方把文件写在工作目录下，发出路径（一个字符串，或者带 `path` 的映射，映射里其他内容会一起带过去）。信封里是路径加上发送那一刻的大小、哈希和类型，是很小的普通数据，照常进日志。
+
+```python
+from indeterminate.protocols import DEFAULT, FileOf, with_files
+
+protocols = with_files(DEFAULT, "work")                       # 工作目录
+Port("chart", FileOf(".png", ".svg", max_size=5_000_000))     # 这个口发的是图片，最大 5MB
+builder.connect("draw.chart", "report.chart", "file")
+```
+
+接收方拿到 `{"path": "plots/a.png", "size": 1234, "sha256": "...", "media": "image/png"}`，`protocols.get("file").locate(收到的内容)` 是文件的完整路径。
+
+发送时按顺序检查：内容是不是一个路径；路径是相对的，而且跟随链接之后仍在工作目录内；它是一个文件，不是目录，也不是不存在；文件不是空的（`File(root, empty=True)` 允许空文件）；后缀、类型、大小符合端口上 `FileOf` 的声明。到达时再看一次：文件还在，大小和哈希没变。
+
+错误信息是写给能改正的一方看的，比如 `there is no file chart.svg in the working directory (the working directory holds: data)`。
+
+出了问题怎么办，完全按上面的端口规则走：默认节点失败、运行停下可续跑；`invalid="warn"` 时路径照样送达，但带着 `"unchecked": true`，接收方知道它没被核实；`repairs` 让节点有机会把文件补上。内容连路径都不是的时候，警告也救不了，节点失败。
+
+`AgentNode(files=工作目录)` 会把以文件形式到达的图片读出来给模型看。
 
 ## 图
 
@@ -168,6 +219,13 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 }
 ```
 
+端口的检查在图文件里这样写，检查函数和别的函数一样用带模块的名字：
+
+```json
+{"name": "chart", "schema": {"file": {"suffixes": [".png"], "max_size": 5000000}}, "check": "mypkg.checks.has_axes",
+ "invalid": "warn", "repairs": 2}
+```
+
 `dump` 写出来的东西里不再有 `defaults` 和文件引用，默认值和文件的文字都已经落在各个节点上，所以运行目录里保存的图不依赖原来的文件。
 
 在 Python 里不需要这些：提示词就是字符串，`AgentNode("lead", model, system=Path("prompts/lead.md").read_text())`。
@@ -188,7 +246,7 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | 命令 | 作用 |
 |---|---|
 | `check graph.json` | 只建图不运行，输出摘要、节点、输入输出；不需要密钥 |
-| `run graph.json --dir RUN` | 在新目录里开始一次运行；`--input 名=值`（值按 JSON 读，读不成就当文字）或 `--inputs 文件`；`--time-limit 秒` 是一次激活的时间上限 |
+| `run graph.json --dir RUN` | 在新目录里开始一次运行；`--input 名=值`（值按 JSON 读，读不成就当文字）或 `--inputs 文件`；`--time-limit 秒` 是一次激活的时间上限；`--workspace 目录` 是节点的工作目录，不给就是运行目录里的 `files/` |
 | `resume --dir RUN` | 从日志接着跑：等人回答之后、失败修好之后、被中断之后都用它 |
 | `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
@@ -205,8 +263,11 @@ options.json    图能够到的范围和线程数
 journal.jsonl   已经发生的事
 questions/      图里的人被问到的问题，一个问题一个文件，名字是 <节点>-<轮次>
 answers/        已经给出的回答
-state.json      运行的状态：done、waiting、stopped、failed
+state.json      运行的状态：done、waiting、stopped、failed，以及检查发现的问题
+files/          节点的工作目录，file 协议的路径相对于它
 ```
+
+图文件里的图总是带着 `file` 协议，工作目录就是上面这个；`process` 节点默认在这里启动，智能体能看到这里的图片。`status` 的输出里有 `problems`，列出每个没通过检查的输出和它的结局。
 
 图里没有自带函数的 `human` 节点由运行目录代答：回答还没有时，运行停在 `waiting`，进程退出，不会有进程挂着等人；`answer` 写下回答，`resume` 继续，已经完成的节点不会重跑。
 
@@ -248,7 +309,7 @@ state.json      运行的状态：done、waiting、stopped、failed
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有四个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂。
+[examples/graphs/](../examples/graphs/) 下有五个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件。
 
 ## 限制
 
@@ -259,3 +320,5 @@ state.json      运行的状态：done、waiting、stopped、failed
 - MCP 服务只有 stdio 一种传输，一次只处理一个调用，不能中途取消正在跑的运行。
 - 超时的节点只是被放弃，它所在的线程要等它自己返回才结束；它是外部程序时，`ProcessNode` 自己的 `timeout` 才会真正杀掉进程。
 - `Pool` 的成员在一次运行里不会被收回：名字用过的位置一直属于那个名字。图的大小仍然在建图时确定，运行中增删节点只能停下来用 `resume(change=True)`。
+- 检查只在内容发出和到达的时刻进行；文件在两次检查之间被改动，要到下一次到达才会发现。`hash=False` 时只比较大小。
+- 引擎重跑一次激活时，节点在上一次尝试里对图外做过的事（写过的文件、调用过的工具）不会撤销。

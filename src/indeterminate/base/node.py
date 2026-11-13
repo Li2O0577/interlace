@@ -22,6 +22,16 @@ class NodeError(ValueError):
     pass
 
 
+class Invalid(NodeError):
+    """What a node sent, or was sent, did not pass a check. ``problem`` says what is wrong, in words meant
+    to be read by whoever can put it right. ``again`` is true when the node may correct it and send again
+    within the same activation; when it is false the node fails."""
+
+    def __init__(self, port: str, problem: str, again: bool = False):
+        super().__init__(f"{port}: {problem}")
+        self.port, self.problem, self.again = port, problem, again
+
+
 class Firing(Enum):
     """When a node is activated."""
 
@@ -34,10 +44,13 @@ class Context(ABC):
 
     node: str     # the node's id
     round: int    # which activation of this node this is, from 1
+    problems: list  # when the activation is run again because what it sent was not accepted: what was wrong
 
     @abstractmethod
     def emit(self, port: str, payload: Any) -> None:
-        """Send ``payload`` out of an output port now (a node may emit many times during one activation)."""
+        """Send ``payload`` out of an output port now (a node may emit many times during one activation).
+        Raises ``Invalid`` when the payload does not pass the port's checks; a node that can put it right
+        catches that, reads ``problem`` and, when ``again`` is true, sends a corrected payload."""
 
     @abstractmethod
     def call(self, port: str, payload: Any) -> Any:
@@ -72,6 +85,7 @@ class Node(ABC):
     inputs: Iterable[Port] | Mapping[str, Port] = ()    # declared on the class as Ports; a mapping on an instance
     outputs: Iterable[Port] | Mapping[str, Port] = ()
     firing: Firing = Firing.ALL
+    repairs: int = 0                         # how often an output may be corrected, for ports that do not say
     time_limit: float | None = None          # the longest one activation may take, in seconds; None: the engine's
 
     def __init__(self, id: str, *, inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,

@@ -32,6 +32,9 @@ class Artifact(Protocol):
         except (TypeError, ValueError) as exc:
             raise ProtocolError(f"an artifact is text, bytes or plain data: {exc}") from None
 
+    def encode_anyway(self, payload: Any, source: Port) -> Ref:
+        raise ProtocolError("an artifact that cannot be stored cannot travel")
+
     def decode(self, body: Any, target: Port) -> Any:
         if not isinstance(body, Ref):
             raise ProtocolError(f"an artifact arrives as a Ref, not {type(body).__name__}")
