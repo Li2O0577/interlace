@@ -48,7 +48,8 @@ class Loop(Method):
             builder.connect((upstream.id, sole_output(upstream)), (downstream.id, target), protocol)
         last = nodes[-1]
         if self.until is not None:
-            gate = Until("until", self.until, limit=self.max_rounds, strict=self.strict)
+            carried = last.outputs[sole_output(last)].schema     # the gate passes on what the body produces
+            gate = Until("until", self.until, limit=self.max_rounds, strict=self.strict, schema=carried)
             builder.add(gate).connect((last.id, sole_output(last)), (gate.id, "x"), protocol)
             back, result = (gate.id, "again"), (gate.id, "done")
         else:

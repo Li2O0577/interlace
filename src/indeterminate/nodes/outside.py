@@ -25,6 +25,10 @@ class _Outside(Node):
         self.connect = _callable(id, "connect", connect, True)
         self.disconnect = _callable(id, "disconnect", disconnect, True)
 
+    def _lifecycle(self) -> dict:
+        return {"connect": named(self.connect) if self.connect else None,
+                "disconnect": named(self.disconnect) if self.disconnect else None}
+
     def open(self, ctx) -> None:
         if self.connect:
             self.connect()
@@ -47,7 +51,7 @@ class SourceNode(_Outside):
         self.read = _callable(id, "read", read)
 
     def config(self) -> Mapping:
-        return {"read": named(self.read)}
+        return {"read": named(self.read), **self._lifecycle()}
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         for item in self.read():
@@ -70,7 +74,7 @@ class SinkNode(_Outside):
         self.write, self.answers = _callable(id, "write", write), bool(answers)
 
     def config(self) -> Mapping:
-        return {"write": named(self.write), "answers": self.answers}
+        return {"write": named(self.write), "answers": self.answers, **self._lifecycle()}
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         answer = self.write(inputs["x"])
@@ -80,16 +84,20 @@ class SinkNode(_Outside):
 class HumanNode(Node):
     """A person. What arrives on ``request`` is put to them through ``ask(request)``, which returns when they
     have answered; the answer leaves through ``answer``. How the person is reached (a console, a page, a
-    queue) is the business of ``ask``."""
+    queue) is the business of ``ask``. With ``ask=None`` the node is only a place in the graph: whoever runs
+    the graph sets ``node.ask`` before the run."""
 
     kind = "human"
 
-    def __init__(self, id: str, ask: Callable[[Any], Any], *, request=ANY, answer=ANY):
+    def __init__(self, id: str, ask: Callable[[Any], Any] | None = None, *, request=ANY, answer=ANY):
         super().__init__(id, inputs=[Port("request", request)], outputs=[Port("answer", answer)])
-        self.ask = _callable(id, "ask", ask)
+        self.ask = _callable(id, "ask", ask, True)
+        self._given = ask is not None
 
     def config(self) -> Mapping:
-        return {"ask": named(self.ask)}
+        return {"ask": named(self.ask) if self._given else None}
 
     def run(self, ctx, inputs: Mapping[str, Any]):
+        if self.ask is None:
+            raise NodeError("nobody is there to ask: this node was given no ask")
         return {"answer": self.ask(inputs["request"])}

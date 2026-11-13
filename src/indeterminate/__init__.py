@@ -9,6 +9,7 @@ Layers, bottom up (each imports only from below):
 1. base        Node, Port, Schema, Edge, Protocol, Envelope, Graph, GraphBuilder, Method
 2. engine      Engine, Result, Journal, Transport
 3. parts       nodes, protocols, methods, models: the ones that come with the package
+4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
 
 Public names are importable from the package root. Standard library only.
 """
@@ -29,6 +30,8 @@ _PUBLIC = {
     "Governed": "methods",
     "DEFAULT": "protocols", "standard": "protocols",
     "Provider": "models", "FakeProvider": "models", "ChatResult": "models",
+    # graphs as data
+    "Catalog": "spec", "SpecError": "spec", "dump": "spec", "load": "spec",
 }
 
 
