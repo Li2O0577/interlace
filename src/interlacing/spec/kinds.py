@@ -5,7 +5,7 @@ from typing import Mapping
 
 from ..base import ANY, Is, ListOf, Port, Record, Schema
 from ..protocols import FileOf
-from ..nodes import (AgentNode, Branch, Collect, Desk, FunctionNode, GraphNode, HumanNode, Pass, ProcessNode, Roster, SinkNode,
+from ..nodes import (AgentNode, Branch, Collect, Desk, FunctionNode, GraphNode, HumanNode, IsolatedNode, Pass, ProcessNode, Roster, SinkNode,
                      SourceNode, Tool, Until)
 
 _TYPES = {t.__name__: t for t in (str, int, float, bool, list, dict, bytes, type(None))}
@@ -92,6 +92,18 @@ def process(d, catalog, graphs):
     return node
 
 
+def isolated(d, catalog, graphs):
+    from .catalog import SpecError
+    if not catalog.processes:
+        raise SpecError(f"{d['id']} starts a process, and this catalog does not allow processes")
+    c = d["config"]
+    catalog.function(c["function"])                 # it must be a function the graph may name
+    node = IsolatedNode(d["id"], c["function"], inputs=ports(d, "inputs", catalog) or (), outputs=ports(d, "outputs", catalog) or (),
+                        firing=d.get("firing"), timeout=c.get("timeout"), cwd=c.get("cwd"))
+    node.workspace = str(catalog.workspace) if catalog.workspace is not None else None
+    return node
+
+
 def source(d, catalog, graphs):
     c = d["config"]
     return SourceNode(d["id"], catalog.function(c["read"]), schema=_first_schema(d, "outputs"),
@@ -154,7 +166,7 @@ def block(d, catalog, graphs):
 
 BUILT_IN = {
     "block": block,
-    "function": function, "agent": agent, "process": process, "source": source, "sink": sink, "human": human,
+    "function": function, "agent": agent, "process": process, "isolated": isolated, "source": source, "sink": sink, "human": human,
     "graph": graph,
     "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),
     "pass": lambda d, catalog, graphs: Pass(d["id"], schema=_first_schema(d, "inputs")),
