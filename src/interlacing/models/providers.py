@@ -70,7 +70,7 @@ class Busy(Exception):
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
     try:
-        return min(120.0, float(exc.headers.get("Retry-After") or ""))
+        return max(0.0, min(120.0, float(exc.headers.get("Retry-After") or "")))
     except (TypeError, ValueError, AttributeError):
         return None
 
@@ -98,7 +98,7 @@ def _post(url: str, body: dict, headers: dict, timeout: float = TIMEOUT, attempt
         except ValueError as exc:
             raise ProviderError(f"what the model service sent is not JSON: {exc}") from exc
         if attempt + 1 < attempts:
-            time.sleep(wait or RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
+            time.sleep(wait if wait is not None else RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
     raise last_error
 
 
@@ -162,7 +162,7 @@ class Provider:
             except Busy as busy:  # rate limit / overload before anything arrived: wait and ask again
                 if attempt + 1 >= self.attempts:
                     raise busy.error from None
-                time.sleep(busy.wait or RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
+                time.sleep(busy.wait if busy.wait is not None else RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
             except StreamCut:  # partial output: ask again; the full message replaces the streamed preview
                 cuts += 1
                 if cuts > 1:
