@@ -1,4 +1,4 @@
-"""The engine: runs a compiled graph. It knows the abstractions of ``inter1ace.base`` and nothing else:
+"""The engine: runs a compiled graph. It knows the abstractions of ``interlacing.base`` and nothing else:
 no particular kind of node, protocol or method."""
 from .engine import Engine, OverBudget, Result, RunError
 from .journal import Journal, JournalError

@@ -7,14 +7,14 @@ import time
 
 import pytest
 
-from inter1ace.base import GraphBuilder, GraphError, Port
-from inter1ace.engine import Engine, Journal, RunError
-from inter1ace.methods import Chain, Governed, Pool, Tree
-from inter1ace.models import ChatResult, FakeProvider
-from inter1ace.nodes import AgentNode, FunctionNode, HumanNode
-from inter1ace.protocols import DEFAULT
-from inter1ace.runs import Run
-from inter1ace.spec import Catalog, SpecError, dump, load, read
+from interlacing.base import GraphBuilder, GraphError, Port
+from interlacing.engine import Engine, Journal, RunError
+from interlacing.methods import Chain, Governed, Pool, Tree
+from interlacing.models import ChatResult, FakeProvider
+from interlacing.nodes import AgentNode, FunctionNode, HumanNode
+from interlacing.protocols import DEFAULT
+from interlacing.runs import Run
+from interlacing.spec import Catalog, SpecError, dump, load, read
 
 HERE = __name__
 RELEASE = threading.Event()
@@ -212,7 +212,7 @@ def test_memory_may_be_a_function_that_keeps_the_conversation_in_hand():
     for n in range(4):
         agent.run(type('Ctx', (), {'stopping': lambda self: False, 'problems': (), 'emit': lambda self, port, payload: None, 'use': lambda self, **amounts: None})(), {'task': f'question {n}'})
     assert seen == [1, 2, 2, 2] and [m['content'] for m in agent.messages] == ['answer 3', 'question 3', 'answer 4']
-    from inter1ace.base import NodeError
+    from interlacing.base import NodeError
     with pytest.raises(NodeError, match='memory must return the conversation'):
         AgentNode('bad', FakeProvider(policy), memory=lambda messages: None).run(type('Ctx', (), {'stopping': lambda self: False, 'problems': (), 'emit': lambda self, port, payload: None, 'use': lambda self, **amounts: None})(), {'task': 'x'})
 

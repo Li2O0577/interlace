@@ -5,11 +5,11 @@ import time
 
 import pytest
 
-from inter1ace.base import Firing, GraphBuilder, GraphError, NodeError, Port, ProtocolError, Ref
-from inter1ace.engine import Direct, Engine, RunError, Stream, Wire
-from inter1ace.methods import Chain
-from inter1ace.nodes import FunctionNode, HumanNode, ProcessNode, SinkNode, SourceNode
-from inter1ace.protocols import DEFAULT, Artifact, DirectoryStore, MemoryStore, StoreError, standard
+from interlacing.base import Firing, GraphBuilder, GraphError, NodeError, Port, ProtocolError, Ref
+from interlacing.engine import Direct, Engine, RunError, Stream, Wire
+from interlacing.methods import Chain
+from interlacing.nodes import FunctionNode, HumanNode, ProcessNode, SinkNode, SourceNode
+from interlacing.protocols import DEFAULT, Artifact, DirectoryStore, MemoryStore, StoreError, standard
 
 WORKERS = [0, 1, 4]
 

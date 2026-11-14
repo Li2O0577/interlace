@@ -7,11 +7,11 @@ standard output; here it is a few lines of Python that count words.
 """
 import sys
 
-from inter1ace.base import Port
-from inter1ace.engine import Engine
-from inter1ace.methods import Chain
-from inter1ace.nodes import FunctionNode, ProcessNode
-from inter1ace.protocols import DEFAULT
+from interlacing.base import Port
+from interlacing.engine import Engine
+from interlacing.methods import Chain
+from interlacing.nodes import FunctionNode, ProcessNode
+from interlacing.protocols import DEFAULT
 
 COUNT = "import sys, json, collections; print(json.dumps(collections.Counter(json.load(sys.stdin)).most_common(3)))"
 

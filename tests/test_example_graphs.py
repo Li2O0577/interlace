@@ -84,7 +84,7 @@ def test_camera_to_arm():
     assert arm.log[0] == 'connected' and arm.log[-1] == 'disconnected' and arm.position == result.outputs['at'][-1]
     assert 1 <= len(result.outputs['at']) <= 4 and all(0 < at <= 5 for at in result.outputs['at'])
     arm = camera_to_arm.Arm()
-    from inter1ace.engine import Engine
-    from inter1ace.protocols import DEFAULT
+    from interlacing.engine import Engine
+    from interlacing.protocols import DEFAULT
     steady = Engine(camera_to_arm.build(arm, [{'target': 5}] * 4, speed=2), DEFAULT).run()   # one thread: only the newest frame is seen
     assert steady.outputs['at'] == [2] and arm.log == ['connected', 'moved to 2', 'disconnected']
