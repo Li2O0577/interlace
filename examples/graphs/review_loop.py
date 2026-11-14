@@ -6,11 +6,11 @@ Both are agents. The reviewer has two outputs, ``again`` and ``ok``, and chooses
 here are scripted stand-ins, so the example runs without any model service; put a real provider in their
 place and nothing else changes.
 """
-from inter1ace.base import Port
-from inter1ace.engine import Engine
-from inter1ace.methods import Loop
-from inter1ace.nodes import AgentNode
-from inter1ace.protocols import DEFAULT
+from interlacing.base import Port
+from interlacing.engine import Engine
+from interlacing.methods import Loop
+from interlacing.nodes import AgentNode
+from interlacing.protocols import DEFAULT
 
 
 class Scripted:

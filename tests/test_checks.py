@@ -5,15 +5,15 @@ import json
 
 import pytest
 
-from inter1ace import cli
-from inter1ace.base import GraphBuilder, GraphError, Invalid, Port, PortError, ProtocolError
-from inter1ace.engine import Engine, Journal, RunError
-from inter1ace.methods import Chain
-from inter1ace.models import ChatResult, FakeProvider
-from inter1ace.nodes import AgentNode, FunctionNode, Tool
-from inter1ace.protocols import DEFAULT, File, FileOf, standard, with_files
-from inter1ace.runs import Run
-from inter1ace.spec import Catalog, dump, load
+from interlacing import cli
+from interlacing.base import GraphBuilder, GraphError, Invalid, Port, PortError, ProtocolError
+from interlacing.engine import Engine, Journal, RunError
+from interlacing.methods import Chain
+from interlacing.models import ChatResult, FakeProvider
+from interlacing.nodes import AgentNode, FunctionNode, Tool
+from interlacing.protocols import DEFAULT, File, FileOf, standard, with_files
+from interlacing.runs import Run
+from interlacing.spec import Catalog, dump, load
 
 HERE = __name__
 
@@ -361,8 +361,8 @@ def test_a_called_node_whose_answer_fails_a_check_fails_the_call_not_the_caller_
 
 
 def test_a_sender_cannot_say_that_its_file_needs_no_checking(tmp_path):
-    from inter1ace.base import Port
-    from inter1ace.protocols import File
+    from interlacing.base import Port
+    from interlacing.protocols import File
     (tmp_path / 'a.txt').write_text('abc')
     body = File(tmp_path).encode({'path': 'a.txt', 'unchecked': True, 'size': 999, 'sha256': 'no', 'note': 'kept'}, Port('y'))
     assert 'unchecked' not in body and body['size'] == 3 and body['sha256'] != 'no' and body['note'] == 'kept'

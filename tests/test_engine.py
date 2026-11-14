@@ -4,11 +4,11 @@ import time
 
 import pytest
 
-from inter1ace.base import Firing, GraphBuilder, GraphError, Port
-from inter1ace.engine import Engine, RunError
-from inter1ace.methods import Chain
-from inter1ace.nodes import FunctionNode
-from inter1ace.protocols import DEFAULT
+from interlacing.base import Firing, GraphBuilder, GraphError, Port
+from interlacing.engine import Engine, RunError
+from interlacing.methods import Chain
+from interlacing.nodes import FunctionNode
+from interlacing.protocols import DEFAULT
 
 WORKERS = [0, 1, 4]
 
@@ -192,7 +192,7 @@ def test_layers_above_the_abstractions_import_only_what_is_below_them():
     import ast
     from pathlib import Path
     import sys
-    src = Path(__file__).resolve().parents[1] / 'src' / 'inter1ace'
+    src = Path(__file__).resolve().parents[1] / 'src' / 'interlacing'
     # nodes may use the engine (a graph as a node runs one); methods may use the nodes they place in a graph
     allowed = {'engine': {'base', 'engine'}, 'nodes': {'base', 'engine', 'nodes'}, 'protocols': {'base', 'protocols'},
                'methods': {'base', 'nodes', 'methods'}, 'models': {'models'}, 'base': {'base'},

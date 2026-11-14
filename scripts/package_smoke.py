@@ -11,13 +11,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-import inter1ace
-from inter1ace import DEFAULT, Chain, Engine, FunctionNode, Port
+import interlacing
+from interlacing import DEFAULT, Chain, Engine, FunctionNode, Port
 
 source = Path(__file__).resolve().parents[1] / "src"
-assert source not in Path(inter1ace.__file__).resolve().parents, "the source tree is being imported, not the wheel"
-for name in inter1ace.__all__:
-    getattr(inter1ace, name)
+assert source not in Path(interlacing.__file__).resolve().parents, "the source tree is being imported, not the wheel"
+for name in interlacing.__all__:
+    getattr(interlacing, name)
 
 node = lambda id, f: FunctionNode(id, f, inputs=[Port("x")], outputs=[Port("y")])  # noqa: E731
 assert Engine(Chain(node("a", lambda x: x + 1), node("b", lambda x: x * 2)).build(DEFAULT), DEFAULT).run({"in": 1}).last("out") == 4
@@ -29,7 +29,7 @@ for example in sorted(examples.glob("*.py")):
 
 # The installed command: a graph written as data waits for a person, is answered, and carries on.
 data = examples.parent / "data"
-command = [str(Path(sys.executable).with_name("inter1ace"))]
+command = [str(Path(sys.executable).with_name("interlacing"))]
 with tempfile.TemporaryDirectory() as temporary:
     where = ["--dir", str(Path(temporary) / "run")]
 
@@ -58,4 +58,4 @@ with tempfile.TemporaryDirectory() as temporary:
     assert served.returncode == 0 and len(replies[1]["result"]["tools"]) == 6, served.stderr
     assert replies[2]["result"]["structuredContent"]["status"] == "waiting", replies[2]
 
-print(f"inter1ace {inter1ace.__version__}: {len(inter1ace.__all__) - 1} public names, {len(list(examples.glob('*.py')))} examples ran, the command line and the server ran")
+print(f"interlacing {interlacing.__version__}: {len(interlacing.__all__) - 1} public names, {len(list(examples.glob('*.py')))} examples ran, the command line and the server ran")

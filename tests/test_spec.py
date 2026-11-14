@@ -4,14 +4,14 @@ import sys
 
 import pytest
 
-from inter1ace.base import Firing, GraphBuilder, Port
-from inter1ace.engine import Engine
-from inter1ace.methods import Chain, Fan, Governed, Loop
-from inter1ace.models import ChatResult, FakeProvider
-from inter1ace.nodes import (AgentNode, Branch, FunctionNode, GraphNode, HumanNode, ProcessNode, SinkNode, SourceNode,
+from interlacing.base import Firing, GraphBuilder, Port
+from interlacing.engine import Engine
+from interlacing.methods import Chain, Fan, Governed, Loop
+from interlacing.models import ChatResult, FakeProvider
+from interlacing.nodes import (AgentNode, Branch, FunctionNode, GraphNode, HumanNode, ProcessNode, SinkNode, SourceNode,
                                  Tool)
-from inter1ace.protocols import DEFAULT
-from inter1ace.spec import Catalog, SpecError, dump, load, read, write
+from interlacing.protocols import DEFAULT
+from interlacing.spec import Catalog, SpecError, dump, load, read, write
 
 HERE = __name__                     # the functions below are found by name in this module
 
@@ -157,7 +157,7 @@ def test_a_description_that_is_wrong_says_where():
 
 
 def test_a_host_can_add_its_own_kind_of_node(tmp_path):
-    from inter1ace.nodes import Pass
+    from interlacing.nodes import Pass
 
     class Stamp(Pass):
         kind = 'stamp'

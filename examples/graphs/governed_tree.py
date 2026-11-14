@@ -10,11 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from inter1ace.base import Firing, Port
-from inter1ace.engine import Engine, Journal
-from inter1ace.methods import Governed
-from inter1ace.nodes import AgentNode, FunctionNode, HumanNode, Tool
-from inter1ace.protocols import DEFAULT
+from interlacing.base import Firing, Port
+from interlacing.engine import Engine, Journal
+from interlacing.methods import Governed
+from interlacing.nodes import AgentNode, FunctionNode, HumanNode, Tool
+from interlacing.protocols import DEFAULT
 
 from review_loop import Scripted
 

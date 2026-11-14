@@ -7,11 +7,11 @@ import threading
 
 import pytest
 
-from inter1ace.base import GraphBuilder, GraphError, Node, Port
-from inter1ace.engine import Engine, Journal, JournalError, RunError
-from inter1ace.methods import Chain, Loop
-from inter1ace.nodes import FunctionNode
-from inter1ace.protocols import DEFAULT, standard
+from interlacing.base import GraphBuilder, GraphError, Node, Port
+from interlacing.engine import Engine, Journal, JournalError, RunError
+from interlacing.methods import Chain, Loop
+from interlacing.nodes import FunctionNode
+from interlacing.protocols import DEFAULT, standard
 
 
 def fn(id, function, inputs=('x',), outputs=('y',), **options):
@@ -83,10 +83,10 @@ def test_what_was_finished_is_not_done_again_and_what_was_cut_off_is(tmp_path):
 def test_a_run_survives_the_process_being_killed(tmp_path):
     (tmp_path / 'shared.py').write_text(textwrap.dedent('''
         import os, sys
-        from inter1ace.base import Port
-        from inter1ace.methods import Chain
-        from inter1ace.nodes import FunctionNode
-        from inter1ace.protocols import DEFAULT
+        from interlacing.base import Port
+        from interlacing.methods import Chain
+        from interlacing.nodes import FunctionNode
+        from interlacing.protocols import DEFAULT
 
         here = os.path.dirname(__file__)
 
@@ -106,8 +106,8 @@ def test_a_run_survives_the_process_being_killed(tmp_path):
             return Chain(node('count', count, context=True), node('square', square)).build(DEFAULT)
     '''), encoding='utf-8')
     script = ('import sys; sys.path.insert(0, sys.argv[1]); import shared\n'
-              'from inter1ace.engine import Engine, Journal\n'
-              'from inter1ace.protocols import DEFAULT\n'
+              'from interlacing.engine import Engine, Journal\n'
+              'from interlacing.protocols import DEFAULT\n'
               'engine = Engine(shared.graph(), DEFAULT, journal=Journal(sys.argv[1] + "/run.jsonl"))\n'
               'result = engine.run({"in": 6}) if sys.argv[2] == "run" else engine.resume()\n'
               'print(result.outputs["out"], result.rounds)\n')
@@ -206,7 +206,7 @@ def test_round_limits_count_across_a_restart(tmp_path):
 
 
 def test_a_stream_and_an_artifact_come_back_from_the_journal(tmp_path):
-    from inter1ace.protocols import DirectoryStore
+    from interlacing.protocols import DirectoryStore
     path, protocols = tmp_path / 'run.jsonl', standard(DirectoryStore(tmp_path / 'store'))
     reader = Flaky(lambda x: ''.join(x))
     keeper = Flaky(lambda x: x.upper())

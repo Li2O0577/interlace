@@ -8,15 +8,15 @@ import sys
 
 import pytest
 
-from inter1ace import cli
-from inter1ace.base import Port
-from inter1ace.engine import Engine, Journal, OverBudget, RunError
-from inter1ace.methods import Chain
-from inter1ace.models import ChatResult, FakeProvider
-from inter1ace.nodes import AgentNode, FunctionNode, GraphNode
-from inter1ace.protocols import DEFAULT
-from inter1ace.runs import Run
-from inter1ace.spec import Catalog, SpawnNode, SpecError
+from interlacing import cli
+from interlacing.base import Port
+from interlacing.engine import Engine, Journal, OverBudget, RunError
+from interlacing.methods import Chain
+from interlacing.models import ChatResult, FakeProvider
+from interlacing.nodes import AgentNode, FunctionNode, GraphNode
+from interlacing.protocols import DEFAULT
+from interlacing.runs import Run
+from interlacing.spec import Catalog, SpawnNode, SpecError
 
 HERE = __name__
 KEYS = []

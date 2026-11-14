@@ -1,6 +1,6 @@
-# inter1ace
+# interlacing
 
-**English** · [中文](https://github.com/Li2O0577/interlace/blob/main/README.zh-CN.md)
+**English** · [中文](https://github.com/Li2O0577/interlacing/blob/main/README.zh-CN.md)
 
 Join anything into a graph and run it.
 
@@ -13,7 +13,7 @@ The engine runs the graph and looks after the run: outputs are checked, usage is
 ## Install
 
 ```sh
-pip install inter1ace       # the fifth character is the digit 1
+pip install interlacing
 pip install -e .            # or from a checkout
 ```
 
@@ -22,7 +22,7 @@ Python 3.11 or later, on Linux, macOS and Windows.
 ## A first graph
 
 ```python
-from inter1ace import DEFAULT, Chain, Engine, FunctionNode, Port
+from interlacing import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
 show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
@@ -36,7 +36,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 **A model with tools.** A tool is a call edge to an ordinary node, so a dictionary, a program and a robot arm are all answered the same way.
 
 ```python
-from inter1ace import AgentNode, GraphBuilder, SinkNode, Tool
+from interlacing import AgentNode, GraphBuilder, SinkNode, Tool
 
 agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "Look a word up"), Tool("move", "Move the arm")])
 graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
@@ -45,7 +45,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
          .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
 ```
 
-`model` is any object with `chat(system, messages, tools, max_tokens)`. `inter1ace.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
+`model` is any object with `chat(system, messages, tools, max_tokens)`. `interlacing.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
 
 **Outputs that are checked.** A port says what may leave through it and what happens when something else does: the node fails, the payload goes on with a warning, or the node is told what is wrong and may send again.
 
@@ -110,10 +110,10 @@ A node that must not do something twice outside the graph uses `ctx.key`, which 
 
 ```sh
 cd examples/data && export PYTHONPATH=.
-inter1ace check  release.json --allow steps
-inter1ace run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
-inter1ace answer --dir /tmp/run --json '{"approved": true}'
-inter1ace resume --dir /tmp/run                                                   # done, exit code 0
+interlacing check  release.json --allow steps
+interlacing run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
+interlacing answer --dir /tmp/run --json '{"approved": true}'
+interlacing resume --dir /tmp/run                                                   # done, exit code 0
 ```
 
 A run is a directory. A person in the graph who has not answered yet does not keep a process waiting: the command exits, and the run goes on once the answer has been given. One process at a time runs a directory.
@@ -121,7 +121,7 @@ A run is a directory. A person in the graph who has not answered yet does not ke
 **As an MCP server.** The same operations can be offered to a model in another application. What its graphs may reach, how much they may use and how long a node may take are set on the command line by whoever starts the server, and the client cannot change them.
 
 ```json
-{"mcpServers": {"inter1ace": {"command": "inter1ace",
+{"mcpServers": {"interlacing": {"command": "interlacing",
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
@@ -129,11 +129,11 @@ Model keys are read from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` 
 
 ## What it is for
 
-Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/interlace/blob/main/docs/CASES.md) (in Chinese). In short:
+Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/interlacing/blob/main/docs/CASES.md) (in Chinese). In short:
 
 | Case | How it is built |
 |---|---|
-| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/interlace/blob/main/examples/graphs/planner_and_arm.py) |
+| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/interlacing/blob/main/examples/graphs/planner_and_arm.py) |
 | A modelling assistant: a lead, one owner per question, a solver and a critic who argue until the answer is proved, a person who may step in anywhere | each question is a `Block` holding a `Loop(solve, critic)`; "no proof, not done" is a port check; questions run in `seq`; the person is the operator of a `Governed` tree; the run directory survives restarts |
 | A mathematician: a lead sends out explorers in parallel, each hands its work to a proof checker and reports back when it passes | `Pool(lead, explorer, size=10)` with `workers`; each explorer is a `Loop(prove, check)`; three directions given, three explorers exist |
 
@@ -143,16 +143,16 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 | Layer | Package | Main names |
 |---|---|---|
-| Abstractions | `inter1ace.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
-| Engine | `inter1ace.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `inter1ace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
-| Blocks | `inter1ace.blocks` | `Block`, `seq`, `par` |
-| Graphs as data | `inter1ace.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
-| Outside | `inter1ace.runs`, `inter1ace.cli`, `inter1ace.serve` | `Run`; the command `inter1ace`; the MCP server |
+| Abstractions | `interlacing.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
+| Engine | `interlacing.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
+| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Blocks | `interlacing.blocks` | `Block`, `seq`, `par` |
+| Graphs as data | `interlacing.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
+| Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve` | `Run`; the command `interlacing`; the MCP server |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlace/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlace/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 
