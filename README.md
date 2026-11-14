@@ -13,7 +13,7 @@ The engine runs the graph and looks after the run: outputs are checked, usage is
 ## Install
 
 ```sh
-pip install interlace
+pip install inter1ace       # the name on the package index has the digit 1; the import is `interlace`
 pip install -e .            # or from a checkout
 ```
 

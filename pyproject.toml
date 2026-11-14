@@ -1,5 +1,5 @@
 [project]
-name = "interlace"
+name = "inter1ace"
 dynamic = ["version"]
 description = "Nodes, edges and methods: join models, programs, devices and people into graphs, and run them"
 readme = "README.md"

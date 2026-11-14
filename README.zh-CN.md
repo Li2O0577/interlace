@@ -13,7 +13,7 @@
 ## 安装
 
 ```sh
-pip install interlace
+pip install inter1ace       # 包索引上的名字里是数字 1；导入名是 `interlace`
 pip install -e .            # 或者从代码检出安装
 ```
 
