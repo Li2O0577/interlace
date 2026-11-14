@@ -1,7 +1,8 @@
-"""Small nodes that only direct the flow: pass on, collect, choose a way, decide whether a loop goes round again."""
+"""Small nodes that only direct the flow: pass on, collect, take in and hand out, choose a way, decide whether a
+loop goes round again."""
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from ..base import ANY, Firing, Node, NodeError, Port
 from .function import named
@@ -29,6 +30,60 @@ class Collect(Node):
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         return {"y": list(inputs["parts"])}
+
+
+class Desk(Node):
+    """Takes in what arrives from several places, sorts it, and hands it out to several places.
+
+    ``takes`` names the inputs, one for each place something comes from; ``gives`` names the outputs, one for
+    each place something goes to. Either may hold ports instead of names, for a schema, a check, or an input
+    that several edges feed (``many``).
+
+    ``sort(received)`` is given a mapping of input name to what arrived there and returns a mapping of output
+    name to what leaves there; an output it leaves out sends nothing. Without ``sort``, every output gets
+    what arrived: the value itself when the desk has one input, the mapping when it has several.
+
+    With ``wait`` (the default) the desk runs once everything it takes has arrived. Without it, the desk runs
+    each time anything arrives, and ``received`` holds only that.
+
+    A desk at the way into a block shares the block's input among its members; a desk at the way out makes
+    one answer of what the members gave. ``Fan`` joins both to the members by name. Where the sorting needs
+    judgement, an ``AgentNode`` with the same inputs and outputs stands in the same place.
+    """
+
+    kind = "desk"
+
+    def __init__(self, id: str, *, takes: Iterable[str | Port] = ("x",), gives: Iterable[str | Port] = ("y",),
+                 sort: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None, wait: bool = True):
+        inputs = [port if isinstance(port, Port) else Port(port) for port in takes]
+        outputs = [port if isinstance(port, Port) else Port(port) for port in gives]
+        if not inputs or not outputs:
+            raise NodeError(f"{id}: a desk takes at least one thing and gives at least one")
+        if any(port.call for port in outputs):
+            raise NodeError(f"{id}: a desk hands out, it does not call")
+        if sort is not None and not callable(sort):
+            raise NodeError(f"{id}: not callable: {sort!r}")
+        if not wait:    # each arrival is handled by itself, so none of them can be waited for
+            inputs = [Port(p.name, p.schema, False, p.many, check=p.check, invalid=p.invalid) for p in inputs]
+        super().__init__(id, inputs=inputs, outputs=outputs, firing=Firing.ALL if wait else Firing.ANY)
+        self.sort, self.wait = sort, bool(wait)
+
+    def config(self) -> Mapping:
+        return {"sort": named(self.sort) if self.sort is not None else None}
+
+    def run(self, ctx, inputs: Mapping[str, Any]):
+        if self.sort is None:
+            value = next(iter(inputs.values())) if len(self.inputs) == 1 else dict(inputs)
+            return {name: value for name in self.outputs}
+        sorted_ = self.sort(dict(inputs))
+        if sorted_ is None:
+            return None
+        if not isinstance(sorted_, Mapping):
+            raise NodeError(f"sort must return a mapping of output to payload, not {type(sorted_).__name__}")
+        unknown = sorted(set(sorted_) - set(self.outputs))
+        if unknown:
+            raise NodeError(f"sort gave to {', '.join(map(str, unknown))}, and the desk gives to {', '.join(self.outputs)}")
+        return dict(sorted_)
 
 
 def _condition(id: str, condition: Callable) -> Callable:

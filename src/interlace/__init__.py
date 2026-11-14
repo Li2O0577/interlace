@@ -28,7 +28,7 @@ _PUBLIC = {
     "Engine": "engine", "Result": "engine", "RunError": "engine", "OverBudget": "engine", "Journal": "engine", "Transport": "engine",
     # parts
     "FunctionNode": "nodes", "AgentNode": "nodes", "Tool": "nodes", "ProcessNode": "nodes", "SourceNode": "nodes",
-    "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes",
+    "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes", "Desk": "nodes",
     "Chain": "methods", "Loop": "methods", "Fan": "methods", "Tree": "methods", "Star": "methods",
     "Governed": "methods", "Pool": "methods",
     "Block": "blocks", "seq": "blocks", "par": "blocks",

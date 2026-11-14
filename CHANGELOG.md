@@ -13,5 +13,7 @@ First release on the package index.
   `Fan`, `Tree`, `Star`, `Governed`, `Pool`).
 - The engine: workers, journal and `resume`, time limits, budgets, an observer, output checks with repairs.
 - `Block`, `seq`, `par`; graphs as JSON with `Catalog`; `SpawnNode` for graphs written during a run.
+- `Desk`: a node that takes in from several places, sorts, and hands out to several; `Fan` joins a split and a
+  join to its branches by name, and shows everything they take and give.
 - Run directories, the `interlace` command, and an MCP server over stdio.
 - Graphs that are not trusted are held to the run's time limit, node count and workers (`firm`, `strict`).

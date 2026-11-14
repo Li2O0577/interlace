@@ -5,7 +5,7 @@ from typing import Mapping
 
 from ..base import ANY, Is, ListOf, Port, Record, Schema
 from ..protocols import FileOf
-from ..nodes import (AgentNode, Branch, Collect, FunctionNode, GraphNode, HumanNode, Pass, ProcessNode, Roster, SinkNode,
+from ..nodes import (AgentNode, Branch, Collect, Desk, FunctionNode, GraphNode, HumanNode, Pass, ProcessNode, Roster, SinkNode,
                      SourceNode, Tool, Until)
 
 _TYPES = {t.__name__: t for t in (str, int, float, bool, list, dict, bytes, type(None))}
@@ -159,6 +159,8 @@ BUILT_IN = {
     "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),
     "pass": lambda d, catalog, graphs: Pass(d["id"], schema=_first_schema(d, "inputs")),
     "collect": lambda d, catalog, graphs: Collect(d["id"], schema=_first_schema(d, "inputs")),
+    "desk": lambda d, catalog, graphs: Desk(d["id"], takes=ports(d, "inputs", catalog) or ("x",), gives=ports(d, "outputs", catalog) or ("y",),
+                                            sort=_optional(catalog, d["config"].get("sort")), wait=d.get("firing", "all") != "any"),
     "branch": lambda d, catalog, graphs: Branch(d["id"], catalog.function(d["config"]["condition"]), schema=_first_schema(d, "inputs")),
     "until": lambda d, catalog, graphs: Until(d["id"], catalog.function(d["config"]["condition"]), limit=d["config"].get("limit"),
                                               strict=d["config"].get("strict", False), schema=_first_schema(d, "inputs")),

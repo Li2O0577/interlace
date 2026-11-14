@@ -69,6 +69,14 @@ study = seq(clean, par(review, review, review), publish)       # 顺排、并排
 graph = Chain(intake, study("study"), report).build(DEFAULT)
 ```
 
+**块门口的收发台。** `Desk` 接收从多处到来的东西，整理之后分发到多处。放在块的入口，它把工作分给块内的成员；放在块的出口，它把成员给出的结果整合成一份答复。整理需要判断力时，换成一个输入输出相同的模型节点站在同一个位置。
+
+```python
+team = Fan(analyst, modeller,                                   # 每个成员按名字拿到自己的那一份
+           split=Desk("door", takes=["brief", "data"], gives=["analyst", "modeller"], sort=share),
+           join=Desk("exit", takes=["analyst", "modeller"], sort=report))
+```
+
 **不事先固定的图。** `Pool` 为成员留好位置，成员在被叫到之前什么也不做。`SpawnNode` 构建并运行一张由节点在运行中写出的图，范围由创建这个节点的人限定。
 
 ```python
@@ -137,14 +145,14 @@ interlace resume --dir /tmp/run                                                 
 |---|---|---|
 | 抽象 | `interlace.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
 | 引擎 | `interlace.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `interlace.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 部件 | `interlace.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`Desk`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `interlace.blocks` | `Block`、`seq`、`par` |
 | 写成数据的图 | `interlace.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
 | 对外 | `interlace.runs`、`interlace.cli`、`interlace.serve` | `Run`；命令 `interlace`；MCP 服务 |
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。八个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。九个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 
