@@ -4,11 +4,11 @@ import time
 
 import pytest
 
-from interlace.base import Firing, GraphBuilder, GraphError, NodeError, Port
-from interlace.engine import Engine, RunError
-from interlace.methods import Chain, Fan, Loop, Star, Tree
-from interlace.nodes import Branch, Collect, FunctionNode, GraphNode, Pass, Until
-from interlace.protocols import DEFAULT
+from inter1ace.base import Firing, GraphBuilder, GraphError, NodeError, Port
+from inter1ace.engine import Engine, RunError
+from inter1ace.methods import Chain, Fan, Loop, Star, Tree
+from inter1ace.nodes import Branch, Collect, FunctionNode, GraphNode, Pass, Until
+from inter1ace.protocols import DEFAULT
 
 WORKERS = [0, 1, 4]
 

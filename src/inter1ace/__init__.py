@@ -1,4 +1,4 @@
-"""interlace: nodes, edges and methods, and an engine that runs the graphs they make.
+"""inter1ace: nodes, edges and methods, and an engine that runs the graphs they make.
 
 A node is anything that takes information in and gives information out: a model, a function, an external
 program, a device, a person, another graph. An edge carries information from one node to another under a
@@ -11,7 +11,7 @@ Layers, bottom up (each imports only from below):
 3. parts       nodes, protocols, methods, models: the ones that come with the package
    blocks      a designed graph kept as a unit and used as often as needed: Block, seq, par
 4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
-5. runs, cli, serve   a run kept in a directory, the ``interlace`` command that works on one, and the
+5. runs, cli, serve   a run kept in a directory, the ``inter1ace`` command that works on one, and the
                same operations offered to an MCP client
 
 Public names are importable from the package root. Standard library only.

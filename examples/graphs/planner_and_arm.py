@@ -21,10 +21,10 @@ Everything outside the graph is a stand-in here: the robot is a few numbers, the
 import json
 import math
 
-from interlace import AgentNode, Engine, FunctionNode, GraphBuilder, Loop, Port, Tool
-from interlace.models import ChatResult, FakeProvider
-from interlace.nodes import GraphNode
-from interlace.protocols import DEFAULT
+from inter1ace import AgentNode, Engine, FunctionNode, GraphBuilder, Loop, Port, Tool
+from inter1ace.models import ChatResult, FakeProvider
+from inter1ace.nodes import GraphNode
+from inter1ace.protocols import DEFAULT
 
 GOAL = [0.40, 0.10, 0.02]
 

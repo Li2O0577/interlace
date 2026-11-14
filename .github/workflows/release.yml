@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
       - name: The tag must be the version in the package
         run: |
-          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/interlace/__init__.py)
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/inter1ace/__init__.py)
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
       - name: Tests
         run: |

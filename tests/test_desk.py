@@ -1,8 +1,8 @@
 """The desk: a node that takes in from several places, sorts, and hands out to several."""
 import pytest
 
-from interlace import Block, Catalog, Chain, Desk, Engine, Fan, FunctionNode, GraphBuilder, GraphError, NodeError, Port, RunError, dump, load
-from interlace.protocols import DEFAULT
+from inter1ace import Block, Catalog, Chain, Desk, Engine, Fan, FunctionNode, GraphBuilder, GraphError, NodeError, Port, RunError, dump, load
+from inter1ace.protocols import DEFAULT
 
 
 def fn(id, function, inputs=('x',), outputs=('y',), **options):
@@ -162,7 +162,7 @@ def test_a_desk_in_a_graph_written_as_data():
 
 
 def test_an_agent_stands_where_a_desk_does():
-    from interlace import AgentNode, ChatResult, FakeProvider
+    from inter1ace import AgentNode, ChatResult, FakeProvider
     turns = [ChatResult(text='', tool_calls=[{'id': '1', 'name': 'send_left', 'args': {'content': ['a']}},
                                               {'id': '2', 'name': 'send_right', 'args': {'content': ['bc']}}]),
              ChatResult(text='shared out')]

@@ -6,8 +6,8 @@
 joined with another node into ``sentence``, and that is used three times side by side, each use with its
 own state.
 """
-from interlace import Block, Chain, Engine, FunctionNode, Loop, Port, par, seq
-from interlace.protocols import DEFAULT
+from inter1ace import Block, Chain, Engine, FunctionNode, Loop, Port, par, seq
+from inter1ace.protocols import DEFAULT
 
 
 def node(function):
