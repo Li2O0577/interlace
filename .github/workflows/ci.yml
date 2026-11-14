@@ -20,7 +20,7 @@ jobs:
       - name: Tests
         run: |
           uv venv .venv --python ${{ matrix.python }}
-          uv pip install --python .venv/bin/python -e . pytest
+          uv pip install --python .venv/bin/python -e . pytest mcp      # mcp: the reference client, for one test
           .venv/bin/python -m pytest -q tests
       - name: Unused names, undefined names, and types
         run: |
