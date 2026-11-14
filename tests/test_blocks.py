@@ -123,11 +123,11 @@ def test_after_a_restart_a_block_goes_on_inside_instead_of_starting_over(tmp_pat
 
 def test_a_time_limit_applies_to_each_node_inside_a_block_and_problems_inside_are_seen_outside(tmp_path):
     import time
-    slow = fn(lambda x: time.sleep(0.15) or x)
-    assert Engine(Chain(seq(slow, slow, slow)('b')).build(DEFAULT), DEFAULT, time_limit=0.3).run({'in': 1}).last('out') == 1
-    stuck = fn(lambda x: time.sleep(1.5) or x)
-    with pytest.raises(RunError, match='node b failed in round 1: node s2 ran longer than 0.2 seconds'):
-        Engine(Chain(seq(slow, stuck)('b')).build(DEFAULT), DEFAULT, time_limit=0.2).run({'in': 1})
+    slow = fn(lambda x: time.sleep(0.2) or x)        # each well inside the limit, all three together over it
+    assert Engine(Chain(seq(slow, slow, slow)('b')).build(DEFAULT), DEFAULT, time_limit=0.5).run({'in': 1}).last('out') == 1
+    stuck = fn(lambda x: time.sleep(3) or x)
+    with pytest.raises(RunError, match='node b failed in round 1: node s2 ran longer than 0.6 seconds'):
+        Engine(Chain(seq(slow, stuck)('b')).build(DEFAULT), DEFAULT, time_limit=0.6).run({'in': 1})
     warned = lambda id: FunctionNode(id, never_even, inputs=[Port('x')], outputs=[Port('y', check=even, invalid='warn')])   # noqa: E731
     result = Engine(Chain(seq(warned)('b')).build(DEFAULT), DEFAULT, journal=Journal(tmp_path / 'j')).run({'in': 3})
     assert result.problems == [{'node': 'b/s1', 'round': 1, 'port': 'y', 'problem': 'even does not hold', 'handled': 'warned'}]

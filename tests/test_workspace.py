@@ -109,7 +109,7 @@ def test_edit_move_delete_and_files_that_are_not_text(tmp_path):
 
 
 def test_a_worker_works_in_its_directory_and_sends_a_file_on(tmp_path):
-    model = scripted(("write_file", {"path": "make.py", "content": "open('table.csv', 'w').write('a,b\\n1,2\\n')"}),
+    model = scripted(("write_file", {"path": "make.py", "content": "open('table.csv', 'w', newline='').write('a,b\\n1,2\\n')"}),
                      ("run_command", {"command": f"{PYTHON} make.py"}),
                      ("read_file", {"path": "table.csv"}),
                      "table.csv")
