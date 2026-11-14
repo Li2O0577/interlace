@@ -4,7 +4,7 @@ from .flow import Branch, Collect, Desk, Pass, Roster, Until
 from .function import FunctionNode
 from .graph import GraphNode
 from .outside import HumanNode, SinkNode, SourceNode
-from .process import ProcessNode
+from .process import IsolatedNode, ProcessNode
 
-__all__ = ["AgentNode", "Branch", "Collect", "Desk", "FunctionNode", "GraphNode", "HumanNode", "Pass", "ProcessNode", "Roster", "SinkNode",
+__all__ = ["AgentNode", "Branch", "Collect", "Desk", "FunctionNode", "GraphNode", "HumanNode", "IsolatedNode", "Pass", "ProcessNode", "Roster", "SinkNode",
            "SourceNode", "Tool", "Until"]

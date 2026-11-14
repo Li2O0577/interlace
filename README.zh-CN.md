@@ -94,7 +94,23 @@ engine = Engine(graph, DEFAULT, workers=4,
                 observe=print)                                 # 每个事件，在发生的当时
 ```
 
-不能在图外把同一件事做两遍的节点使用 `ctx.key`，被打断的激活重跑时它保持不变。
+不能在图外把同一件事做两遍的节点把它包进 `ctx.once`：结果记进日志，这次激活重跑时直接拿回结果，不再执行。
+
+```python
+receipt = ctx.once("charge", lambda: bank.charge(order, key=ctx.key))   # ctx.key 是这次激活的名字，每次重试都相同
+```
+
+**可以 await。** 调用方是协程时，运行在线程里进行，事件循环保持空闲；取消等待就会停止运行。节点的函数本身也可以是 `async def`。
+
+```python
+result = await Engine(graph, DEFAULT).arun({"in": 21})          # 还有 aresume() 和 ago()
+```
+
+**可以被终止的函数。** 线程无法从外部停止，所以在引擎自己进程里超时的函数只能被放弃。`IsolatedNode` 让函数在单独的进程里运行，超时或运行停止时把它杀掉；它崩溃只会让这个节点失败，不影响别的。
+
+```python
+solve = IsolatedNode("solve", "mypkg.solver.solve", inputs=[Port("problem")], outputs=[Port("answer")], timeout=300)
+```
 
 **写成数据的图。** 图文件里只有结构和与默认值不同的部分；提示词是一个被引用的文件。
 
@@ -125,6 +141,8 @@ interlacing resume --dir /tmp/run                                               
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
+工具调用并行应答，互不阻塞。`start` 和 `resume` 可以带 `wait: false` 立即返回，之后用 `status` 查询，用 `stop` 提前结束。
+
 模型密钥从环境变量读取（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 以及对应的 `_BASE_URL`），不会写入图文件、运行目录或日志。
 
 ## 用来做什么
@@ -145,7 +163,7 @@ interlacing resume --dir /tmp/run                                               
 |---|---|---|
 | 抽象 | `interlacing.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
 | 引擎 | `interlacing.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`Desk`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`Desk`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `interlacing.blocks` | `Block`、`seq`、`par` |
 | 写成数据的图 | `interlacing.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
 | 对外 | `interlacing.runs`、`interlacing.cli`、`interlacing.serve` | `Run`；命令 `interlacing`；MCP 服务 |
@@ -162,17 +180,17 @@ python -m pytest -q tests
 python scripts/bench_engine.py       # 引擎给每个信封增加的开销（约 11 微秒）
 ```
 
-测试在 Linux、macOS 和 Windows 上运行，使用按脚本应答的模型和替身设备。其中包括在随机位置打断的运行，日志像进程突然死掉时那样被截断，这些运行必须和没被打断的运行得到同样的结局。这个包通过 `mypy` 检查。
+测试在 Linux、macOS 和 Windows 上运行，使用按脚本应答的模型、替身模型服务和替身设备。其中包括在随机位置打断的运行，日志像进程突然死掉时那样被截断，这些运行必须和没被打断的运行得到同样的结局。还包括用 MCP 的参考客户端（`mcp` 包，装了才跑）通过服务完整跑一张图。这个包通过 `mypy` 检查。
 
 ## 限制
 
-- 接着跑是“至少一次”：被打断的节点会重跑，它在图外做过的事会再做一遍，除非节点用 `ctx.key` 防止。
+- 接着跑是“至少一次”：被打断的节点会重跑。`ctx.once` 让图外做过的事不再重复，只有“做完”到“记下”之间的一瞬间例外；要覆盖这一瞬间，把 `ctx.key` 交给外部服务去重。
 - 投递只在进程内。`Transport` 是在进程或机器之间传递信封的位置，目前那里什么都没有。
-- 两种模型接口各用很小的请求在一个兼容服务上试过一次。思考输出、图片输入和限流重试还没有在真实服务上试过。设备节点只接触过替身。
-- 超时的节点是被放弃，而不是被杀掉：线程无法从外部停止。`ProcessNode` 启动的程序会被杀掉。
-- `allow` 是一份模块清单，图可以点名其中的函数。它不是沙箱。
-- MCP 服务只走 stdio，一次处理一个调用，还没有接过真实客户端。
-- 没有异步接口；引擎使用线程。
+- 两种模型接口都用替身服务测过：工具、图片、思考、流式，以及服务繁忙时的等待重试。在真实服务上只用很小的请求试过一次，思考和图片输入没有在真实服务上试过。设备节点只接触过替身。
+- 在引擎自己进程里超时的节点是被放弃，而不是被杀掉。`IsolatedNode` 和 `ProcessNode` 会被杀掉。
+- `allow` 是一份模块清单，图可以点名其中的函数。它不是沙箱，`IsolatedNode` 也不是：它的进程拥有启动它的进程的全部权限。
+- MCP 服务只走 stdio。测试里由参考客户端跑通过，还没有接过桌面应用。
+- 可以 await 的接口是让引擎在线程里运行；引擎本身不是用协程写的。
 
 ## 许可
 

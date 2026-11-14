@@ -166,7 +166,7 @@ def test_one_process_at_a_time_runs_a_run_directory(tmp_path):
         lock.write_text(json.dumps({'pid': holder.pid, 'host': __import__('socket').gethostname(), 'since': 'earlier'}))
         with pytest.raises(SpecError, match=f'is being run by process {holder.pid} .* since earlier; if that process is gone, delete'):
             run.start({'in': 1})
-        assert run.status()['status'] == 'new' and lock.exists()            # looking is always allowed
+        assert run.status()['status'] == 'running' and lock.exists()        # looking is always allowed, and says who has it
     finally:
         holder.kill()
         holder.wait()

@@ -163,6 +163,9 @@ class AgentNode(Node):
             if calls:
                 message["tool_calls"] = [{"id": call.get("id", ""), "name": call["name"], "args": call.get("args") or {}}
                                          for call in calls]
+            thought = getattr(result, "thinking_blocks", None)
+            if thought:     # a service that thinks between tool calls wants its thinking back with the next request
+                message["thinking_blocks"] = list(thought)
             messages.append(message)
             if not calls:
                 if self._choose:

@@ -237,6 +237,9 @@ class _Context(Context):
     def use(self, **amounts: float) -> None:
         self._engine._use(self._state, self.round, amounts)
 
+    def once(self, name: str, do: Callable[[], Any]) -> Any:
+        return self._engine._once(self._state, self.round, name, do)
+
     @property
     def key(self) -> str:
         return f"{self._engine._id}/{self.node}#{self.round}"
@@ -262,6 +265,7 @@ class Engine:
         self._observe = observe
         self._budget = _amounts(budget or {}, "budget")
         self._meter: dict[str, float] = {}  # what the nodes have reported using
+        self._kept: dict[tuple, Any] = {}   # what ctx.once has done, by (node, round, name)
         self._id: str | None = None         # names this run: the first part of every activation's key
         self._limit = time_limit
         self._firm = bool(firm)             # no node may give itself longer than time_limit
@@ -389,6 +393,29 @@ class Engine:
                 journal.path.unlink()
         return self.run(inputs)
 
+    # ---- the same, awaited ------------------------------------------------------------------------------
+
+    async def arun(self, inputs: Mapping[str, Any] | None = None) -> Result:
+        """``run``, for a caller that is a coroutine: the run goes on in a thread and the event loop stays
+        free. Cancelling the awaiting task asks the run to stop."""
+        return await self._awaited(self.run, inputs)
+
+    async def aresume(self, *, change: bool = False) -> Result:
+        """``resume``, awaited."""
+        return await self._awaited(lambda: self.resume(change=change))
+
+    async def ago(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
+        """``go``, awaited."""
+        return await self._awaited(lambda: self.go(inputs, fresh=fresh))
+
+    async def _awaited(self, do: Callable, *args) -> Result:
+        import asyncio
+        try:
+            return await asyncio.to_thread(do, *args)
+        except asyncio.CancelledError:
+            self.stop()
+            raise
+
     def _inner(self, ctx: "_Context", graph: Graph, protocols: Protocols, workers: int, firm: bool = False) -> "Engine":
         """An engine for a graph that runs inside one activation of one of this engine's nodes."""
         state = ctx._state
@@ -437,6 +464,24 @@ class Engine:
             outer._use(outer_state, self._within[-1][1], amounts)
         if over:
             raise OverBudget(over)
+
+    def _once(self, state: _State, round: int, name: str, do: Callable[[], Any]) -> Any:
+        """What ``do`` returned the first time this activation asked under this name; ``do`` is called only then."""
+        if not isinstance(name, str) or not name:
+            raise NodeError("once needs a name for what is done")
+        key = (state.node.id, round, name)
+        with self._lock:
+            if key in self._kept:
+                return self._kept[key]
+        value = do()
+        with self._lock:
+            if self._journal is not None:
+                try:
+                    self._journal.write({"kind": "once", "node": key[0], "round": round, "name": name, "value": value})
+                except (TypeError, ValueError) as exc:
+                    raise NodeError(f"what once keeps under {name!r} must be plain data: {exc}") from None
+            self._kept[key] = value
+        return value
 
     def _adopt(self, state: _State, act: _Act | None, problems: list[dict]) -> None:
         """Take on the problems of a run that happened inside one of this engine's nodes."""
@@ -496,6 +541,8 @@ class Engine:
             elif kind == "use":
                 for name, amount in record["amounts"].items():
                     self._meter[name] = self._meter.get(name, 0) + amount
+            elif kind == "once":
+                self._kept[(record["node"], record["round"], record["name"])] = record["value"]
             if kind == "act":
                 took.update(record["took"])
                 for name, body in record["out"]:

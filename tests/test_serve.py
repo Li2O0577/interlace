@@ -3,6 +3,8 @@ import io
 import json
 import subprocess
 import sys
+import threading
+import time
 
 from interlacing import cli
 from interlacing.serve import TOOLS, Server
@@ -19,6 +21,24 @@ def survey(x):
 
 def broken(x):
     raise OSError('the instrument is off')
+
+
+GATES = {'entered': threading.Event(), 'open': threading.Event()}
+
+
+def gate(x):
+    """Waits until the test lets it through."""
+    GATES['entered'].set()
+    if not GATES['open'].wait(10):
+        raise TimeoutError('nobody opened the gate')
+    return f'through {x}'
+
+
+def patient(ctx, x):
+    """Works until the run is told to stop."""
+    GATES['entered'].set()
+    while not ctx.stopping():
+        time.sleep(0.005)
 
 
 def node(id, function):
@@ -46,7 +66,7 @@ def test_the_handshake_and_the_tool_list(tmp_path):
     assert server.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) is None
     assert server.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'ping'})['result'] == {}
     listed = server.handle({'jsonrpc': '2.0', 'id': 3, 'method': 'tools/list'})['result']['tools']
-    assert [t['name'] for t in listed] == ['check', 'start', 'status', 'resume', 'answer', 'runs'] and listed == TOOLS
+    assert [t['name'] for t in listed] == ['check', 'start', 'status', 'resume', 'stop', 'answer', 'runs'] and listed == TOOLS
     assert all(t['inputSchema']['type'] == 'object' and t['description'] for t in listed)
     assert server.handle({'jsonrpc': '2.0', 'id': 4, 'method': 'resources/list'})['error']['code'] == -32601
     assert server.handle({'jsonrpc': '2.0', 'id': 5, 'method': 'tools/call', 'params': {'name': 'erase'}})['error']['code'] == -32602
@@ -104,6 +124,147 @@ def test_the_server_speaks_over_stdio_and_only_the_protocol_reaches_the_client(t
                           input=sent, capture_output=True, text=True, encoding='utf-8', cwd=str(tmp_path),
                           env={**__import__('os').environ, 'PYTHONPATH': str(__import__('pathlib').Path(__file__).parent)})
     replies = [json.loads(line) for line in done.stdout.splitlines()]
-    assert done.returncode == 0 and [r.get('id') for r in replies] == [1, 2, None]
-    assert replies[1]['result']['structuredContent']['questions'][0]['request'] == 'surveyed 桥'
-    assert replies[2]['error']['code'] == -32700 and 'a node may print' in done.stderr
+    assert done.returncode == 0 and replies[0]['id'] == 1 and sorted(str(r.get('id')) for r in replies) == ['1', '2', 'None']
+    by_id = {r.get('id'): r for r in replies}                       # a tool call is answered when it is done
+    assert by_id[2]['result']['structuredContent']['questions'][0]['request'] == 'surveyed 桥'
+    assert by_id[None]['error']['code'] == -32700 and 'a node may print' in done.stderr
+
+
+# ---- side by side ---------------------------------------------------------------------------------------
+
+GATED = {'method': 'chain', 'nodes': [node('gate', 'gate')]}
+PATIENT = {'method': 'chain', 'nodes': [{**node('patient', 'patient'), 'context': True}]}
+
+
+def gates():
+    for event in GATES.values():
+        event.clear()
+
+
+def until(condition, seconds=10):
+    end = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < end, 'it did not happen'
+        time.sleep(0.005)
+
+
+class Client:
+    """Speaks to a server over a pair of pipes, as a client does: it writes when it likes and reads replies as they come."""
+
+    def __init__(self, server):
+        self.replies, self.lines, self.more = {}, [], threading.Condition()
+        self.closed, self.id = False, 0
+        self.thread = threading.Thread(target=server.serve, args=(self._read(), self), daemon=True)
+        self.thread.start()
+
+    def _read(self):
+        while True:
+            with self.more:
+                while not self.lines and not self.closed:
+                    self.more.wait()
+                if not self.lines:
+                    return
+                line = self.lines.pop(0)
+            yield line
+
+    def write(self, text):                                           # what the server sends
+        reply = json.loads(text)
+        with self.more:
+            self.replies[reply.get('id')] = reply
+            self.more.notify_all()
+
+    def flush(self):
+        pass
+
+    def send(self, method, **params):
+        self.id += 1
+        with self.more:
+            self.lines.append(json.dumps({'jsonrpc': '2.0', 'id': self.id, 'method': method, 'params': params}))
+            self.more.notify_all()
+        return self.id
+
+    def notify(self, method, **params):
+        with self.more:
+            self.lines.append(json.dumps({'jsonrpc': '2.0', 'method': method, 'params': params}))
+            self.more.notify_all()
+
+    def call(self, name, **arguments):
+        return self.send('tools/call', name=name, arguments=arguments)
+
+    def reply(self, id, seconds=10):
+        with self.more:
+            assert self.more.wait_for(lambda: id in self.replies, seconds), f'no reply to {id}'
+            return self.replies[id]['result']['structuredContent']
+
+    def close(self):
+        with self.more:
+            self.closed = True
+            self.more.notify_all()
+        self.thread.join(10)
+        assert not self.thread.is_alive()
+
+
+def test_a_long_run_does_not_hold_up_other_calls(tmp_path):
+    gates()
+    client = Client(Server(tmp_path, allow=[HERE]))
+    long = client.call('start', graph=GATED, inputs={'in': 'a'})
+    until(GATES['entered'].is_set)
+    listed = client.reply(client.call('runs'))['runs']              # answered while the first call is still going
+    assert [r['status'] for r in listed] == ['running'] and long not in client.replies
+    assert client.reply(client.call('status', run=listed[0]['run']))['status'] == 'running'
+    refused = client.reply(client.call('resume', run=listed[0]['run']))
+    assert refused['status'] == 'refused' and 'already going' in refused['error']
+    GATES['open'].set()
+    done = client.reply(long)
+    assert done['status'] == 'done' and done['outputs'] == {'out': ['through a']}
+    client.close()
+
+
+def test_a_run_goes_on_behind_its_call_and_is_asked_about(tmp_path):
+    gates()
+    client = Client(Server(tmp_path, allow=[HERE]))
+    started = client.reply(client.call('start', graph=GATED, inputs={'in': 'b'}, wait=False))
+    assert started['status'] == 'running' and GATES['entered'].wait(10)
+    run = started['run']
+    assert client.reply(client.call('status', run=run))['status'] == 'running'
+    GATES['open'].set()
+    until(lambda: client.reply(client.call('status', run=run))['status'] == 'done')
+    assert client.reply(client.call('status', run=run))['outputs'] == {'out': ['through b']}
+    client.close()
+
+
+def test_a_run_is_stopped_and_taken_up_again(tmp_path):
+    gates()
+    client = Client(Server(tmp_path, allow=[HERE]))
+    run = client.reply(client.call('start', graph=PATIENT, inputs={'in': 1}, wait=False))['run']
+    until(GATES['entered'].is_set)
+    assert client.reply(client.call('stop', run=run))['status'] == 'stopping'
+    until(lambda: client.reply(client.call('status', run=run))['status'] == 'stopped')
+    idle = client.reply(client.call('stop', run=run))
+    assert idle['status'] == 'refused' and 'not going' in idle['error']
+    gates()
+    again = client.call('resume', run=run)                           # it runs again from where it stopped
+    until(GATES['entered'].is_set)
+    client.reply(client.call('stop', run=run))
+    assert client.reply(again)['status'] == 'stopped'
+    client.close()
+
+
+def test_a_cancelled_call_stops_its_run(tmp_path):
+    gates()
+    client = Client(Server(tmp_path, allow=[HERE]))
+    call = client.call('start', graph=PATIENT, inputs={'in': 1})
+    until(GATES['entered'].is_set)
+    client.notify('notifications/cancelled', requestId=call, reason='the person lost patience')
+    assert client.reply(call)['status'] == 'stopped'
+    client.close()
+
+
+def test_a_client_that_goes_away_leaves_nothing_running(tmp_path):
+    gates()
+    server = Server(tmp_path, allow=[HERE])
+    client = Client(server)
+    run = client.reply(client.call('start', graph=PATIENT, inputs={'in': 1}, wait=False))['run']
+    until(GATES['entered'].is_set)
+    client.close()
+    assert tool(server, 'status', run=run)[1]['status'] == 'stopped' and not (tmp_path / run / 'lock').exists()

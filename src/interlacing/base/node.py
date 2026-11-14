@@ -71,6 +71,16 @@ class Context(ABC):
         earlier attempt at this same activation left it. ``firm=True`` is for a graph that is not trusted:
         none of its nodes may give itself more time than the run allows."""
 
+    def once(self, name: str, do: Any) -> Any:
+        """Do something outside the graph once for this activation, however often the activation runs.
+
+        ``do()`` is called and what it returns is kept under ``name``, in the journal when the run has one.
+        When this activation runs again (the run was interrupted and taken up, or what the node sent was not
+        accepted) ``once`` returns what was kept and does not call ``do`` again. What ``do`` returns must be
+        plain data. If the process dies after ``do`` has acted and before its result is kept, it is done
+        again: for that last gap, give the outside service ``ctx.key`` as well."""
+        return do()
+
     def use(self, **amounts: float) -> None:
         """Report what this activation used up, under names of the node's choosing (``tokens=1200``,
         ``calls=1``, ``seconds=3.5``). The run adds it up; when a total goes over the run's budget for that

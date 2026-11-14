@@ -10,7 +10,7 @@ and continued by a third::
     questions/      one file per question that a person in the graph has been asked
     answers/        one file per answer given
     files/          the working directory of the graph's nodes: what the ``file`` protocol's paths are relative to
-    state.json      where the run stands: done, waiting, stopped or failed
+    state.json      where the run stands: done, waiting, stopped or failed (``running`` is told from the lock)
     lock            there while a process is running the graph, and names that process
 
 One process at a time runs a run. A second that tries is refused and told who holds it; a lock left by a
@@ -33,7 +33,7 @@ from .engine import Engine, Journal, RunError
 from .models import ChatResult, FakeProvider, ProviderError, build
 from .spec import Catalog, SpecError, dump, load
 
-DONE, WAITING, STOPPED, FAILED, NEW = "done", "waiting", "stopped", "failed", "new"
+DONE, WAITING, STOPPED, FAILED, NEW, RUNNING = "done", "waiting", "stopped", "failed", "new", "running"
 
 
 class Pending(BaseException):
@@ -136,6 +136,17 @@ class _Lock:
         return False
 
 
+def _holder(directory: Path) -> dict | None:
+    """Who is running the graph of a run directory now, or None."""
+    try:
+        holder = json.loads((directory / "lock").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if holder.get("host") == socket.gethostname() and holder.get("pid") != os.getpid() and not _alive(holder.get("pid")):
+        return None                                        # left behind by a process that has died
+    return holder
+
+
 def _alive(pid) -> bool:
     """Whether a process of this machine is still there. Where that cannot be asked safely, it is taken to be."""
     if os.name != "posix" or type(pid) is not int or pid <= 0:
@@ -170,6 +181,7 @@ class Run:
                  observe: Callable[[Mapping], None] | None = None):
         self.directory = Path(directory)
         self.models, self.observe = models, observe
+        self._now: Engine | None = None     # the engine, while this object is running the graph
 
     # ---- creating --------------------------------------------------------------------------------------
 
@@ -252,15 +264,26 @@ class Run:
             if budget:
                 options = _read(self.directory / "options.json")
                 _write(self.directory / "options.json", {**options, "budget": {**(options.get("budget") or {}), **_budget(budget)}})
-            engine = self._engine()
+            engine = self._now = self._engine()
             try:
                 result = action(engine)
             except Pending:
                 return self._state(WAITING, used=dict(engine._meter))
             except RunError as exc:
                 return self._state(FAILED, error=str(exc), node=exc.node, problems=exc.problems, used=exc.used)
+            finally:
+                self._now = None
             return self._state(DONE if result.complete else STOPPED, outputs=result.outputs, rounds=result.rounds,
                                limited=list(result.limited), problems=result.problems, used=result.used)
+
+    def stop(self) -> bool:
+        """Ask the run this object is running to stop: nothing new starts, and it ends as ``stopped``, to be
+        resumed later. False when this object is not running it."""
+        engine = self._now
+        if engine is None:
+            return False
+        engine.stop()
+        return True
 
     # ---- people ----------------------------------------------------------------------------------------
 
@@ -304,4 +327,6 @@ class Run:
         state = _read(self.directory / "state.json")
         if state is None:
             raise SpecError(f"{self.directory} holds no run")
+        if _holder(self.directory) is not None:      # being run now: what state.json holds is from before
+            state = {"status": RUNNING, "graph": state.get("graph"), "updated": state.get("updated")}
         return {**state, "questions": self.questions()}
