@@ -1,6 +1,8 @@
 """A node that is one Python function."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 from typing import Any, Callable, Iterable, Mapping
 
 from ..base import Firing, Node, NodeError, Port
@@ -18,6 +20,9 @@ class FunctionNode(Node):
     several, it returns a mapping of port name to payload; ports it leaves out send nothing. With
     ``context=True`` the function also receives the engine's context as its first argument, to emit several
     times or to see that the run is stopping.
+
+    The function may be ``async def``: it is run to its end in an event loop of its own, in the thread of the
+    activation, so it can await what it likes without holding up any other node.
     """
 
     kind = "function"
@@ -35,6 +40,8 @@ class FunctionNode(Node):
 
     def run(self, ctx, inputs: Mapping[str, Any]):
         result = self.function(ctx, **inputs) if self.context else self.function(**inputs)
+        if inspect.iscoroutine(result):
+            result = asyncio.run(result)
         if result is None:
             return None
         if len(self._sends) == 1:

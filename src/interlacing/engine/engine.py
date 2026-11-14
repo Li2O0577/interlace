@@ -389,6 +389,29 @@ class Engine:
                 journal.path.unlink()
         return self.run(inputs)
 
+    # ---- the same, awaited ------------------------------------------------------------------------------
+
+    async def arun(self, inputs: Mapping[str, Any] | None = None) -> Result:
+        """``run``, for a caller that is a coroutine: the run goes on in a thread and the event loop stays
+        free. Cancelling the awaiting task asks the run to stop."""
+        return await self._awaited(self.run, inputs)
+
+    async def aresume(self, *, change: bool = False) -> Result:
+        """``resume``, awaited."""
+        return await self._awaited(lambda: self.resume(change=change))
+
+    async def ago(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
+        """``go``, awaited."""
+        return await self._awaited(lambda: self.go(inputs, fresh=fresh))
+
+    async def _awaited(self, do: Callable, *args) -> Result:
+        import asyncio
+        try:
+            return await asyncio.to_thread(do, *args)
+        except asyncio.CancelledError:
+            self.stop()
+            raise
+
     def _inner(self, ctx: "_Context", graph: Graph, protocols: Protocols, workers: int, firm: bool = False) -> "Engine":
         """An engine for a graph that runs inside one activation of one of this engine's nodes."""
         state = ctx._state
