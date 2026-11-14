@@ -61,6 +61,20 @@ Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)
 builder.connect("draw.chart", "report.chart", "file")
 ```
 
+**A workspace laid out by node.** A run's files live in one workspace. Each node has its own directory, `shared/` is for everyone, and a block is one more layer (`review/writer/`, `review/shared/`). A node reads everything and writes to its own directory and the shared ones of its layers, unless its description says otherwise (`"reads"`, `"writes"`). The workspace records which node wrote each file in which activation: `interlacing files --dir RUN`.
+
+**A worker that works freely in its area.** `WorkerNode` is an agent with tools for the files of its area (list, read, write, edit, delete, move) and a tool that runs a command in its own directory. Its inputs and outputs are an agent's, checked the same way.
+
+```python
+worker = WorkerNode("solver", model, Workspace("work").area("solver"), outputs=[Port("report", FileOf(".pdf"))])
+```
+
+**A tool pool.** A directory of tool files: a Python file whose function's docstring and parameters say what the tool is, or a JSON file that names any program. An agent is given tools by path (`"tools": ["plot.py", "charts"]`). Each use runs in a process of its own, in the node's directory, and is ended when it overruns. Which directory is the pool is set by whoever starts the run (`--tools DIRECTORY`), not by the graph.
+
+```python
+agent = AgentNode("analyst", model, tools=ToolPool("tools").tools("charts"))
+```
+
 **Designs used as units.** A graph that has been worked out becomes a block, used many times and joined with others.
 
 ```python
@@ -163,14 +177,14 @@ The kernel carries information and looks after the run. How a model thinks, how 
 |---|---|---|
 | Abstractions | `interlacing.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
 | Engine | `interlacing.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `WorkerNode`, `Desk`; `Workspace`, `ToolPool`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
 | Blocks | `interlacing.blocks` | `Block`, `seq`, `par` |
 | Graphs as data | `interlacing.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
 | Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve` | `Run`; the command `interlacing`; the MCP server |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Ten examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 
@@ -188,7 +202,7 @@ The tests run on Linux, macOS and Windows, with scripted models, a stand-in mode
 - Delivery is in-process only. `Transport` is the place for carrying envelopes between processes or machines, and nothing is there yet.
 - Both model interfaces are tested against a stand-in service: tools, pictures, thinking, streams, and waiting when the service is busy. Against a real service they have been tried once, with very small requests; thinking and picture input have not. Device nodes have only met stand-ins.
 - A node that overruns in the engine's own process is abandoned, not killed. `IsolatedNode` and `ProcessNode` are killed.
-- `allow` is a list of modules whose functions a graph may name. It is not a sandbox, and neither is `IsolatedNode`: its process has the rights of the one that started it.
+- `allow` is a list of modules whose functions a graph may name. It is not a sandbox, and neither is `IsolatedNode`: its process has the rights of the one that started it. The same holds for a worker's commands and a pool's tools: the file tools stay in a node's area, a command does not have to.
 - The MCP server speaks over stdio only. It has been run by the reference client in tests, not yet by a desktop application.
 - The awaited interface runs the engine in threads; the engine itself is not written as coroutines.
 

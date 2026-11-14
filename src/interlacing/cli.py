@@ -1,13 +1,17 @@
 """The command line.
 
-    interlacing check  graph.json [--allow MODULE]... [--processes]
-    interlacing run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--workers N]
+    interlacing check  graph.json [--allow MODULE]... [--processes] [--tools DIRECTORY]
+    interlacing run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--tools DIRECTORY] [--workers N]
                          [--time-limit SECONDS] [--workspace DIRECTORY]
     interlacing resume --dir RUN
     interlacing answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
     interlacing status --dir RUN
+    interlacing files  --dir RUN
     interlacing serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
-                         [--files DIRECTORY]
+                         [--files DIRECTORY] [--tools DIRECTORY]
+
+``--tools`` names a tool pool: a directory of tool files the graph's agents may be given by path. ``files``
+lists what is in a run's workspace and which node wrote each file.
 
 A graph file may take text (a prompt, say) from files in its own directory: ``{"file": "prompts/lead.md"}``.
 
@@ -80,6 +84,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--allow", action="append", default=[], metavar="MODULE",
                              help="a module the graph's functions may come from (repeatable)")
         command.add_argument("--processes", action="store_true", help="let the graph start external programs")
+        command.add_argument("--tools", metavar="DIRECTORY", help="a tool pool: tool files the graph's agents may use")
 
     check = commands.add_parser("check", help="build the graph and describe it, without running anything")
     check.add_argument("graph")
@@ -101,6 +106,7 @@ def _parser() -> argparse.ArgumentParser:
     resume.add_argument("--dir", required=True)
     resume.add_argument("--budget", **budget)
     commands.add_parser("status", help="say where a run stands").add_argument("--dir", required=True)
+    commands.add_parser("files", help="list the files in a run's workspace and who wrote them").add_argument("--dir", required=True)
     answer = commands.add_parser("answer", help="answer a question a person in the graph was asked")
     answer.add_argument("--dir", required=True)
     answer.add_argument("question", nargs="?", help="the question's id; not needed when only one is open")
@@ -122,22 +128,24 @@ def main(argv=None, out=None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "check":
-            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph)), 0
+            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph), tools=args.tools), 0
         elif args.command == "serve":
             from .serve import Server
             Server(args.runs, allow=args.allow, processes=args.processes, workers=args.workers, time_limit=args.time_limit,
-                   files=args.files, budget=dict(args.budget)).serve()
+                   files=args.files, budget=dict(args.budget), tools=args.tools).serve()
             return 0
         else:
             if args.command == "run":
                 inputs = _inputs(args)
                 state = Run.create(args.dir, _description(args.graph), allow=args.allow, processes=args.processes,
                                    workers=args.workers, files=_beside(args.graph), time_limit=args.time_limit,
-                                   workspace=args.workspace, budget=dict(args.budget)).start(inputs)
+                                   workspace=args.workspace, budget=dict(args.budget), tools=args.tools).start(inputs)
             elif args.command == "resume":
                 state = Run(args.dir).resume(budget=dict(args.budget))
             elif args.command == "answer":
                 state = Run(args.dir).answer(json.loads(args.json) if args.json is not None else args.text, args.question)
+            elif args.command == "files":
+                state = {"files": Run(args.dir).files()}
             else:
                 state = Run(args.dir).status()
             code = EXIT.get(state["status"], 1) if args.command in ("run", "resume") else 0

@@ -130,6 +130,60 @@ class ProcessNode(Node):
         return None
 
 
+def answer_of(command: Sequence[str] | str, data: bytes, ctx, *, timeout: float | None = None, cwd=None,
+              env: Mapping[str, str] | None = None, what: str = "", shell: bool = False, together: bool = False):
+    """Run a program to its end, giving it ``data`` to read, and return ``(exit code, what it wrote, the end
+    of what it wrote to standard error, whether it overran)``. It is killed when it runs longer than
+    ``timeout`` seconds or the run is being stopped. ``together`` puts standard error in with the output.
+    With ``shell`` the command is one line for the system's shell, and what that starts is ended with it."""
+    group = shell and os.name == "posix"
+
+    def end(process) -> None:
+        try:
+            if group:
+                os.killpg(process.pid, 9)
+            elif shell and os.name == "nt":         # the shell and everything it started
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
+            else:
+                process.kill()
+        except OSError:
+            pass
+
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT if together else errors, cwd=cwd, env=env, shell=shell,
+                                       start_new_session=group)
+        except OSError as exc:
+            raise NodeError(f"cannot start {what or command}: {exc}") from None
+        expired = threading.Event()
+
+        def overrun():
+            expired.set()
+            end(process)
+        timer = threading.Timer(timeout, overrun) if timeout else None
+        if timer:
+            timer.start()
+        given: bytes | None = data
+        try:
+            while True:
+                try:
+                    out, _ = process.communicate(given, timeout=0.05)
+                    break
+                except subprocess.TimeoutExpired:
+                    given = None            # already handed over; asking again loses nothing
+                    if ctx.stopping():
+                        end(process)
+        finally:
+            if timer:
+                timer.cancel()
+            if process.poll() is None:
+                end(process)
+            process.wait()
+        errors.seek(0)
+        return process.returncode, out, errors.read()[-2000:].decode("utf-8", "replace").strip(), expired.is_set()
+
+
 # What the other process runs: it finds the function by name, calls it with the inputs it reads, and writes
 # what the function returned, or why it failed. Whatever the function prints goes to standard error.
 _BOOT = """
@@ -215,49 +269,20 @@ class IsolatedNode(Node):
             raise NodeError(f"what goes to another process must be plain data: {exc}") from None
         env = {**(self.env if self.env is not None else os.environ),
                "PYTHONPATH": os.pathsep.join(path for path in sys.path if path), "PYTHONIOENCODING": "utf-8"}
-        with tempfile.TemporaryFile() as errors:
-            try:
-                process = subprocess.Popen([sys.executable, "-c", _BOOT, self.function], stdin=subprocess.PIPE,
-                                           stdout=subprocess.PIPE, stderr=errors, cwd=self.cwd or self.workspace, env=env)
-            except OSError as exc:
-                raise NodeError(f"cannot start a process for {self.function}: {exc}") from None
-            expired = threading.Event()
-
-            def overrun():
-                expired.set()
-                process.kill()
-            timer = threading.Timer(self.timeout, overrun) if self.timeout else None
-            if timer:
-                timer.start()
-            given: bytes | None = data
-            try:
-                while True:
-                    try:
-                        out, _ = process.communicate(given, timeout=0.05)
-                        break
-                    except subprocess.TimeoutExpired:
-                        given = None
-                        if ctx.stopping():
-                            process.kill()
-            finally:
-                if timer:
-                    timer.cancel()
-                if process.poll() is None:
-                    process.kill()
-                process.wait()
-            if expired.is_set():
-                raise NodeError(f"{self.function} ran longer than {self.timeout:g} seconds and was ended")
-            if ctx.stopping():
-                return None
-            try:
-                said = json.loads(out.decode("utf-8"))
-                if not isinstance(said, dict) or not said.keys() & {"value", "error"}:
-                    raise ValueError("not an answer")
-            except ValueError:
-                errors.seek(0)
-                last = errors.read()[-2000:].decode("utf-8", "replace").strip()
-                raise NodeError(f"the process running {self.function} ended with {process.returncode} and no answer"
-                                + (f": {last}" if last else "")) from None
+        code, out, last, expired = answer_of([sys.executable, "-c", _BOOT, self.function], data, ctx,
+                                             timeout=self.timeout, cwd=self.cwd or self.workspace, env=env,
+                                             what=f"a process for {self.function}")
+        if expired:
+            raise NodeError(f"{self.function} ran longer than {self.timeout:g} seconds and was ended")
+        if ctx.stopping():
+            return None
+        try:
+            said = json.loads(out.decode("utf-8"))
+            if not isinstance(said, dict) or not said.keys() & {"value", "error"}:
+                raise ValueError("not an answer")
+        except ValueError:
+            raise NodeError(f"the process running {self.function} ended with {code} and no answer"
+                            + (f": {last}" if last else "")) from None
         if "error" in said:
             raise NodeError(said["error"])
         result = said["value"]

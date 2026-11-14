@@ -6,7 +6,7 @@ from typing import Mapping
 from ..base import ANY, Is, ListOf, Port, Record, Schema
 from ..protocols import FileOf
 from ..nodes import (AgentNode, Branch, Collect, Desk, FunctionNode, GraphNode, HumanNode, IsolatedNode, Pass, ProcessNode, Roster, SinkNode,
-                     SourceNode, Tool, Until)
+                     SourceNode, Until, WorkerNode)
 
 _TYPES = {t.__name__: t for t in (str, int, float, bool, list, dict, bytes, type(None))}
 
@@ -67,17 +67,37 @@ def function(d, catalog, graphs):
                         outputs=ports(d, "outputs", catalog) or (), firing=d.get("firing"), context=d["config"].get("context", False))
 
 
-def agent(d, catalog, graphs):
+def _agent(d, catalog, area) -> dict:
+    """What an agent and a worker are built with alike."""
     c = d["config"]
     outputs = ports(d, "outputs", catalog)
     memory = c.get("memory", True)
-    return AgentNode(d["id"], catalog.model(c.get("model", "")), system=c.get("system", ""),
-                     tools=[Tool(t["name"], t.get("description", ""), t.get("parameters") or {"type": "object", "properties": {}})
-                            for t in c.get("tools", ())],
-                     inputs=ports(d, "inputs", catalog), outputs=[p for p in outputs if not p.call] if outputs is not None else None,
-                     firing=d.get("firing"), memory=catalog.function(memory) if isinstance(memory, str) else memory, json=c.get("json", False),
-                     max_steps=c.get("max_steps", 50), max_tokens=c.get("max_tokens", 4096), files=catalog.workspace,
-                     repairs=c.get("repairs"))
+    return dict(system=c.get("system", ""), tools=catalog.tools_of(c.get("tools"), area),
+                inputs=ports(d, "inputs", catalog), outputs=[p for p in outputs if not p.call] if outputs is not None else None,
+                firing=d.get("firing"), memory=catalog.function(memory) if isinstance(memory, str) else memory, json=c.get("json", False),
+                max_steps=c.get("max_steps", 50), max_tokens=c.get("max_tokens", 4096), files=catalog.workspace,
+                repairs=c.get("repairs"))
+
+
+def agent(d, catalog, graphs):
+    area = catalog.area(d["id"], d["config"])
+    return AgentNode(d["id"], catalog.model(d["config"].get("model", "")), area=area, **_agent(d, catalog, area))
+
+
+def worker(d, catalog, graphs):
+    """An agent that works in the workspace. Its commands start programs, so they need what a ``process``
+    node needs; ``"commands": false`` leaves it the file tools alone."""
+    from .catalog import SpecError
+    c = d["config"]
+    area = catalog.area(d["id"], c)
+    if area is None:
+        raise SpecError(f"{d['id']} works in a workspace, and this catalog has none")
+    commands = c.get("commands", True)
+    if commands and not catalog.processes:
+        raise SpecError(f"{d['id']} runs commands, and this catalog does not allow processes: allow them, or give it "
+                        f"\"commands\": false")
+    return WorkerNode(d["id"], catalog.model(c.get("model", "")), area, commands=commands,
+                      command_timeout=c.get("command_timeout", 120.0), **_agent(d, catalog, area))
 
 
 def process(d, catalog, graphs):
@@ -133,8 +153,8 @@ def graph(d, catalog, graphs):
         if inner not in graphs:
             raise SpecError(f"{d['id']}: the description has no graph {inner[:12]} under \"graphs\"")
         inner = graphs[inner]
-    return GraphNode(d["id"], load({**inner, "graphs": {**graphs, **inner.get("graphs", {})}}, catalog), catalog.protocols,
-                     firing=d.get("firing"))
+    return GraphNode(d["id"], load({**inner, "graphs": {**graphs, **inner.get("graphs", {})}}, catalog.inside(d["id"])),
+                     catalog.protocols, firing=d.get("firing"))
 
 
 def block(d, catalog, graphs):
@@ -161,12 +181,12 @@ def block(d, catalog, graphs):
     workers = c.get("workers", 0)
     if catalog.max_workers is not None and type(workers) is int:
         workers = min(workers, catalog.max_workers)
-    return GraphNode(d["id"], load(inner, catalog), catalog.protocols, workers=workers, firing=d.get("firing"))
+    return GraphNode(d["id"], load(inner, catalog.inside(d["id"])), catalog.protocols, workers=workers, firing=d.get("firing"))
 
 
 BUILT_IN = {
     "block": block,
-    "function": function, "agent": agent, "process": process, "isolated": isolated, "source": source, "sink": sink, "human": human,
+    "function": function, "agent": agent, "worker": worker, "process": process, "isolated": isolated, "source": source, "sink": sink, "human": human,
     "graph": graph,
     "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),
     "pass": lambda d, catalog, graphs: Pass(d["id"], schema=_first_schema(d, "inputs")),
