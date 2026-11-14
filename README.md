@@ -1,6 +1,6 @@
 # interlacing
 
-**English** · [中文](https://github.com/Li2O0577/interlace/blob/main/README.zh-CN.md)
+**English** · [中文](https://github.com/Li2O0577/interlacing/blob/main/README.zh-CN.md)
 
 Join anything into a graph and run it.
 
@@ -129,11 +129,11 @@ Model keys are read from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` 
 
 ## What it is for
 
-Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/interlace/blob/main/docs/CASES.md) (in Chinese). In short:
+Three worked cases are in [docs/CASES.md](https://github.com/Li2O0577/interlacing/blob/main/docs/CASES.md) (in Chinese). In short:
 
 | Case | How it is built |
 |---|---|
-| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/interlace/blob/main/examples/graphs/planner_and_arm.py) |
+| A physical agent: a multimodal model plans gripper poses as points in space, a controller executes, and the next observation decides what follows | `Loop(observe, planning, act)`; the model's measuring tools are nodes on call edges; the action contract is a check on the plan port, so a bad plan goes back to the model with the reason and never reaches the controller; plans and seconds are budgets. Runnable with stand-ins: [examples/graphs/planner_and_arm.py](https://github.com/Li2O0577/interlacing/blob/main/examples/graphs/planner_and_arm.py) |
 | A modelling assistant: a lead, one owner per question, a solver and a critic who argue until the answer is proved, a person who may step in anywhere | each question is a `Block` holding a `Loop(solve, critic)`; "no proof, not done" is a port check; questions run in `seq`; the person is the operator of a `Governed` tree; the run directory survives restarts |
 | A mathematician: a lead sends out explorers in parallel, each hands its work to a proof checker and reports back when it passes | `Pool(lead, explorer, size=10)` with `workers`; each explorer is a `Loop(prove, check)`; three directions given, three explorers exist |
 
@@ -152,7 +152,7 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlace/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlace/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 
