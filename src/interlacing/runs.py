@@ -9,7 +9,8 @@ and continued by a third::
     journal.jsonl   what has happened so far
     questions/      one file per question that a person in the graph has been asked
     answers/        one file per answer given
-    files/          the working directory of the graph's nodes: what the ``file`` protocol's paths are relative to
+    files/          the workspace of the graph's nodes: what the ``file`` protocol's paths are relative to, with
+                    a directory for each node that works there (``Run.files()`` says who wrote what)
     state.json      where the run stands: done, waiting, stopped or failed (``running`` is told from the lock)
     lock            there while a process is running the graph, and names that process
 
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .engine import Engine, Journal, RunError
+from .nodes import Workspace
 from .models import ChatResult, FakeProvider, ProviderError, build
 from .spec import Catalog, SpecError, dump, load
 
@@ -81,9 +83,9 @@ class _Unbuilt:
         raise RuntimeError("a graph that is only being checked does not run")
 
 
-def check(description: Mapping, *, allow=(), processes: bool = False, files=None) -> dict:
+def check(description: Mapping, *, allow=(), processes: bool = False, files=None, tools=None) -> dict:
     """Build the graph a description stands for, without running anything, and say what it is."""
-    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt, files=files, workspace="."))
+    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt, files=files, workspace=".", tools=tools))
     return {"digest": graph.digest, "nodes": {node.id: type(node).kind for node in graph.nodes},
             "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
 
@@ -189,14 +191,15 @@ class Run:
     def create(cls, directory, description: Mapping, *, allow=(), processes: bool = False, workers: int = 0,
                models: Callable[[str], Any] | None = models_from_environment, files=None,
                time_limit: float | None = None, observe: Callable[[Mapping], None] | None = None,
-               workspace=None, budget: Mapping[str, float] | None = None, strict: bool = False) -> "Run":
+               workspace=None, budget: Mapping[str, float] | None = None, strict: bool = False, tools=None) -> "Run":
         """Check the description and set up a directory for one run of it. Nothing runs yet. ``files`` is
         the directory the description may take text from; the text is kept in the run, the files are not
         needed again. ``time_limit`` is the longest one activation may take, in seconds. ``workspace`` is the
         directory the nodes work in and send file paths relative to; it is ``files`` in the run's directory
         unless another is given. ``budget`` is the most the run may use of what its nodes report using,
         by name: ``{"tokens": 200000}``. ``strict=True`` is for a description that is not trusted: no node
-        in it may give itself more time than ``time_limit``, and no block more threads than ``workers``."""
+        in it may give itself more time than ``time_limit``, and no block more threads than ``workers``.
+        ``tools`` is a tool pool: the directory the graph's agents may take tool files from."""
         run = cls(directory, models=models, observe=observe)
         if (run.directory / "graph.json").exists():
             raise SpecError(f"{run.directory} already holds a run")
@@ -204,7 +207,8 @@ class Run:
             raise SpecError("the time limit must be a positive number of seconds")
         options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers), "time_limit": time_limit,
                    "budget": _budget(budget), "strict": bool(strict),
-                   "workspace": str(Path(workspace).resolve()) if workspace is not None else None}
+                   "workspace": str(Path(workspace).resolve()) if workspace is not None else None,
+                   "tools": str(Path(tools).resolve()) if tools is not None else None}
         run.workspace(options).mkdir(parents=True, exist_ok=True)
         graph = load(description, run._catalog(options, files))
         _write(run.directory / "graph.json", dump(graph))
@@ -217,9 +221,16 @@ class Run:
         options = options if options is not None else _read(self.directory / "options.json", {})
         return Path(options["workspace"]) if options.get("workspace") else self.directory / "files"
 
+    def files(self) -> list[dict]:
+        """Every file in the run's workspace, with the node that wrote it and in which activation, where
+        it was written through a node's area."""
+        self._held()
+        return Workspace(self.workspace()).files()
+
     def _catalog(self, options: Mapping, files=None) -> Catalog:
         return Catalog(allow=options["allow"], processes=options["processes"], models=self.models, ask=self._ask, files=files,
-                       workspace=self.workspace(options), max_workers=options["workers"] if options.get("strict") else None)
+                       workspace=self.workspace(options), max_workers=options["workers"] if options.get("strict") else None,
+                       tools=options.get("tools"))
 
     def _engine(self) -> Engine:
         description = _read(self.directory / "graph.json")

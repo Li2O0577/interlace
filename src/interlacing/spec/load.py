@@ -187,7 +187,7 @@ def _method(d: Mapping, catalog: Catalog, graphs: Mapping):
 
         def make(id: str) -> Node:
             if "method" in member:
-                return GraphNode(id, _method(member, catalog, graphs), catalog.protocols)
+                return GraphNode(id, _method(member, catalog.inside(id), graphs), catalog.protocols)
             return _node({**member, "id": id}, catalog, graphs)
         return Pool(_node(d["root"], catalog, graphs), make, size=d["size"], max_rounds=d["max_rounds"],
                     places=d.get("places", "member"), **options)

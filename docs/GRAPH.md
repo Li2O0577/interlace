@@ -51,6 +51,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`interlacing.models` 里有现成的。`memory` 可以是一个函数，见下 |
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `IsolatedNode` | 一个 Python 函数，在单独的进程里运行：超过运行的时间上限、自己的 `timeout`，或者运行被停止时，进程被杀掉；它崩溃只让这个节点失败。函数必须是可导入模块顶层的函数（或它的带点名字），输入和返回值以 JSON 在两个进程之间传递，拿不到 `ctx`。它不是沙箱。写在 JSON 图里是 `"kind": "isolated"`，需要目录允许启动进程 |
+| `WorkerNode` | 在给定工作区里自由操作的 agent：自带文件工具和运行命令的工具，输入输出照旧。见下面“工作区、worker 和工具池”。写在 JSON 图里是 `"kind": "worker"` |
 | `SourceNode`、`SinkNode` | 外部读数的来源、结果的去处（相机、机械臂这类设备接在这里） |
 | `HumanNode` | 人。请求交给 `ask(request)`，它返回时就是人的回答 |
 | `GraphNode` | 一整张图当成一个节点，方法由此嵌套；块的每一次使用就是它 |
@@ -134,6 +135,31 @@ builder.connect("draw.chart", "report.chart", "file")
 出了问题怎么办，完全按上面的端口规则走：默认节点失败、运行停下可续跑；`invalid="warn"` 时路径照样送达，但带着 `"unchecked": true`，接收方知道它没被核实；`repairs` 让节点有机会把文件补上。内容连路径都不是的时候，警告也救不了，节点失败。
 
 `AgentNode(files=工作目录)` 会把以文件形式到达的图片读出来给模型看。
+
+### 工作区、worker 和工具池
+
+`Workspace(目录)` 是一次运行的全部文件，路径都相对于它的顶层写，和 `file` 协议一样。布局按节点分：
+
+```
+solver/            节点 solver 的目录
+shared/            所有节点都能写
+review/            块 review：多一层
+    writer/        块里的 writer
+    shared/        这个块的成员共用
+```
+
+`workspace.area(节点, layer=[块...], reads=None, writes=None)` 是一个节点的那一份（`Area`）：默认能读全部，能写自己的目录和所在各层的 `shared/`；给了 `reads`、`writes`（相对顶层的路径列表）就按给的来，能写的地方一定能读。从图文件加载时，块里的节点自动多一层，`"reads"`、`"writes"` 写在节点上。通过区域写下的文件都记在 `.interlacing/written.jsonl`（哪个节点、第几次激活），`workspace.files()`、`Run.files()` 和 `interlacing files --dir RUN` 列出每个文件和它的来源。
+
+普通 agent 有了区域（图文件里自动给），它从装文件的端口发出的路径必须是它能读的，否则这条路径带着原因退回给模型改。
+
+`WorkerNode(id, model, 区域或目录, commands=True, command_timeout=120, ...)` 是一个 agent，自带 `list_files`、`read_file`、`write_file`、`edit_file`、`delete_file`、`move_file`，`commands=True` 时还有 `run_command`（一行 shell 命令，在自己目录里运行，超时连同它启动的进程一起杀掉）。它被告知自己在哪里、能读写哪里。其余都和 agent 一样：端口、检查、重做、步数、预算、时间上限，也能再接图里的工具和工具池的工具。命令改动的文件也记在它名下。图文件里是 `"kind": "worker"`；带命令时需要目录允许启动进程，`"commands": false` 则只有文件工具。文件工具出不了区域，命令可以：这不是沙箱。
+
+`ToolPool(目录, timeout=120)` 是工具池。一个工具是一个文件：
+
+- `plot.py`：和文件同名的函数（或叫 `run` 的函数，或唯一一个不以 `_` 开头的函数）。说明文字是给模型看的说明，参数和标注、默认值成为工具的参数。取工具时只读这个文件，不运行它。
+- `fetch.json`：`{"description": ..., "parameters": {JSON schema}, "command": ["./fetch.sh"]}`，任意程序，参数以 JSON 从标准输入给它，它写出的内容就是答复（能按 JSON 读就按 JSON 读）。相对路径的程序在池里找。
+
+`pool.tool("plot.py")` 是一个工具，`pool.tools("charts")` 是一个目录里的全部工具（不以 `_`、`.` 开头的 `.py`、`.json`）。这样的工具是节点自己的工具，不占端口也不需要边。每次使用在单独的进程里、在节点自己的目录里运行，环境变量 `INTERLACING_WORKSPACE` 是工作区顶层；超时被杀掉，失败时把原因告诉模型。图文件里 agent 和 worker 的 `"tools"` 可以写路径（`["plot.py", "charts"]`），工具池由 `Catalog(tools=目录)`、命令行和 MCP 服务的 `--tools 目录` 给出，图文件自己指定不了。
 
 ## 图
 
@@ -352,8 +378,9 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `resume --dir RUN` | 从日志接着跑：等人回答之后、失败修好之后、被中断之后都用它；`--budget 名=数` 换一个更大的预算再继续 |
 | `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
+| `files --dir RUN` | 列出工作区里的文件，以及每个文件是哪个节点在第几次激活里写的 |
 
-`check` 和 `run` 用 `--allow 模块`（可以重复）和 `--processes` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
+`check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes` 和 `--tools 工具池目录` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
 
 `run` 和 `resume` 的退出码说明运行停在哪里：0 完成，1 失败或被拒绝，3 在等人回答，4 因为轮数或停止条件而停下。
 
@@ -418,7 +445,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有九个可以直接运行的示例：块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十个可以直接运行的示例：在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 

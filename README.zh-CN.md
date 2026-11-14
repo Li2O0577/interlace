@@ -61,6 +61,20 @@ Port("chart", FileOf(".png", max_size=5_000_000), repairs=2)
 builder.connect("draw.chart", "report.chart", "file")
 ```
 
+**按节点分层的工作区。** 一次运行的文件都在一个工作区里。每个节点有自己的目录，`shared/` 是公共区，块多一层（`review/writer/`、`review/shared/`）。节点默认能读全部、能写自己的目录和所在各层的 `shared/`，描述里可以用 `"reads"`、`"writes"` 另行规定。工作区记下每个文件是哪个节点在哪次激活里写的：`interlacing files --dir RUN`。
+
+**在自己的区域里自由干活的节点。** `WorkerNode` 是一个 agent，自带操作区域内文件的工具（列目录、读、写、改、删、移动）和一个在自己目录里运行命令的工具。输入输出和普通 agent 一样，也一样经过检查。
+
+```python
+worker = WorkerNode("solver", model, Workspace("work").area("solver"), outputs=[Port("report", FileOf(".pdf"))])
+```
+
+**工具池。** 一个放工具文件的目录：Python 文件里一个函数，它的说明文字和参数就是工具的说明和参数；或者一个 JSON 文件，指向任意程序。agent 按路径拿工具（`"tools": ["plot.py", "charts"]`）。每次使用都在单独的进程里、在节点自己的目录里运行，超时被杀掉。哪个目录是工具池由启动运行的人决定（`--tools 目录`），图自己定不了。
+
+```python
+agent = AgentNode("analyst", model, tools=ToolPool("tools").tools("charts"))
+```
+
 **把设计当作单元使用。** 一张已经想清楚的图成为一个块，可以多次使用，也可以和别的块拼接。
 
 ```python
@@ -163,14 +177,14 @@ interlacing resume --dir /tmp/run                                               
 |---|---|---|
 | 抽象 | `interlacing.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
 | 引擎 | `interlacing.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`Desk`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`WorkerNode`、`Desk`；`Workspace`、`ToolPool`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `interlacing.blocks` | `Block`、`seq`、`par` |
 | 写成数据的图 | `interlacing.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
 | 对外 | `interlacing.runs`、`interlacing.cli`、`interlacing.serve` | `Run`；命令 `interlacing`；MCP 服务 |
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。九个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 
@@ -188,7 +202,7 @@ python scripts/bench_engine.py       # 引擎给每个信封增加的开销（�
 - 投递只在进程内。`Transport` 是在进程或机器之间传递信封的位置，目前那里什么都没有。
 - 两种模型接口都用替身服务测过：工具、图片、思考、流式，以及服务繁忙时的等待重试。在真实服务上只用很小的请求试过一次，思考和图片输入没有在真实服务上试过。设备节点只接触过替身。
 - 在引擎自己进程里超时的节点是被放弃，而不是被杀掉。`IsolatedNode` 和 `ProcessNode` 会被杀掉。
-- `allow` 是一份模块清单，图可以点名其中的函数。它不是沙箱，`IsolatedNode` 也不是：它的进程拥有启动它的进程的全部权限。
+- `allow` 是一份模块清单，图可以点名其中的函数。它不是沙箱，`IsolatedNode` 也不是：它的进程拥有启动它的进程的全部权限。worker 的命令和工具池里的工具也一样：文件工具出不了节点的区域，命令可以。
 - MCP 服务只走 stdio。测试里由参考客户端跑通过，还没有接过桌面应用。
 - 可以 await 的接口是让引擎在线程里运行；引擎本身不是用协程写的。
 

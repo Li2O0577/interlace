@@ -4,6 +4,19 @@ Versions before 1.0 may change any interface; each change is listed here. From 1
 by `interlacing` and the formats of graph files, run directories and journals change incompatibly only
 with a new major version.
 
+## 0.13.0
+
+- `Workspace` and `Area`: a run's files laid out by node (`<node>/`, `shared/`), one more layer for each block;
+  each node reads and writes within its bounds (`"reads"`, `"writes"` in a graph file); who wrote each file is
+  recorded. `Run.files()` and `interlacing files --dir RUN`.
+- `WorkerNode` (`"kind": "worker"`): an agent with file tools for its area and a tool that runs commands in its
+  own directory; standard inputs and outputs.
+- `ToolPool`: a directory of tool files (a Python function, or a JSON file naming a program). Agents take tools
+  by path; each use runs in a process of its own. `Catalog(tools=)` and `--tools DIRECTORY` on the command line
+  and the server.
+- `Tool(run=...)`: a tool the node answers itself, with no port and no edge.
+- An agent with an area may only send paths it can read; a path outside goes back to the model with the reason.
+
 ## 0.12.0
 
 - `await engine.arun()`, `aresume()` and `ago()`; cancelling the wait stops the run. A `FunctionNode`'s function

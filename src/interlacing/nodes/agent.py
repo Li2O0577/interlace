@@ -23,14 +23,24 @@ ANY_OUTPUT = None   # the schema of a json output: anything
 @dataclass(frozen=True)
 class Tool:
     """A tool the model may use. ``name`` is also the name of the call port the request leaves through;
-    ``parameters`` is a JSON schema of the arguments, which arrive at the other end as one mapping."""
+    ``parameters`` is a JSON schema of the arguments, which arrive at the other end as one mapping.
+
+    A tool with ``run`` is the node's own: it has no port and no edge, the node answers it itself by calling
+    ``run(arguments, ctx)``. That is what a tool taken from a tool pool is (``file`` is where in the pool),
+    and what the file tools of a working area are."""
 
     name: str
     description: str = ""
     parameters: Mapping = field(default_factory=lambda: dict(_NO_PARAMETERS))
+    run: Callable[[Mapping, Any], Any] | None = field(default=None, compare=False)
+    file: str = ""
 
     def spec(self) -> dict:
         return {"name": self.name, "description": self.description, "parameters": dict(self.parameters)}
+
+    def describe(self) -> dict:
+        """The tool as a graph's description records it."""
+        return {**self.spec(), **({"file": self.file} if self.file else {"own": True} if self.run is not None else {})}
 
 
 def is_image(value: Any) -> bool:
@@ -77,6 +87,9 @@ class AgentNode(Node):
     repairs left (an agent's ports have two unless they say otherwise), the model is told what is wrong, in
     the port's own words, and answers again; it still has its tools, so it can write the file that was
     missing. The same goes for an answer that should have been JSON and is not.
+
+    With ``area`` (an ``Area`` of a ``Workspace``), a file the node sends out of a port that carries files
+    must be one the area lets it read; one that is not goes back to the model with the reason.
     """
 
     kind = "agent"
@@ -85,21 +98,25 @@ class AgentNode(Node):
     def __init__(self, id: str, model: Any, *, system: str = "", tools: Iterable[Tool] = (),
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None, memory: bool | Callable[[list], list] = True, json: bool = False, max_steps: int = 50,
-                 max_tokens: int = 4096, files=None, repairs: int | None = None):
+                 max_tokens: int = 4096, files=None, repairs: int | None = None, area=None):
         if not callable(getattr(model, "chat", None)):
             raise NodeError(f"{id}: a model needs a chat method")
         if type(max_steps) is not int or max_steps < 1:
             raise NodeError(f"{id}: max_steps must be at least 1")
         tools = tuple(tools)
+        if len({tool.name for tool in tools}) != len(tools):
+            raise NodeError(f"{id}: two tools have the same name")
         sends = list(outputs) if outputs is not None else [Port("out", ANY_OUTPUT if json else str)]
         if any(port.call for port in sends):
             raise NodeError(f"{id}: declare what the model may call as tools, not as outputs")
         super().__init__(id, inputs=list(inputs) if inputs is not None else [Port("task")],
-                         outputs=[*sends, *(Port(tool.name, call=True) for tool in tools)], firing=firing)
+                         outputs=[*sends, *(Port(tool.name, call=True) for tool in tools if tool.run is None)], firing=firing)
         self.model, self.system, self.tools = model, system, tools
         self.keep = memory if callable(memory) else None       # what is done to the conversation before each request
         self.memory, self.json, self.max_steps, self.max_tokens = bool(memory), bool(json), max_steps, max_tokens
-        self.files = files
+        self.files, self.area = files, area
+        self._own = {tool.name: tool for tool in tools if tool.run is not None}
+        self._paths = {port.name for port in sends if isinstance(port.schema.describe(), Mapping) and "file" in port.schema.describe()}
         if repairs is not None:
             if type(repairs) is not int or repairs < 0:
                 raise NodeError(f"{id}: repairs must be a whole number, 0 or more")
@@ -118,8 +135,9 @@ class AgentNode(Node):
 
     def config(self) -> Mapping:
         return {"model": str(getattr(self.model, "name", "") or getattr(self.model, "model", "")), "system": self.system,
-                "tools": [tool.spec() for tool in self.tools], "memory": named(self.keep) if self.keep is not None else self.memory, "json": self.json,
-                "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs}
+                "tools": [tool.describe() if tool.run is not None else tool.spec() for tool in self.tools], "memory": named(self.keep) if self.keep is not None else self.memory, "json": self.json,
+                "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs,
+                **(self.area.given if self.area is not None else {})}
 
     def snapshot(self) -> Mapping:
         return {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
@@ -179,7 +197,7 @@ class AgentNode(Node):
                             raise
                         unparsed -= 1
                         raise Invalid(self._sends[0], str(exc), again=True) from None
-                    ctx.emit(self._sends[0], answer)
+                    self._send(ctx, self._sends[0], answer)
                     self.messages = messages if self.memory else []
                     return None
                 except Invalid as exc:
@@ -223,14 +241,23 @@ class AgentNode(Node):
         except ValueError as exc:
             raise NodeError(f"the model's answer is not JSON: {exc}") from None
 
+    def _send(self, ctx, port: str, payload: Any) -> None:
+        if self.area is not None and port in self._paths:
+            problem = self.area.sends(payload)
+            if problem:
+                raise Invalid(port, problem, again=True)
+        ctx.emit(port, payload)
+
     def _use(self, ctx, name: str, args: Mapping) -> str:
         """Answer one tool call; a failure becomes the answer, for the model to read."""
         try:
             if self._choose and name.startswith("send_") and name[5:] in self._sends:
                 if "content" not in args:
                     return "error: content is missing"
-                ctx.emit(name[5:], args["content"])
+                self._send(ctx, name[5:], args["content"])
                 return "sent"
+            if name in self._own:
+                return _text(self._own[name].run(dict(args), ctx))      # type: ignore[misc]
             if name not in self.outputs or not self.outputs[name].call:
                 return f"error: there is no tool {name}"
             return _text(ctx.call(name, dict(args)))
