@@ -94,7 +94,23 @@ engine = Engine(graph, DEFAULT, workers=4,
                 observe=print)                                 # every event, as it happens
 ```
 
-A node that must not do something twice outside the graph uses `ctx.key`, which stays the same when an interrupted activation runs again.
+A node that must not do something twice outside the graph wraps it in `ctx.once`: the result is kept in the journal, and when the activation runs again it is returned without being done again.
+
+```python
+receipt = ctx.once("charge", lambda: bank.charge(order, key=ctx.key))   # ctx.key names this activation, the same on every attempt
+```
+
+**Awaited, where the caller is a coroutine.** The run goes on in threads and the event loop stays free; cancelling the wait stops the run. A node's function may itself be `async def`.
+
+```python
+result = await Engine(graph, DEFAULT).arun({"in": 21})          # also aresume() and ago()
+```
+
+**A function that can be ended.** A thread cannot be stopped from outside, so a function that overruns in the engine's own process is abandoned. `IsolatedNode` runs a function in a process of its own and kills it when it overruns or the run stops; a crash in it fails that node and nothing else.
+
+```python
+solve = IsolatedNode("solve", "mypkg.solver.solve", inputs=[Port("problem")], outputs=[Port("answer")], timeout=300)
+```
 
 **Graphs written as data.** A graph file holds the structure and whatever differs from the defaults; a prompt is a file that is referred to.
 
@@ -125,6 +141,8 @@ A run is a directory. A person in the graph who has not answered yet does not ke
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
+Tool calls are answered side by side. `start` and `resume` take `wait: false` to return at once; the run is then asked about with `status` and ended early with `stop`.
+
 Model keys are read from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and their `_BASE_URL`), and are never written to a graph file, a run directory or a journal.
 
 ## What it is for
@@ -145,7 +163,7 @@ The kernel carries information and looks after the run. How a model thinks, how 
 |---|---|---|
 | Abstractions | `interlacing.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
 | Engine | `interlacing.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
 | Blocks | `interlacing.blocks` | `Block`, `seq`, `par` |
 | Graphs as data | `interlacing.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
 | Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve` | `Run`; the command `interlacing`; the MCP server |
@@ -162,17 +180,17 @@ python -m pytest -q tests
 python scripts/bench_engine.py       # what the engine adds per envelope (about 11 microseconds)
 ```
 
-The tests run on Linux, macOS and Windows, with scripted models and stand-in devices. They include runs broken at random places, with the journal cut short as a dying process leaves it, which must end as unbroken runs do. The package passes `mypy`.
+The tests run on Linux, macOS and Windows, with scripted models, a stand-in model service and stand-in devices. They include runs broken at random places, with the journal cut short as a dying process leaves it, which must end as unbroken runs do, and a run through the server by the reference MCP client (the `mcp` package, where it is installed). The package passes `mypy`.
 
 ## Limits
 
-- Taking a run up again is at-least-once: an interrupted node runs again, and what it did outside the graph is done again unless the node uses `ctx.key` to prevent it.
+- Taking a run up again is at-least-once: an interrupted node runs again. `ctx.once` keeps what was done outside the graph from being done again, except in the moment between the deed and its record; for that, give the outside service `ctx.key`.
 - Delivery is in-process only. `Transport` is the place for carrying envelopes between processes or machines, and nothing is there yet.
-- Both model interfaces have been tried once, with very small requests, against one compatible service. Thinking output, picture input and retries on rate limits have not been tried against a real service. Device nodes have only met stand-ins.
-- A node that overruns its time is abandoned, not killed: a thread cannot be stopped from outside. A program started by `ProcessNode` is killed.
-- `allow` is a list of modules whose functions a graph may name. It is not a sandbox.
-- The MCP server speaks over stdio only, handles one call at a time, and has not been tried with a real client.
-- There is no asynchronous interface; the engine uses threads.
+- Both model interfaces are tested against a stand-in service: tools, pictures, thinking, streams, and waiting when the service is busy. Against a real service they have been tried once, with very small requests; thinking and picture input have not. Device nodes have only met stand-ins.
+- A node that overruns in the engine's own process is abandoned, not killed. `IsolatedNode` and `ProcessNode` are killed.
+- `allow` is a list of modules whose functions a graph may name. It is not a sandbox, and neither is `IsolatedNode`: its process has the rights of the one that started it.
+- The MCP server speaks over stdio only. It has been run by the reference client in tests, not yet by a desktop application.
+- The awaited interface runs the engine in threads; the engine itself is not written as coroutines.
 
 ## License
 
