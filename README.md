@@ -1,4 +1,4 @@
-# interlace
+# inter1ace
 
 **English** · [中文](https://github.com/Li2O0577/interlace/blob/main/README.zh-CN.md)
 
@@ -13,7 +13,7 @@ The engine runs the graph and looks after the run: outputs are checked, usage is
 ## Install
 
 ```sh
-pip install interlace
+pip install inter1ace       # the fifth character is the digit 1
 pip install -e .            # or from a checkout
 ```
 
@@ -22,7 +22,7 @@ Python 3.11 or later, on Linux, macOS and Windows.
 ## A first graph
 
 ```python
-from interlace import DEFAULT, Chain, Engine, FunctionNode, Port
+from inter1ace import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
 show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=[Port("y", str)])
@@ -36,7 +36,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 **A model with tools.** A tool is a call edge to an ordinary node, so a dictionary, a program and a robot arm are all answered the same way.
 
 ```python
-from interlace import AgentNode, GraphBuilder, SinkNode, Tool
+from inter1ace import AgentNode, GraphBuilder, SinkNode, Tool
 
 agent = AgentNode("agent", model, system="...", tools=[Tool("lookup", "Look a word up"), Tool("move", "Move the arm")])
 graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers=True))
@@ -45,7 +45,7 @@ graph = (GraphBuilder().add(agent, dictionary, SinkNode("arm", arm.move, answers
          .input("in", "agent.task").output("out", "agent.out").compile(DEFAULT))
 ```
 
-`model` is any object with `chat(system, messages, tools, max_tokens)`. `interlace.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
+`model` is any object with `chat(system, messages, tools, max_tokens)`. `inter1ace.models` has an Anthropic interface, an OpenAI-compatible interface, and `FakeProvider` for tests.
 
 **Outputs that are checked.** A port says what may leave through it and what happens when something else does: the node fails, the payload goes on with a warning, or the node is told what is wrong and may send again.
 
@@ -110,10 +110,10 @@ A node that must not do something twice outside the graph uses `ctx.key`, which 
 
 ```sh
 cd examples/data && export PYTHONPATH=.
-interlace check  release.json --allow steps
-interlace run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
-interlace answer --dir /tmp/run --json '{"approved": true}'
-interlace resume --dir /tmp/run                                                   # done, exit code 0
+inter1ace check  release.json --allow steps
+inter1ace run    release.json --dir /tmp/run --allow steps --input topic=tides    # waiting for a person, exit code 3
+inter1ace answer --dir /tmp/run --json '{"approved": true}'
+inter1ace resume --dir /tmp/run                                                   # done, exit code 0
 ```
 
 A run is a directory. A person in the graph who has not answered yet does not keep a process waiting: the command exits, and the run goes on once the answer has been given. One process at a time runs a directory.
@@ -121,7 +121,7 @@ A run is a directory. A person in the graph who has not answered yet does not ke
 **As an MCP server.** The same operations can be offered to a model in another application. What its graphs may reach, how much they may use and how long a node may take are set on the command line by whoever starts the server, and the client cannot change them.
 
 ```json
-{"mcpServers": {"interlace": {"command": "interlace",
+{"mcpServers": {"inter1ace": {"command": "inter1ace",
   "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg", "--budget", "tokens=500000"]}}}
 ```
 
@@ -143,12 +143,12 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 | Layer | Package | Main names |
 |---|---|---|
-| Abstractions | `interlace.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
-| Engine | `interlace.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
-| Blocks | `interlace.blocks` | `Block`, `seq`, `par` |
-| Graphs as data | `interlace.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
-| Outside | `interlace.runs`, `interlace.cli`, `interlace.serve` | `Run`; the command `interlace`; the MCP server |
+| Abstractions | `inter1ace.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
+| Engine | `inter1ace.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
+| Parts | `inter1ace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Blocks | `inter1ace.blocks` | `Block`, `seq`, `par` |
+| Graphs as data | `inter1ace.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
+| Outside | `inter1ace.runs`, `inter1ace.cli`, `inter1ace.serve` | `Run`; the command `inter1ace`; the MCP server |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 

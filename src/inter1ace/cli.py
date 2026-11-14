@@ -1,17 +1,17 @@
 """The command line.
 
-    interlace check  graph.json [--allow MODULE]... [--processes]
-    interlace run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--workers N]
+    inter1ace check  graph.json [--allow MODULE]... [--processes]
+    inter1ace run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--workers N]
                          [--time-limit SECONDS] [--workspace DIRECTORY]
-    interlace resume --dir RUN
-    interlace answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
-    interlace status --dir RUN
-    interlace serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
+    inter1ace resume --dir RUN
+    inter1ace answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
+    inter1ace status --dir RUN
+    inter1ace serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
                          [--files DIRECTORY]
 
 A graph file may take text (a prompt, say) from files in its own directory: ``{"file": "prompts/lead.md"}``.
 
-Every command but ``serve`` prints JSON; ``serve`` is the MCP server in ``interlace.serve``. The exit
+Every command but ``serve`` prints JSON; ``serve`` is the MCP server in ``inter1ace.serve``. The exit
 status says how a run stands: 0 done, 1 failed or refused, 3 waiting for a person, 4 stopped.
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _beside(path: str) -> Path:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="interlace", description="Check and run graphs written as data.")
+    parser = argparse.ArgumentParser(prog="inter1ace", description="Check and run graphs written as data.")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
 

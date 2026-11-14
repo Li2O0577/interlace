@@ -5,11 +5,11 @@ import sys
 
 import pytest
 
-from interlace.base import (ANY, Edge, EdgeError, Endpoint, Firing, GraphBuilder, GraphError, Is, ListOf, Node,
+from inter1ace.base import (ANY, Edge, EdgeError, Endpoint, Firing, GraphBuilder, GraphError, Is, ListOf, Node,
                                 NodeError, Port, PortError, Protocol, ProtocolError, Protocols, Record, SchemaError,
                                 digest, schema)
 
-BASE = Path(__file__).resolve().parents[1] / 'src' / 'interlace' / 'base'
+BASE = Path(__file__).resolve().parents[1] / 'src' / 'inter1ace' / 'base'
 
 
 class Plain(Protocol):

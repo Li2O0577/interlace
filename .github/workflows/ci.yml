@@ -26,7 +26,7 @@ jobs:
         run: |
           uv pip install --python .venv/bin/python pyflakes mypy
           .venv/bin/python -m pyflakes src tests scripts examples
-          .venv/bin/python -m mypy src/interlace
+          .venv/bin/python -m mypy src/inter1ace
       - name: Build
         run: uv build -o dist
       - name: Installed wheel alone in a clean environment

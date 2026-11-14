@@ -6,8 +6,8 @@ Two survey blocks each have a desk at the way in, which gives each member its ow
 desk at the way out, which makes one report of what the members found. A third block has a desk that takes
 both reports, from two different blocks, and shares them among its own members.
 """
-from interlace import Block, Desk, Engine, Fan, FunctionNode, GraphBuilder, Port
-from interlace.protocols import DEFAULT
+from inter1ace import Block, Desk, Engine, Fan, FunctionNode, GraphBuilder, Port
+from inter1ace.protocols import DEFAULT
 
 
 def member(id, function):
