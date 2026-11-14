@@ -100,7 +100,7 @@ def test_a_fan_takes_its_own_split_and_join():
     graph = Fan(fn('a', lambda x: x + 1, outputs=whole), fn('b', lambda x: x * 10, outputs=whole),
                 split=fn('prepare', lambda x: x * 2), join=join).build(DEFAULT)
     assert run(graph, {'in': 3}).outputs == {'out': [67]}
-    with pytest.raises(GraphError, match='exactly one input port declared many'):
+    with pytest.raises(GraphError, match='one input port declared many'):
         Fan(fn('a', lambda x: x), join=fn('j', lambda x: x)).build(DEFAULT)
     with pytest.raises(GraphError, match='cannot be a branch'):
         Fan(fn('a', lambda: 1, inputs=())).build(DEFAULT)

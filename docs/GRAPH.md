@@ -55,6 +55,7 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 | `GraphNode` | 一整张图当成一个节点，方法由此嵌套；块的每一次使用就是它 |
 | `SpawnNode` | 运行中收到一张写成数据的图，建出来、运行、发回结果（在 `interlace.spec` 里，见“运行中增长”） |
 | `Pass`、`Collect`、`Branch`、`Until` | 只负责流向：原样转发、汇合成列表、二选一、循环是否继续 |
+| `Desk` | 收发台：`takes` 是它接收的各个来处，`gives` 是它分发的各个去处，`sort(received)` 把收到的整理成“去处到内容”的映射（没有 `sort` 时每个去处都拿到全部）；`wait=False` 时来一份处理一份。放在块的入口是接收员，放在出口是发送员；需要判断力时换成输入输出相同的 `AgentNode` |
 | `Roster` | 管着固定数目的位置，按名字把位置发出去；`Pool` 用它 |
 
 `AgentNode` 留了两个口子，默认都不起作用：
@@ -149,7 +150,7 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 |---|---|
 | `Chain(a, b, c)` | a → b → c |
 | `Loop(a, b, until=f, max_rounds=N)` | 链的末端回到开头，直到 `f` 成立或轮数用完 |
-| `Fan(a, b, c)` | 同一输入给各分支，结果汇合 |
+| `Fan(a, b, c)` | 同一输入给各分支，结果汇合。`split` 或 `join` 的端口按分支的 id 命名时（id 里的 `-` 写成 `_`），每个分支拿到和交回的是自己那一份；`split` 有多个输入、`join` 有多个输出时，它们各自成为图的输入和输出 |
 | `Tree(lead, a, Tree(b, b1, b2), max_rounds=N)` | 协调者把任务交给下级，下级的回复回到协调者，可以多层 |
 | `Star(hub, a, b, c, max_rounds=N)` | 一层的树 |
 | `Governed(lead, a, b, operator=person, max_rounds=N)` | 树，加上协调者放行前向操作者节点请求同意 |
@@ -411,7 +412,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有八个可以直接运行的示例：链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有九个可以直接运行的示例：块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 

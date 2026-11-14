@@ -69,6 +69,14 @@ study = seq(clean, par(review, review, review), publish)       # in a row, side 
 graph = Chain(intake, study("study"), report).build(DEFAULT)
 ```
 
+**Desks at the doors of a block.** A `Desk` takes in what arrives from several places, sorts it, and hands it out to several places. At the way into a block it shares the work among the members; at the way out it makes one answer of what they gave. Where the sorting needs judgement, an agent with the same inputs and outputs stands in the same place.
+
+```python
+team = Fan(analyst, modeller,                                   # each member gets its own part, by name
+           split=Desk("door", takes=["brief", "data"], gives=["analyst", "modeller"], sort=share),
+           join=Desk("exit", takes=["analyst", "modeller"], sort=report))
+```
+
 **Graphs that are not fixed in advance.** `Pool` keeps places for members that do nothing until they are called for. `SpawnNode` builds and runs a graph that a node wrote during the run, within limits set by whoever made the node.
 
 ```python
@@ -137,14 +145,14 @@ The kernel carries information and looks after the run. How a model thinks, how 
 |---|---|---|
 | Abstractions | `interlace.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
 | Engine | `interlace.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Parts | `interlace.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `Desk`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
 | Blocks | `interlace.blocks` | `Block`, `seq`, `par` |
 | Graphs as data | `interlace.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
 | Outside | `interlace.runs`, `interlace.cli`, `interlace.serve` | `Run`; the command `interlace`; the MCP server |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md) (in Chinese). Eight examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlace/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlace/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlace/blob/main/docs/GRAPH.md) (in Chinese). Nine examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlace/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlace/tree/main/examples/data).
 
 ## Tests
 
