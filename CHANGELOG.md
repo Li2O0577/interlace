@@ -25,6 +25,12 @@ with a new major version.
   the activation and made again on resume, the added nodes rebuilt from their descriptions
   (`Engine(rebuild=)`, done by `Run` itself; `spec.load_node`). `Engine(max_nodes=)` bounds the growth, and
   `Engine.graph` is the graph as it stands.
+- `RemoteNode` (`"kind": "remote"`): a node that lives in another process or on another machine and stays
+  up between activations. It is served there with `serve_node(node)` or `interlacing node-serve
+  module:name`; one JSON object per line over TCP carries the inputs, what the node emits, what it uses and a
+  stop. A server listening beyond 127.0.0.1 needs a token; graph files read the token from an environment
+  variable (`token_env`) and reach only the addresses allowed (`Catalog(remotes=)`, `Run.create(remotes=)`,
+  `--remote` on `check`, `run` and `serve`).
 - The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
   `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
   `Engine.used` says what the run has used so far.

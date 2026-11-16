@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere'):
         sys.modules.pop(name, None)
 
 
@@ -107,3 +107,9 @@ def test_changed_while_running(capsys):
     result = changed_while_running.main()
     assert result.outputs == {'part0': ['read the data: done'], 'part1': ['fit the model: done'],
                               'part2': ['write it up: done']}
+
+
+def test_served_elsewhere(capsys):
+    import served_elsewhere
+    result = served_elsewhere.main()
+    assert result.last('out') == 'measured 20.5' and result.used == {'readings': 1}

@@ -1,13 +1,15 @@
 """The same operations as the command line, offered to a client over the Model Context Protocol.
 
     interlacing serve --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
-                        [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY] [--budget NAME=NUMBER]...
+                        [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY] [--remote ADDRESS]...
+                        [--budget NAME=NUMBER]...
 
 The client (usually a model in some other application) sends graphs as data and gets runs back. What those
 graphs may reach is decided by whoever starts the server, on its command line, and never by the client: a
 client cannot widen ``--allow``, cannot turn ``--processes`` on, cannot raise ``--budget``, cannot give a node longer than ``--time-limit`` or a block more threads than ``--workers``, cannot choose where a run is kept, and can
 take text only from files under ``--files`` (from none when it is not given) tool files only from ``--tools``
-and applications only from the folders under ``--apps``.
+applications only from the folders under ``--apps``, and served nodes only at the
+``--remote`` addresses.
 Model keys come from the server's environment. Every run is a directory under ``--runs``, the same directory
 the command line works on, so a run started here can be looked at or answered from a terminal.
 
@@ -83,8 +85,9 @@ class Refused(Exception):
 class Server:
     def __init__(self, runs, *, allow=(), processes: bool = False, workers: int = 0,
                  models: Callable[[str], Any] | None = models_from_environment, time_limit: float | None = None, files=None,
-                 budget: Mapping[str, float] | None = None, tools=None, apps=None):
+                 budget: Mapping[str, float] | None = None, tools=None, apps=None, remotes=()):
         self.root, self.budget, self.tools, self.apps = Path(runs), dict(budget or {}), tools, apps
+        self.remotes = list(remotes)
         self.time_limit, self.files = time_limit, files
         self.allow, self.processes, self.workers, self.models = list(allow), bool(processes), int(workers), models
         self._lock = threading.Lock()
@@ -108,7 +111,8 @@ class Server:
         return graph
 
     def check(self, arguments: Mapping) -> dict:
-        return check(self._graph(arguments), allow=self.allow, processes=self.processes, files=self.files, tools=self.tools, apps=self.apps)
+        return check(self._graph(arguments), allow=self.allow, processes=self.processes, files=self.files, tools=self.tools, apps=self.apps,
+                     remotes=self.remotes)
 
     def _carry(self, id: str, run: Run, action: Callable[[], dict], wait: Any) -> dict:
         """Run ``action`` (a start or a resume of ``run``) now, or behind the call when ``wait`` is false."""
@@ -150,7 +154,8 @@ class Server:
         id = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
         run = Run.create(self.root / id, self._graph(arguments), allow=self.allow, processes=self.processes,
                          workers=self.workers, models=self.models, time_limit=self.time_limit, files=self.files,
-                         budget=self.budget, strict=True, tools=self.tools, apps=self.apps)
+                         budget=self.budget, strict=True, tools=self.tools, apps=self.apps,
+                         remotes=self.remotes)
         return self._carry(id, run, lambda: run.start(inputs), arguments.get("wait"))
 
     def status(self, arguments: Mapping) -> dict:
