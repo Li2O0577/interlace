@@ -10,7 +10,7 @@ import threading
 from collections import deque
 from typing import Any
 
-from ..base import Delivery, Firing, Graph, Node, Protocols
+from ..base import Delivery, Edge, Firing, Graph, Node, Protocols
 from .result import RunError
 
 INPUT = "input:"   # prefix of the pseudo edge id of a graph input
@@ -19,7 +19,8 @@ INPUT = "input:"   # prefix of the pseudo edge id of a graph input
 class Feed:
     """One edge (or one graph input) as the run sees it: its mailbox and how it delivers."""
 
-    __slots__ = ("id", "port", "back", "latest", "stream", "passive", "reply", "protocol", "box", "sent", "limit", "guard")
+    __slots__ = ("id", "port", "back", "latest", "stream", "passive", "reply", "protocol", "box", "sent", "limit", "guard",
+                 "gone")
 
     def __init__(self, id, port, back, protocol, limit):
         self.id, self.port, self.back, self.protocol, self.limit = id, port, back, protocol, limit
@@ -31,6 +32,7 @@ class Feed:
         self.box: deque = deque()
         self.sent = 0
         self.guard: Any = None            # the receiving port's schema, when what arrives must be checked against it
+        self.gone = False                 # the edge was taken out of the graph while the run went on
 
 
 class InPort:
@@ -87,27 +89,31 @@ class State:
 
 
 class Wiring:
-    """Every node's state, every edge's feed and every graph input's feed, by id or name."""
+    """Every node's state, every edge's feed and every graph input's feed, by id or name. Built once at the
+    start of a run (``wire``) and changed only through the methods below, when the graph changes while it runs."""
 
-    __slots__ = ("states", "feeds", "inputs")
+    __slots__ = ("states", "feeds", "inputs", "protocols")
 
-    def __init__(self, states: dict[str, State], feeds: dict[str, Feed], inputs: dict[str, Feed]):
-        self.states, self.feeds, self.inputs = states, feeds, inputs
+    def __init__(self, protocols: Protocols):
+        self.states: dict[str, State] = {}
+        self.feeds: dict[str, Feed] = {}      # edges and graph inputs
+        self.inputs: dict[str, Feed] = {}
+        self.protocols = protocols
 
+    def add_node(self, node: Node) -> State:
+        state = self.states[node.id] = State(node)
+        state.ports = {name: InPort(port, state) for name, port in node.inputs.items()}
+        state.missing = sum(1 for p in state.ports.values() if p.port.required)
+        return state
 
-def wire(graph: Graph, protocols: Protocols) -> Wiring:
-    states = {node.id: State(node) for node in graph.nodes}
-    for state in states.values():
-        state.ports = {name: InPort(port, state) for name, port in state.node.inputs.items()}
-    feeds: dict[str, Feed] = {}
-    for edge in graph.edges:
-        protocol = protocols.get(edge.protocol)
+    def add_edge(self, edge: Edge) -> Feed:
+        protocol = self.protocols.get(edge.protocol)
         if protocol is None:
             raise RunError(f"edge {edge.id}: unknown protocol {edge.protocol!r}")
-        target = states[edge.target.node]
+        target = self.states[edge.target.node]
         port = target.ports[edge.target.port]
-        feed = feeds[edge.id] = Feed(edge.id, port, edge.back, protocol, edge.max_rounds)
-        source = states[edge.source.node].node.outputs[edge.source.port]
+        feed = self.feeds[edge.id] = Feed(edge.id, port, edge.back, protocol, edge.max_rounds)
+        source = self.states[edge.source.node].node.outputs[edge.source.port]
         if not feed.stream and protocol.guarded(source, port.port):
             feed.guard = port.port.schema
         if protocol.delivery is Delivery.CALL:
@@ -122,32 +128,91 @@ def wire(graph: Graph, protocols: Protocols) -> Wiring:
             port.passive.append(feed)
         else:
             (port.back if edge.back else port.forward).append(feed)
-    inputs: dict[str, Feed] = {}
-    for name, end in graph.inputs.items():
-        port = states[end.node].ports[end.port]
-        feed = inputs[name] = Feed(INPUT + name, port, False, None, None)
+            refresh(port)
+        return feed
+
+    def add_input(self, name: str, end) -> Feed:
+        port = self.states[end.node].ports[end.port]
+        feed = self.inputs[name] = self.feeds[INPUT + name] = Feed(INPUT + name, port, False, None, None)
         port.forward.append(feed)
-    exposed: dict[tuple, list[str]] = {}
-    for name, end in graph.outputs.items():
-        exposed.setdefault(tuple(end), []).append(name)
-    for state in states.values():
-        node = state.node
-        state.missing = sum(1 for p in state.ports.values() if p.port.required)
-        for name, port in state.ports.items():
-            if port.passive:
-                if port.forward or port.back or port.port.required:
-                    raise RunError(f"{node.id}.{name} is fed by an edge that does not trigger: it must be optional "
-                                   f"and take nothing else")
-                state.passive.append(port)
-            if state.called and (port.forward or port.back or port.passive):
-                raise RunError(f"{node.id} is called, so nothing else may feed it ({name} is fed)")
-        for name in node.outputs:
-            out = tuple((feeds[e.id], node.outputs[name]) for e in graph.outgoing(node.id, name))
-            calls = [feed for feed, _ in out if feed.protocol.delivery is Delivery.CALL]
-            if calls:
-                if len(out) != 1:
-                    raise RunError(f"{node.id}.{name} makes a call, so exactly one edge may leave it")
-                state.calls[name] = calls[0]
-                out = ()
-            state.outs[name] = (out, tuple(exposed.get((node.id, name), ())))
-    return Wiring(states, {**feeds, **{feed.id: feed for feed in inputs.values()}}, inputs)
+        refresh(port)
+        return feed
+
+    def remove_edge(self, id: str) -> int:
+        """Take an edge's feed out. Returns how many envelopes were waiting on it, which are dropped."""
+        feed = self.feeds.pop(id)
+        feed.gone = True
+        port, waiting = feed.port, len(feed.box)
+        for kind in (port.forward, port.back, port.passive):
+            if feed in kind:
+                kind.remove(feed)
+        if feed.box and not feed.passive and (feed.protocol is None or feed.protocol.delivery is not Delivery.CALL):
+            if feed.back:
+                port.back_full -= 1
+            else:
+                port.forward_full -= 1
+        feed.box.clear()
+        state = port.state
+        if state.arrivals:
+            state.arrivals = deque(f for f in state.arrivals if f is not feed)
+        if port in state.passive and not port.passive:
+            state.passive.remove(port)
+        refresh(port)
+        return waiting
+
+    def remove_node(self, id: str) -> None:
+        del self.states[id]
+
+    def settle(self, graph: Graph) -> None:
+        """After nodes or edges came or went: check each node's feeds and work out where its outputs go."""
+        exposed: dict[tuple, list[str]] = {}
+        for name, end in graph.outputs.items():
+            exposed.setdefault(tuple(end), []).append(name)
+        feeds = self.feeds
+        for state in self.states.values():
+            node = state.node
+            state.passive = []
+            for name, port in state.ports.items():
+                if port.passive:
+                    if port.forward or port.back or port.port.required:
+                        raise RunError(f"{node.id}.{name} is fed by an edge that does not trigger: it must be optional "
+                                       f"and take nothing else")
+                    state.passive.append(port)
+                if state.called and (port.forward or port.back or port.passive):
+                    raise RunError(f"{node.id} is called, so nothing else may feed it ({name} is fed)")
+            calls: dict[str, Feed] = {}
+            outs: dict[str, tuple] = {}
+            for name in node.outputs:
+                out = tuple((feeds[e.id], node.outputs[name]) for e in graph.outgoing(node.id, name))
+                called = [feed for feed, _ in out if feed.protocol.delivery is Delivery.CALL]
+                if called:
+                    if len(out) != 1:
+                        raise RunError(f"{node.id}.{name} makes a call, so exactly one edge may leave it")
+                    calls[name] = called[0]
+                    out = ()
+                outs[name] = (out, tuple(exposed.get((node.id, name), ())))
+            state.calls, state.outs = calls, outs     # whole new mappings: a node emitting now sees one or the other
+
+
+def refresh(port: InPort) -> None:
+    """Work out again whether ``port`` is ready, and change its node's counts when that changed."""
+    ready = (bool(port.forward) and port.forward_full == len(port.forward)) or port.back_full > 0
+    if ready != port.ready:
+        port.ready = ready
+        state = port.state
+        if port.port.required:
+            state.missing += -1 if ready else 1
+        else:
+            state.optional_ready += 1 if ready else -1
+
+
+def wire(graph: Graph, protocols: Protocols) -> Wiring:
+    wiring = Wiring(protocols)
+    for node in graph.nodes:
+        wiring.add_node(node)
+    for edge in graph.edges:
+        wiring.add_edge(edge)
+    for name, end in graph.inputs.items():
+        wiring.add_input(name, end)
+    wiring.settle(graph)
+    return wiring

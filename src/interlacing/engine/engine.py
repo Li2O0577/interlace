@@ -93,7 +93,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
-from ..base import Graph, Invalid, NodeError, Protocols
+from ..base import Change, Graph, GraphBuilder, GraphError, Invalid, Node, NodeError, Protocols, canonical
 from .checks import Checks
 from .clock import overrun, set_limits
 from .context import RunContext
@@ -104,7 +104,7 @@ from .result import OverBudget, Result, RunError
 from .scheduler import Scheduler
 from .stream import Stream
 from .transport import Transport
-from .wiring import Feed, State, wire
+from .wiring import INPUT, Feed, State, wire
 
 __all__ = ["Engine", "OverBudget", "Result", "RunError"]
 
@@ -116,7 +116,7 @@ class Engine:
                  stopping: Callable[[], bool] | None = None, transport: Transport | None = None,
                  journal: Journal | None = None, time_limit: float | None = None,
                  observe: Callable[[Mapping], None] | None = None, budget: Mapping[str, float] | None = None,
-                 firm: bool = False):
+                 firm: bool = False, rebuild: Callable[[dict], Node] | None = None, max_nodes: int | None = None):
         if workers < 0:
             raise ValueError("workers cannot be negative")
         if time_limit is not None and not time_limit > 0:
@@ -125,7 +125,10 @@ class Engine:
             protocols = graph.protocols
             if protocols is None:
                 raise RunError("the graph was not compiled with protocols: give the engine the ones to run it with")
-        self.graph, self.protocols, self.workers = graph, protocols, workers
+        if max_nodes is not None and (type(max_nodes) is not int or max_nodes < 1):
+            raise ValueError("max_nodes must be a whole number of at least 1")
+        self.graph, self.protocols, self.workers = graph, protocols, workers   # graph: as it stands now
+        self._rebuild, self._max_nodes = rebuild, max_nodes
         self._observe = observe
         self._ledger = Ledger(budget)
         self._id: str | None = None         # names this run: the first part of every activation's key
@@ -223,7 +226,7 @@ class Engine:
         ended = records[-1]["kind"] == "end" and not changed
         with self._lock:
             run_id, self._orphans, dropped = restore(records, self._wiring, self._sched, self._ledger, self._result,
-                                                     self._limited)
+                                                     self._limited, self._remake)
             self._id = self._id or run_id
             if not ended:
                 over = self._ledger.over()
@@ -527,6 +530,8 @@ class Engine:
                 if act is not None:
                     act.out.append((name, payload))
             for (feed, _), body in zip(feeds, bodies):
+                if feed.gone:                           # the graph changed while this was being sent
+                    continue
                 if feed.stream and feed.id in state.streams:
                     if state.streams[feed.id] is not None:
                         state.streams[feed.id]._put(body)
@@ -619,7 +624,8 @@ class Engine:
         told, id = self._observe, state.node.id
         observe = None if told is None else lambda event: told({**event, "within": [id, *event.get("within", ())]})
         inner = Engine(graph, protocols, workers=workers, stopping=ctx.stopping, journal=journal,
-                       time_limit=self._limit, observe=observe, firm=firm or self._firm)
+                       time_limit=self._limit, observe=observe, firm=firm or self._firm, rebuild=self._rebuild,
+                       max_nodes=self._max_nodes)
         inner._parent = (self, state, ctx._act)
         inner._within = (*self._within, (state.node.id, ctx.round))
         inner._id = ctx.key
@@ -666,6 +672,80 @@ class Engine:
                     raise NodeError(f"what once keeps under {name!r} must be plain data: {exc}") from None
             ledger.keep(id, round, name, value)
         return value
+
+    def _change(self, state: State, change: Change, act: Act | None) -> None:
+        """Change the graph now, as one of its nodes asks: refused whole, or made whole."""
+        if not isinstance(change, Change):
+            raise NodeError(f"a change to the graph is a Change, not {type(change).__name__}")
+        if not change:
+            return
+        described = None
+        if self._recorder is not None:
+            if change.added and self._rebuild is None:
+                raise GraphError("this run is journaled, so a node it adds must be made again when the run is taken "
+                                 "up: give the engine rebuild=")
+            described = change.describe()
+            try:
+                canonical(described)
+            except (TypeError, ValueError) as exc:
+                raise GraphError(f"the change cannot be journaled: {exc}") from None
+        with self._lock:
+            if self._over or self._sched.stopped:
+                raise NodeError("the run is stopping")
+            before = {node.id for node in self.graph.nodes}
+            dropped = self._make(change, state.node.id)
+            if act is not None:
+                act.changes.append(described)
+            if self._sched.ready:
+                self._lock.notify_all()
+            now = {node.id for node in self.graph.nodes}
+        if self._observe is not None:
+            self._tell("changed", node=state.node.id, round=state.round, added=sorted(now - before),
+                       removed=sorted(before - now), dropped=dropped, graph=self.graph.digest)
+
+    def _remake(self, described: list) -> int:
+        """Make again, while the run is being taken up, a change the journal holds."""
+        return self._make(Change.of(described, self._rebuild), None, consider=False)
+
+    def _make(self, change: Change, caller: str | None, consider: bool = True) -> int:
+        """Apply ``change`` to the graph and to what the run keeps of it. Called under the lock. Returns how
+        many waiting envelopes were dropped with the edges taken out. While a run is being taken up nothing
+        is queued yet (``consider=False``): that is done once the whole journal has been read."""
+        old, wiring, sched = self.graph, self._wiring, self._sched
+        if caller is not None and caller in change.removed:
+            raise GraphError(f"{caller} cannot take itself out of the graph")
+        new = change.apply(GraphBuilder.of(old)).compile(self.protocols)
+        if self._max_nodes is not None and len(new.nodes) > self._max_nodes:
+            raise GraphError(f"the graph would have {len(new.nodes)} nodes, and at most {self._max_nodes} may run here")
+        known = {node.id for node in new.nodes}
+        gone = [id for id in self._states if id not in known]
+        for id in gone:
+            if self._states[id].running:
+                raise GraphError(f"{id} is running and cannot be taken out now")
+        edges = {edge.id: edge for edge in new.edges}
+        dropped = sum(wiring.remove_edge(edge.id) for edge in old.edges if edge.id not in edges)
+        for name in [name for name in old.inputs if name not in new.inputs]:
+            dropped += wiring.remove_edge(INPUT + name)
+            del wiring.inputs[name]
+        for id in gone:
+            state = self._states[id]
+            if state.queued:
+                sched.ready.remove(state)
+            wiring.remove_node(id)
+        added = [wiring.add_node(node) for node in new.nodes if node.id not in wiring.states]
+        set_limits(added, self._limit, self._firm)
+        before = {edge.id for edge in old.edges}
+        for edge in new.edges:
+            if edge.id not in before:
+                wiring.add_edge(edge)
+        wiring.settle(new)
+        for name in new.outputs:
+            self._result.outputs.setdefault(name, [])
+        self.graph = new
+        if consider:
+            for state in self._states.values():
+                sched.consider(state)
+        return dropped
 
     def _adopt(self, state: State, act: Act | None, problems: list[dict]) -> None:
         """Take on the problems of a run that happened inside one of this engine's nodes."""

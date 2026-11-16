@@ -138,6 +138,12 @@ def block(source, catalog: Catalog | None = None, *, name: str | None = None, wo
     return Block(lambda: load(description, catalog), name=name or "block", protocols=catalog.protocols, workers=workers)
 
 
+def load_node(description: Mapping, catalog: Catalog | None = None) -> Node:
+    """Build one node from its description: what ``Node.describe`` gives, or the shorter form a graph file
+    uses. This is how a node added to a running graph is made again when the run is taken up."""
+    return _node(description, catalog if catalog is not None else Catalog(), {})
+
+
 def _node(given: Mapping, catalog: Catalog, graphs: Mapping) -> Node:
     if not isinstance(given, Mapping) or "id" not in given or "kind" not in given:
         raise SpecError(f"a node needs an id and a kind: {given!r}")

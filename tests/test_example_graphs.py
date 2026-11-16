@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running'):
         sys.modules.pop(name, None)
 
 
@@ -100,3 +100,10 @@ def test_folder_as_node(capsys):
     import folder_as_node
     result = folder_as_node.main()
     assert result.last('common') == [['the', 3], ['and', 2]] and result.last('total') == 8
+
+
+def test_changed_while_running(capsys):
+    import changed_while_running
+    result = changed_while_running.main()
+    assert result.outputs == {'part0': ['read the data: done'], 'part1': ['fit the model: done'],
+                              'part2': ['write it up: done']}

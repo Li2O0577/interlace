@@ -34,6 +34,9 @@ class RunContext(Context):
     def engine(self, graph: Graph, protocols: Protocols | None = None, *, workers: int = 0, firm: bool = False) -> "Engine":
         return self._engine._inner(self, graph, protocols, workers, firm)
 
+    def change(self, change: Any) -> None:
+        self._engine._change(self._state, change, self._act)
+
     def use(self, **amounts: float) -> None:
         self._engine._use(self._state, self.round, amounts)
 
