@@ -31,6 +31,12 @@ with a new major version.
   stop. A server listening beyond 127.0.0.1 needs a token; graph files read the token from an environment
   variable (`token_env`) and reach only the addresses allowed (`Catalog(remotes=)`, `Run.create(remotes=)`,
   `--remote` on `check`, `run` and `serve`).
+- Nodes may be coroutines: `run` (and `open`, `close`) may be `async def`, and so may the function of a
+  `FunctionNode` or `@node`. A graph that has such nodes runs on an event loop: they are awaited there, without
+  a thread each, and the others go to threads; `workers` still bounds how many activations are under way,
+  `workers=0` still runs one at a time in a fixed order. One that overruns its time is cancelled. `await
+  ctx.acall(port, payload)` calls from such a node. `arun`, `aresume` and `ago` run such a graph on the
+  caller's loop; `run` starts a loop of its own. `Node.asynchronous` says which kind a node is.
 - The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
   `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
   `Engine.used` says what the run has used so far.

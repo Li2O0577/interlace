@@ -15,7 +15,7 @@ from .edge import Edge, EdgeError, Endpoint
 from .envelope import Envelope, Ref
 from .graph import Graph, GraphBuilder, GraphError
 from .method import Method
-from .node import Context, Firing, Invalid, Node, NodeError
+from .node import Context, Firing, Invalid, Node, NodeError, waited
 from .port import Port, PortError
 from .protocol import Delivery, Protocol, ProtocolError, Protocols, resolve, set_standard
 from .schema import ANY, Is, ListOf, Record, Schema, SchemaError, schema
@@ -23,5 +23,5 @@ from .schema import ANY, Is, ListOf, Record, Schema, SchemaError, schema
 __all__ = [
     "ANY", "Change", "Context", "Delivery", "Edge", "EdgeError", "Endpoint", "Envelope", "Firing", "Graph", "GraphBuilder",
     "GraphError", "Invalid", "Is", "ListOf", "Method", "Node", "NodeError", "Port", "PortError", "Protocol", "ProtocolError",
-    "Protocols", "Record", "Ref", "Schema", "SchemaError", "canonical", "digest", "resolve", "schema", "set_standard",
+    "Protocols", "Record", "Ref", "Schema", "SchemaError", "canonical", "digest", "resolve", "schema", "set_standard", "waited",
 ]

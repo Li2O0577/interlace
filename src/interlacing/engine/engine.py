@@ -30,6 +30,13 @@ Three kinds of edge are handled apart from that:
 ``workers=0`` runs everything in the calling thread, in a fixed order. With more workers, nodes run in a pool
 of threads and only the bookkeeping is serialised.
 
+A node whose ``run`` is a coroutine (``Node.asynchronous``) is awaited instead. A graph that has one runs on an
+event loop (``_loop``): the caller's, under ``arun``, or one of its own under ``run``. Coroutine activations
+are awaited on it, without a thread each; the others run from start to end in threads, as they would without
+a loop. ``workers`` still bounds how many activations are under way (one, when it is 0, in the same fixed
+order). A coroutine activation that overruns is cancelled. Both drivers share every step of an activation:
+``_pick``, ``_started``, ``_activate`` (or ``_aactivate``) and ``_ended``.
+
 ``stopping`` is a function the engine asks before each activation; once it returns true the run stops as if
 ``stop`` had been called. A graph that runs inside a node of another graph is stopped this way.
 
@@ -45,7 +52,8 @@ envelopes, the rest is dropped.
 it (``math.inf`` for a node that may take as long as it likes, a person for instance). A thread cannot be
 killed, so when an activation overruns, the run fails with that node named, running nodes see
 ``ctx.stopping()``, and the engine returns without waiting for the one that is stuck; whatever it does
-afterwards is thrown away. Nothing it did was journaled, so a resumed run starts that activation again.
+afterwards is thrown away. A coroutine that overruns is cancelled. Nothing it did was journaled, so a resumed
+run starts that activation again.
 
 ``observe`` is a function the engine tells what happens, as it happens: one mapping per event, with
 ``event`` one of ``started``, ``emitted``, ``finished``, ``failed`` (each with ``node`` and ``round``) and,
@@ -88,12 +96,15 @@ The engine itself only drives the run; each part of the work is done by a piece 
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import secrets
 import threading
 import time
 from typing import Any, Callable, Mapping
 
-from ..base import Change, Graph, GraphBuilder, GraphError, Invalid, Node, NodeError, Protocols, canonical
+from ..base import Change, Graph, GraphBuilder, GraphError, Invalid, Node, NodeError, Protocols, canonical, waited
+from .aio import Signal, Threads, athrough, through, to_end
 from .checks import Checks
 from .clock import overrun, set_limits
 from .context import RunContext
@@ -142,7 +153,7 @@ class Engine:
         self._carry = transport.carry if transport is not None else None
         self._recorder = Recorder(journal) if journal is not None else None
         self._orphans: set[str] = set()   # after a resume: envelopes already dealt with whose sender must run again
-        self._lock = threading.Condition()
+        self._lock = Signal()
         self._sched = Scheduler()
         self._active = 0
         self._error: RunError | None = None
@@ -153,6 +164,7 @@ class Engine:
         wiring = self._wiring = wire(graph, protocols)
         self._states, self._feeds, self._inputs = wiring.states, wiring.feeds, wiring.inputs
         self._timed = set_limits(self._states.values(), time_limit, self._firm)
+        self._asynchronous = any(state.node.asynchronous for state in self._states.values())
 
     @property
     def used(self) -> dict[str, float]:
@@ -165,6 +177,67 @@ class Engine:
     def run(self, inputs: Mapping[str, Any] | None = None) -> Result:
         """Feed the graph's inputs, run until nothing is left to do, and return what reached its outputs."""
         self._begin()
+        self._feed(inputs)
+        return self._drive()
+
+    def go(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
+        """Run, or, when the journal already holds a run of this graph, take that run up. ``fresh`` throws
+        an earlier run away."""
+        return self.resume() if self._taken_up(fresh) else self.run(inputs)
+
+    def resume(self, *, change: bool = False) -> Result:
+        """Take up the run in the journal where it stopped. ``change=True`` allows this engine's graph to
+        differ from the one the journal was written under."""
+        self._begin()
+        return self._drive(self._restore(change))
+
+    def stop(self) -> None:
+        """Ask the run to end: nothing new starts; running nodes see ``ctx.stopping()``."""
+        with self._lock:
+            self._sched.stopped = True
+            self._lock.notify_all()
+
+    # ---- the same, awaited ------------------------------------------------------------------------------
+
+    async def arun(self, inputs: Mapping[str, Any] | None = None) -> Result:
+        """``run``, for a caller that is a coroutine. Cancelling the awaiting task stops the run. When the
+        graph has nodes that are coroutines, the run goes on in this event loop; otherwise in threads, and
+        the loop stays free."""
+        if not self._asynchronous:
+            return await self._awaited(self.run, inputs)
+        self._begin()
+        self._feed(inputs)
+        return await self._afinish()
+
+    async def aresume(self, *, change: bool = False) -> Result:
+        """``resume``, awaited."""
+        if not self._asynchronous:
+            return await self._awaited(lambda: self.resume(change=change))
+        self._begin()
+        return await self._afinish(self._restore(change))
+
+    async def ago(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
+        """``go``, awaited."""
+        if not self._asynchronous:
+            return await self._awaited(lambda: self.go(inputs, fresh=fresh))
+        return await (self.aresume() if self._taken_up(fresh) else self.arun(inputs))
+
+    async def _awaited(self, do: Callable, *args) -> Result:
+        try:
+            return await asyncio.to_thread(do, *args)
+        except asyncio.CancelledError:
+            self.stop()
+            raise
+
+    # ---- the life of a run -----------------------------------------------------------------------------
+
+    def _begin(self) -> None:
+        if self._used:
+            raise RunError("this engine has already run; build a new one")
+        self._used = True
+
+    def _feed(self, inputs: Mapping[str, Any] | None) -> None:
+        """Start a new run: put the graph's inputs in and queue what can run."""
         recorder = self._recorder
         if recorder is not None and recorder.read():
             raise RunError("the journal already holds a run: resume it, or use a new journal")
@@ -192,25 +265,22 @@ class Engine:
                     raise RunError(f"the graph's inputs cannot be journaled: {exc}") from None
             for state in self._states.values():
                 sched.consider(state)
-        return self._finish()
 
-    def go(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
-        """Run, or, when the journal already holds a run of this graph, take that run up. ``fresh`` throws
-        an earlier run away."""
+    def _taken_up(self, fresh: bool) -> bool:
+        """For ``go``: whether the journal holds a run of this graph to take up. One that cannot be, or
+        that ``fresh`` asks to forget, is thrown away."""
         recorder = self._recorder
         if recorder is not None:
             records = recorder.read()
             if records:
                 if not fresh and under(records) == self.graph.digest:
-                    return self.resume()
+                    return True
                 recorder.close()
                 recorder.journal.path.unlink()
-        return self.run(inputs)
+        return False
 
-    def resume(self, *, change: bool = False) -> Result:
-        """Take up the run in the journal where it stopped. ``change=True`` allows this engine's graph to
-        differ from the one the journal was written under."""
-        self._begin()
+    def _restore(self, change: bool) -> bool:
+        """Put the run in the journal back as it was. Returns whether that run had already ended."""
         recorder = self._recorder
         if recorder is None:
             raise RunError("resume needs a journal")
@@ -237,49 +307,18 @@ class Engine:
             if not ended:
                 for state in self._states.values():
                     self._sched.consider(state)
-        return self._finish(ended)
-
-    def stop(self) -> None:
-        """Ask the run to end: nothing new starts; running nodes see ``ctx.stopping()``."""
-        with self._lock:
-            self._sched.stopped = True
-            self._lock.notify_all()
-
-    # ---- the same, awaited ------------------------------------------------------------------------------
-
-    async def arun(self, inputs: Mapping[str, Any] | None = None) -> Result:
-        """``run``, for a caller that is a coroutine: the run goes on in a thread and the event loop stays
-        free. Cancelling the awaiting task asks the run to stop."""
-        return await self._awaited(self.run, inputs)
-
-    async def aresume(self, *, change: bool = False) -> Result:
-        """``resume``, awaited."""
-        return await self._awaited(lambda: self.resume(change=change))
-
-    async def ago(self, inputs: Mapping[str, Any] | None = None, *, fresh: bool = False) -> Result:
-        """``go``, awaited."""
-        return await self._awaited(lambda: self.go(inputs, fresh=fresh))
-
-    async def _awaited(self, do: Callable, *args) -> Result:
-        import asyncio
-        try:
-            return await asyncio.to_thread(do, *args)
-        except asyncio.CancelledError:
-            self.stop()
-            raise
-
-    # ---- the life of a run -----------------------------------------------------------------------------
-
-    def _begin(self) -> None:
-        if self._used:
-            raise RunError("this engine has already run; build a new one")
-        self._used = True
+        return ended
 
     def _stopping(self) -> bool:
         return self._sched.stopped or (self._outer is not None and bool(self._outer()))
 
+    def _drive(self, ended: bool = False) -> Result:
+        """Run to the end in this thread: on an event loop when there are nodes to await, else in threads."""
+        if self._asynchronous and not ended:
+            return to_end(lambda: self._afinish())
+        return self._finish(ended)
+
     def _finish(self, ended: bool = False) -> Result:
-        recorder = self._recorder
         try:
             if ended:
                 pass
@@ -296,11 +335,37 @@ class Engine:
         finally:
             with self._lock:
                 self._over = True
-            self._close()
-            if recorder is not None:
-                if not ended and not self._sched.stopped and self._error is None:
-                    recorder.end()
-                recorder.close()
+            for state, closing in self._close():
+                try:
+                    waited(closing)
+                except Exception as exc:   # noqa: BLE001
+                    self._close_failed(state, exc)
+            self._wind_down(ended)
+        return self._conclude()
+
+    async def _afinish(self, ended: bool = False) -> Result:
+        try:
+            if not ended:
+                await self._loop()
+        finally:
+            with self._lock:
+                self._over = True
+            for state, closing in self._close():
+                try:
+                    await closing
+                except Exception as exc:   # noqa: BLE001
+                    self._close_failed(state, exc)
+            self._wind_down(ended)
+        return self._conclude()
+
+    def _wind_down(self, ended: bool) -> None:
+        recorder = self._recorder
+        if recorder is not None:
+            if not ended and not self._sched.stopped and self._error is None:
+                recorder.end()
+            recorder.close()
+
+    def _conclude(self) -> Result:
         result = self._result
         if self._parent is not None and result.problems:
             outer, state, act = self._parent
@@ -347,11 +412,7 @@ class Engine:
             while self._alive:
                 late, wait = overrun(states, time.monotonic())
                 if late is not None:
-                    if self._error is None:
-                        self._error = RunError(f"node {late.node.id} ran longer than {late.time_limit:g} seconds "
-                                               f"in round {late.round}", late.node.id)
-                    self._sched.stopped = True
-                    lock.notify_all()
+                    self._late(late)
                     deadline = time.monotonic() + 1.0    # idle workers leave at once; a node still running is left
                     while (self._alive > sum(1 for s in states if s.running)
                            and time.monotonic() < deadline):
@@ -359,8 +420,17 @@ class Engine:
                     return
                 lock.wait(wait)
 
+    def _late(self, late: State) -> None:
+        """An activation overran its time: the run fails, naming it. Called under the lock."""
+        if self._error is None:
+            self._error = RunError(f"node {late.node.id} ran longer than {late.time_limit:g} seconds "
+                                   f"in round {late.round}", late.node.id)
+        self._sched.stopped = True
+        self._lock.notify_all()
+
     def _work(self) -> None:
-        lock, sched, checks = self._lock, self._sched, self._checks
+        """One worker thread: take ready nodes and run them, until nothing is left."""
+        lock, sched = self._lock, self._sched
         while True:
             with lock:
                 if self._outer is not None and not sched.stopped and self._outer():
@@ -370,89 +440,246 @@ class Engine:
                 if sched.stopped or not sched.ready:
                     lock.notify_all()
                     return
-                state = sched.ready.popleft()
-                state.begin()
-                if self._timed:
-                    state.since = time.monotonic()
-                    lock.notify_all()          # the watcher must learn that a clock has started
-                self._active += 1
-                try:
-                    taken, cause, took = sched.take(state, lambda feed, body: checks.arrived(state, feed, body))
-                except Exception as exc:   # noqa: BLE001 - a protocol's decode failed
-                    self._fail(state, exc)
-                    continue
-                self._result.activations += 1
-            act = Act(state.node.id, state.round, took) if self._recorder is not None else None
-            node, ctx = state.node, RunContext(self, state, cause, act)
-            if self._observe is not None:
-                self._flush()
-                self._tell("started", node=node.id, round=state.round, took=list(took))
+                picked = self._pick()
+            if picked is not None and not self._whole(picked):
+                return
+
+    async def _loop(self) -> None:
+        """The run on this event loop: nodes that are coroutines are awaited here, the others go to threads.
+        At most ``workers`` activations (one, when that is 0) are under way at once, in the same order as
+        in threads."""
+        loop = asyncio.get_running_loop()
+        lock, sched, states = self._lock, self._sched, self._states.values()
+        wake = asyncio.Event()
+
+        here = threading.get_ident()
+
+        def hook() -> None:
+            if threading.get_ident() == here:
+                wake.set()
+                return
             try:
-                if not state.opened:
-                    state.opened = True
-                    node.open(ctx)
-                while True:
-                    try:
-                        returned = node.run(ctx, taken)
-                        if returned is not None:
-                            if not isinstance(returned, Mapping):
-                                raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
-                            for port, payload in returned.items():
-                                self._emit(state, port, payload, state.round, cause, act)
-                        break
-                    except Invalid as exc:
-                        # the node did not put it right itself: run it again, if that repeats nothing
-                        if not exc.again or state.delivered or any(isinstance(v, Stream) for v in taken.values()):
-                            raise
-                        ctx.problems.append(str(exc))
-                if act is not None:
-                    snapshot = node.snapshot()
-                    if snapshot:
-                        act.snaps[node.id] = dict(snapshot)
-            except BaseException as exc:   # noqa: BLE001 - whatever a node raises ends the run, an interrupt included
+                loop.call_soon_threadsafe(wake.set)
+            except RuntimeError:
+                pass                     # the loop has closed
+        threads = Threads(self.workers or 1, loop)
+        running: dict[asyncio.Task, State] = {}
+        limit = self.workers or 1
+
+        def done(task: asyncio.Task) -> None:
+            running.pop(task, None)
+            wake.set()
+        lock.hook = hook
+        try:
+            while True:
+                wake.clear()
                 with lock:
-                    if self._over:
+                    if self._outer is not None and not sched.stopped and self._outer():
+                        sched.stopped = True
+                    while sched.ready and not sched.stopped and len(running) < limit:
+                        picked = self._pick()
+                        if picked is not None:
+                            task = loop.create_task(self._one(picked, threads))
+                            running[task] = picked[0]
+                            task.add_done_callback(done)
+                    if not running:
                         return
-                    self._fail(state, exc)
-                if self._observe is not None:
-                    self._tell("failed", node=node.id, round=state.round, error=str(exc))
-                continue
-            if ctx._cut:
-                # it was told to stop and may have left its work half done: it is not on record as having run,
-                # so it runs again when the run is taken up
-                with lock:
-                    if self._over:
-                        return
-                    self._end_streams(state)
-                    state.running = False
-                    self._active -= 1
-                    sched.stopped = True
-                    lock.notify_all()
-                if self._observe is not None:
-                    self._tell("stopped", node=node.id, round=state.round)
-                continue
-            if self._observe is not None:
-                self._tell("finished", node=node.id, round=state.round)
-            with lock:
-                if self._over:             # it overran and the engine has gone: what it did is thrown away
+                    late, wait = overrun(states, time.monotonic()) if self._timed else (None, None)
+                    if late is not None:
+                        self._late(late)
+                if late is not None:
+                    await self._cancel(running)
                     return
-                self._end_streams(state)
-                if act is not None:
-                    assert self._recorder is not None
+                if self._outer is not None:
+                    wait = 0.05 if wait is None else min(wait, 0.05)
+                if wait is None:
+                    await wake.wait()
+                else:
                     try:
-                        self._recorder.act(act)
-                    except Exception as exc:   # noqa: BLE001 - something it sent is not plain data
-                        self._fail(state, RunError(f"cannot be journaled: {exc}"))
-                        continue
-                    for path in state.inner:       # the activation is on record: what ran inside it is not needed again
-                        discard(path)
+                        await asyncio.wait_for(wake.wait(), wait)
+                    except asyncio.TimeoutError:
+                        pass
+        except asyncio.CancelledError:
+            self.stop()                    # the one awaiting the run gave up on it
+            await self._cancel(running)
+            raise
+        finally:
+            lock.hook = None
+            threads.close()
+
+    async def _cancel(self, running: dict) -> None:
+        """The run is over early: activations that are coroutines are cancelled, after a moment to see
+        ``ctx.stopping()`` for themselves. Those in threads cannot be, and are left."""
+        awaited = [task for task, state in running.items() if state.node.asynchronous]
+        if awaited:
+            await asyncio.wait(awaited, timeout=0.2)
+            for task in awaited:
+                task.cancel()
+            await asyncio.wait(awaited, timeout=1.0)
+
+    async def _one(self, picked: tuple, threads: Threads) -> None:
+        state = picked[0]
+        if not state.node.asynchronous:
+            await threads.run(self._whole, picked)       # in a thread, from start to end, as without a loop
+            return
+        _, taken, cause, took = picked
+        ctx, act = self._started(state, cause, took)
+        failure = None
+        try:
+            await self._aactivate(state, ctx, act, taken, cause)
+        except BaseException as exc:   # noqa: BLE001 - whatever a node raises ends the run; cancelled, it was cut off
+            failure = exc
+        self._ended(state, ctx, act, failure)
+
+    def _whole(self, picked: tuple) -> bool:
+        """One activation of a node that is not a coroutine, from start to end. Returns False when the engine
+        had already returned."""
+        state, taken, cause, took = picked
+        ctx, act = self._started(state, cause, took)
+        failure = None
+        try:
+            self._activate(state, ctx, act, taken, cause)
+        except BaseException as exc:   # noqa: BLE001 - whatever a node raises ends the run, an interrupt included
+            failure = exc
+        return self._ended(state, ctx, act, failure)
+
+    # ---- one activation --------------------------------------------------------------------------------
+
+    def _pick(self) -> tuple | None:
+        """Take the next ready node and what it takes. Called under the lock. None when what it was to take
+        could not be read: it has failed."""
+        sched, checks = self._sched, self._checks
+        state = sched.ready.popleft()
+        state.begin()
+        if self._timed:
+            state.since = time.monotonic()
+            self._lock.notify_all()          # the watcher must learn that a clock has started
+        self._active += 1
+        try:
+            taken, cause, took = sched.take(state, lambda feed, body: checks.arrived(state, feed, body))
+        except Exception as exc:   # noqa: BLE001 - a protocol's decode failed
+            self._fail(state, exc)
+            return None
+        self._result.activations += 1
+        return state, taken, cause, took
+
+    def _started(self, state: State, cause: tuple, took: tuple) -> tuple[RunContext, Act | None]:
+        act = Act(state.node.id, state.round, took) if self._recorder is not None else None
+        ctx = RunContext(self, state, cause, act)
+        if self._observe is not None:
+            self._flush()
+            self._tell("started", node=state.node.id, round=state.round, took=list(took))
+        return ctx, act
+
+    def _activate(self, state: State, ctx: RunContext, act: Act | None, taken: dict, cause: tuple) -> None:
+        node = state.node
+        if not state.opened:
+            state.opened = True
+            waited(node.open(ctx))
+        while True:
+            try:
+                returned = node.run(ctx, taken)
+                if returned is not None:
+                    if type(returned) is not dict:
+                        returned = waited(returned)      # a coroutine, when the node was not known to be one
+                    self._returned(state, returned, cause, act)
+                break
+            except Invalid as exc:
+                if not self._again(exc, state, taken):
+                    raise
+                ctx.problems.append(str(exc))
+        if act is not None:
+            self._snap(node, act)
+
+    async def _aactivate(self, state: State, ctx: RunContext, act: Act | None, taken: dict, cause: tuple) -> None:
+        node = state.node
+        if not state.opened:
+            state.opened = True
+            opened = node.open(ctx)
+            if inspect.isawaitable(opened):
+                await opened
+        while True:
+            try:
+                returned = node.run(ctx, taken)
+                if inspect.isawaitable(returned):
+                    returned = await returned
+                self._returned(state, returned, cause, act)
+                break
+            except Invalid as exc:
+                if not self._again(exc, state, taken):
+                    raise
+                ctx.problems.append(str(exc))
+        self._snap(node, act)
+
+    def _returned(self, state: State, returned: Any, cause: tuple, act: Act | None) -> None:
+        """Send on what ``run`` returned."""
+        if returned is not None:
+            if not isinstance(returned, Mapping):
+                raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
+            for port, payload in returned.items():
+                self._emit(state, port, payload, state.round, cause, act)
+
+    @staticmethod
+    def _again(exc: Invalid, state: State, taken: dict) -> bool:
+        """The node did not put right what it sent: whether to run it again, which is so if that repeats nothing."""
+        return exc.again and not state.delivered and not any(isinstance(v, Stream) for v in taken.values())
+
+    @staticmethod
+    def _snap(node: Node, act: Act | None) -> None:
+        if act is not None:
+            snapshot = node.snapshot()
+            if snapshot:
+                act.snaps[node.id] = dict(snapshot)
+
+    def _ended(self, state: State, ctx: RunContext, act: Act | None, failure: BaseException | None) -> bool:
+        """An activation is over: record it, or what went wrong, and queue what can run next. Returns False
+        when the engine has already returned and what the activation did is thrown away."""
+        lock, sched, node = self._lock, self._sched, state.node
+        if failure is not None:
+            with lock:
+                if self._over:
+                    return False
+                self._fail(state, failure)
+            if self._observe is not None:
+                self._tell("failed", node=node.id, round=state.round, error=str(failure))
+            return True
+        if ctx._cut:
+            # it was told to stop and may have left its work half done: it is not on record as having run,
+            # so it runs again when the run is taken up
+            with lock:
+                if self._over:
+                    return False
+                self._end_streams(state)
                 state.running = False
                 self._active -= 1
-                sched.consider(state)
-                if not sched.ready and not self._active:
-                    lock.notify_all()
-                elif sched.ready:
-                    lock.notify()
+                sched.stopped = True
+                lock.notify_all()
+            if self._observe is not None:
+                self._tell("stopped", node=node.id, round=state.round)
+            return True
+        if self._observe is not None:
+            self._tell("finished", node=node.id, round=state.round)
+        with lock:
+            if self._over:             # it overran and the engine has gone: what it did is thrown away
+                return False
+            self._end_streams(state)
+            if act is not None:
+                assert self._recorder is not None
+                try:
+                    self._recorder.act(act)
+                except Exception as exc:   # noqa: BLE001 - something it sent is not plain data
+                    self._fail(state, RunError(f"cannot be journaled: {exc}"))
+                    return True
+                for path in state.inner:       # the activation is on record: what ran inside it is not needed again
+                    discard(path)
+            state.running = False
+            self._active -= 1
+            sched.consider(state)
+            if not sched.ready and not self._active:
+                lock.notify_all()
+            elif sched.ready:
+                lock.notify()
+        return True
 
     def _tell(self, event: str, **about) -> None:
         observe = self._observe
@@ -490,14 +717,22 @@ class Engine:
         self._sched.stopped = True
         self._lock.notify_all()
 
-    def _close(self) -> None:
+    def _close(self) -> list[tuple[State, Any]]:
+        """Close every node that was opened. Returns the closings that are still to be awaited."""
+        pending = []
         for state in self._states.values():
             if state.opened:
                 try:
-                    state.node.close(RunContext(self, state, ()))
+                    closing = state.node.close(RunContext(self, state, ()))
+                    if inspect.isawaitable(closing):
+                        pending.append((state, closing))
                 except Exception as exc:   # noqa: BLE001
-                    if self._error is None:
-                        self._error = RunError(f"node {state.node.id} failed to close: {exc}", state.node.id)
+                    self._close_failed(state, exc)
+        return pending
+
+    def _close_failed(self, state: State, exc: Exception) -> None:
+        if self._error is None:
+            self._error = RunError(f"node {state.node.id} failed to close: {exc}", state.node.id)
 
     # ---- what a node asks of the run through ctx ---------------------------------------------------------
 
@@ -559,58 +794,83 @@ class Engine:
 
     def _call(self, state: State, port: str, payload: Any, act: Act | None = None) -> Any:
         """Run the node at the other end of a call edge now, in this thread, and return its answer."""
+        feed, target = self._callee(state, port)
+        called = target.called
+        assert called is not None
+        with called:
+            return through(self._calling(state, port, feed, payload, act), waited)
+
+    async def _acall(self, state: State, port: str, payload: Any, act: Act | None = None) -> Any:
+        """``_call``, awaited: a called node that is a coroutine is awaited, and the loop is not held up while
+        the called node is busy with another caller."""
+        feed, target = self._callee(state, port)
+        called = target.called
+        assert called is not None
+        while not called.acquire(blocking=False):
+            await asyncio.sleep(0.001)
+        try:
+            return await athrough(self._calling(state, port, feed, payload, act))
+        finally:
+            called.release()
+
+    def _callee(self, state: State, port: str) -> tuple[Feed, State]:
         feed: Feed | None = state.calls.get(port)
         if feed is None:
             raise NodeError(f"{state.node.id} has no call port {port!r}")
+        assert feed.port.state.called is not None
+        return feed, feed.port.state
+
+    def _calling(self, state: State, port: str, feed: Feed, payload: Any, act: Act | None):
+        """One call, as a generator that yields what is to be awaited and is sent what it came to; the
+        caller holds the called node's lock."""
         body = feed.protocol.encode(payload, state.node.outputs[port])
         target = feed.port.state
         node = target.node
-        assert target.called is not None
-        with target.called:
-            with self._lock:
-                if self._sched.stopped:
-                    raise NodeError("the run is stopping")
-                feed.sent += 1
-                target.round += 1
-                self._sched.envelopes += 1
-                self._result.activations += 1
-                ctx = RunContext(self, target, (f"{feed.id}#{feed.sent}",), act)
-                if act is not None:
-                    act.calls.append(node.id)
-                target.rejected = {}
-            if self._observe is not None:
-                self._tell("started", node=node.id, round=ctx.round, took=list(ctx._cause), by=state.node.id)
-            failed = True
-            try:
-                if not target.opened:
-                    target.opened = True
-                    node.open(ctx)
-                value = feed.protocol.decode(body, feed.port.port)
-                if feed.guard is not None:
-                    feed.guard.check(value)
-                returned = node.run(ctx, {feed.port.port.name: [value] if feed.port.port.many else value})
-                if ctx._cut:            # it was told to stop: the caller must not take what it left for an answer
-                    raise NodeError("the run is stopping")
-                if act is not None:
-                    snapshot = node.snapshot()
-                    if snapshot:
-                        act.snaps[node.id] = dict(snapshot)
-                if returned is None:
-                    failed = False
-                    return None
-                if not isinstance(returned, Mapping):
-                    raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
-                for name, item in returned.items():
-                    self._emit(target, name, item, ctx.round, ctx._cause, act)
+        with self._lock:
+            if self._sched.stopped:
+                raise NodeError("the run is stopping")
+            feed.sent += 1
+            target.round += 1
+            self._sched.envelopes += 1
+            self._result.activations += 1
+            ctx = RunContext(self, target, (f"{feed.id}#{feed.sent}",), act)
+            if act is not None:
+                act.calls.append(node.id)
+            target.rejected = {}
+        if self._observe is not None:
+            self._tell("started", node=node.id, round=ctx.round, took=list(ctx._cause), by=state.node.id)
+        failed = True
+        try:
+            if not target.opened:
+                target.opened = True
+                opened = node.open(ctx)
+                if inspect.isawaitable(opened):
+                    yield opened
+            value = feed.protocol.decode(body, feed.port.port)
+            if feed.guard is not None:
+                feed.guard.check(value)
+            returned = node.run(ctx, {feed.port.port.name: [value] if feed.port.port.many else value})
+            if inspect.isawaitable(returned):
+                returned = yield returned
+            if ctx._cut:            # it was told to stop: the caller must not take what it left for an answer
+                raise NodeError("the run is stopping")
+            self._snap(node, act)
+            if returned is None:
                 failed = False
-                return returned.get(feed.reply) if feed.reply is not None else None
-            except Invalid as exc:      # the called node did not put its own output right: that is its failure,
-                raise NodeError(f"{node.id} could not answer: {exc}") from None      # not something for the caller to repair
-            finally:
-                if self._observe is not None:
-                    self._tell("failed" if failed else "finished", node=node.id, round=ctx.round, by=state.node.id)
-                with self._lock:
-                    self._end_streams(target)
+                return None
+            if not isinstance(returned, Mapping):
+                raise NodeError(f"run must return a mapping of output port to payload, or None; got {type(returned).__name__}")
+            for name, item in returned.items():
+                self._emit(target, name, item, ctx.round, ctx._cause, act)
+            failed = False
+            return returned.get(feed.reply) if feed.reply is not None else None
+        except Invalid as exc:      # the called node did not put its own output right: that is its failure,
+            raise NodeError(f"{node.id} could not answer: {exc}") from None      # not something for the caller to repair
+        finally:
+            if self._observe is not None:
+                self._tell("failed" if failed else "finished", node=node.id, round=ctx.round, by=state.node.id)
+            with self._lock:
+                self._end_streams(target)
 
     def _inner(self, ctx: RunContext, graph: Graph, protocols: Protocols | None, workers: int, firm: bool = False) -> "Engine":
         """An engine for a graph that runs inside one activation of one of this engine's nodes."""

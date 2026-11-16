@@ -7,6 +7,8 @@ nodes, with no difference in standing.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import re
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -70,6 +72,11 @@ class Context(ABC):
         and works under the same time limit. ``go(inputs)`` runs it, or takes it up where an interrupted
         earlier attempt at this same activation left it. ``firm=True`` is for a graph that is not trusted:
         none of its nodes may give itself more time than the run allows."""
+
+    async def acall(self, port: str, payload: Any) -> Any:
+        """``call``, for a node whose ``run`` is a coroutine: the event loop stays free while the other node
+        answers."""
+        return self.call(port, payload)
 
     def once(self, name: str, do: Any) -> Any:
         """Do something outside the graph once for this activation, however often the activation runs.
@@ -146,15 +153,21 @@ class Node(ABC):
 
     # ---- lifecycle: only run is required --------------------------------------------------------------
 
-    def open(self, ctx: Context) -> None:
-        """Acquire what the node needs, once, before its first activation."""
+    def open(self, ctx: Context) -> Any:
+        """Acquire what the node needs, once, before its first activation. May be ``async def``."""
 
     @abstractmethod
     def run(self, ctx: Context, inputs: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        """One activation."""
+        """One activation. It may be ``async def``: the engine then awaits it on its event loop, so that many
+        such activations wait at once without a thread each, and one that overruns its time is cancelled."""
 
-    def close(self, ctx: Context) -> None:
-        """Release what ``open`` acquired."""
+    @property
+    def asynchronous(self) -> bool:
+        """Whether an activation is a coroutine to be awaited. True when ``run`` is ``async def``."""
+        return inspect.iscoroutinefunction(self.run)
+
+    def close(self, ctx: Context) -> Any:
+        """Release what ``open`` acquired. May be ``async def``."""
 
     def snapshot(self) -> Mapping:
         """Plain data from which ``restore`` can rebuild the node's own state after a restart."""
@@ -165,3 +178,24 @@ class Node(ABC):
 
     def __repr__(self):
         return f"<{type(self).__name__} {self.id}>"
+
+
+def waited(value: Any) -> Any:
+    """``value``, or, when it is something to await (what an ``async def`` ``run`` or ``open`` gives), what it
+    comes to: run to its end on an event loop of its own. Where a loop is already running in this thread that
+    cannot be done, and the node must be awaited instead (``await ctx.acall``, ``await engine.arun``)."""
+    if not inspect.isawaitable(value):
+        return value
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_awaiting(value))
+    close = getattr(value, "close", None)
+    if close is not None:
+        close()                             # it will never run: say so quietly
+    raise NodeError("a coroutine cannot be waited for here, inside a running event loop: await it "
+                    "(ctx.acall, engine.arun)")
+
+
+async def _awaiting(value: Any) -> Any:
+    return await value
