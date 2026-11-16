@@ -15,7 +15,7 @@ from .journal import Journal, pack, pack_body, unpack_body
 from .ledger import Ledger
 from .result import Result
 from .scheduler import Scheduler
-from .wiring import Wiring
+from .wiring import ACTIVE, PAUSED, STOPPED, Wiring
 
 
 class Act:
@@ -71,6 +71,9 @@ class Recorder:
     def once(self, node: str, round: int, name: str, value: Any) -> None:
         self.journal.write({"kind": "once", "node": node, "round": round, "name": name, "value": value})
 
+    def control(self, nodes: list[str], action: str, by: str | None) -> None:
+        self.journal.write({"kind": "control", "nodes": nodes, "action": action, **({"by": by} if by else {})})
+
     def change(self, under: str, graph: str, dropped: int) -> None:
         self.journal.write({"kind": "change", "from": under, "graph": graph, "dropped": dropped})
 
@@ -92,6 +95,9 @@ class Recorder:
     def inner(self, node: str, round: int) -> Journal:
         """The journal of a run made inside activation ``round`` of ``node``."""
         return Journal(self.inner_dir / f"{node}-{round}.jsonl", sync=self.journal.sync)
+
+
+SWITCHED = {"pause": PAUSED, "stop": STOPPED, "resume": ACTIVE, "restart": ACTIVE}
 
 
 def under(records: list[dict]) -> str | None:
@@ -117,6 +123,13 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
             ledger.add(record["amounts"])
         elif kind == "once":
             ledger.keep(record["node"], record["round"], record["name"], record["value"])
+        elif kind == "control":
+            for id in record["nodes"]:
+                state = states.get(id)
+                if state is not None:
+                    state.status = SWITCHED[record["action"]]
+                if record["action"] == "restart":
+                    snaps.pop(id, None)         # it started over: what it held before is gone
         if kind == "act":
             for described in record.get("changes", ()):
                 change(described)

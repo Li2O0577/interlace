@@ -12,7 +12,7 @@ from collections import deque
 from typing import Any, Callable
 
 from ..base import Envelope, Ref, digest
-from .wiring import Feed, State, refresh
+from .wiring import ACTIVE, Feed, State, refresh
 
 # how one envelope taken from a feed is turned into what the node sees: (feed, envelope body) -> value
 Read = Callable[[Feed, Any], Any]
@@ -28,7 +28,7 @@ class Scheduler:
 
     def consider(self, state: State) -> None:
         """Queue the node if it can be activated now."""
-        if state.running or state.queued or self.stopped or state.called:
+        if state.running or state.queued or self.stopped or state.called or state.status != ACTIVE:
             return
         if state.any:
             arrivals = state.arrivals
@@ -91,14 +91,44 @@ class Scheduler:
             self.refresh(port)
         return envelope
 
+    def withdraw(self, state: State) -> None:
+        """Take a queued node out of the queue: its switch is no longer on."""
+        if state.queued:
+            state.queued = False
+            try:
+                self.ready.remove(state)
+            except ValueError:
+                pass
+
+    def give_back(self, state: State) -> None:
+        """Put back what a cut activation took, in front, as if it had never been taken. A newer value on a
+        feed that keeps only the latest one wins."""
+        for feed, envelope in reversed(state.holding):
+            if feed.gone or (feed.latest and feed.box):
+                continue
+            box = feed.box
+            box.appendleft(envelope)
+            if len(box) == 1:
+                port = feed.port
+                if feed.back:
+                    port.back_full += 1
+                else:
+                    port.forward_full += 1
+                self.refresh(port)
+            if state.any:
+                state.arrivals.appendleft(feed)
+        state.holding = []
+
     def take(self, state: State, read: Read) -> tuple[dict, tuple, tuple]:
         """The inputs of one activation, the ids of the envelopes they came in, and which of those were used up."""
         inputs: dict[str, Any] = {}
         cause: list[str] = []
+        holding = state.holding = []
 
         def pop(feed):
             envelope = self.pop(feed)
             cause.append(envelope.id)
+            holding.append((feed, envelope))
             return read(feed, envelope.body)
 
         if state.any:

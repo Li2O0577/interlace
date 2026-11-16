@@ -29,10 +29,19 @@ class RunContext(Context):
         return await self._engine._acall(self._state, port, payload, self._act)
 
     def stopping(self) -> bool:
-        if self._engine._stopping():
+        if self._state.halt or self._engine._stopping():
             self._cut = True
             return True
         return False
+
+    def checkpoint(self) -> bool:
+        return self._engine._checkpoint(self._state, self)
+
+    async def acheckpoint(self) -> bool:
+        return await self._engine._acheckpoint(self._state, self)
+
+    def control(self, nodes, action: str, *, team: bool = False) -> list:
+        return self._engine._control(nodes, action, team, self.node)
 
     def engine(self, graph: Graph, protocols: Protocols | None = None, *, workers: int = 0, firm: bool = False) -> "Engine":
         return self._engine._inner(self, graph, protocols, workers, firm)

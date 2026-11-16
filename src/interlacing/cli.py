@@ -6,6 +6,7 @@
     interlacing resume --dir RUN
     interlacing answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
     interlacing status --dir RUN
+    interlacing control (pause|resume|stop|restart) NODE... --dir RUN [--team]
     interlacing files  --dir RUN
     interlacing serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
                          [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY] [--remote ADDRESS]...
@@ -16,7 +17,8 @@ names a directory whose folders may be nodes, each an application with a ``node.
 an address of a served node the graph may reach. ``node-serve`` serves one node for graphs elsewhere: it
 prints ``{"address": ...}`` and serves until interrupted; listening beyond this machine needs a token in the
 environment variable ``--token-env`` names. ``files``
-lists what is in a run's workspace and which node wrote each file.
+lists what is in a run's workspace and which node wrote each file. ``control`` sets the switch of nodes of a
+run that is not being run now; it holds when the run is resumed.
 
 A graph file may take text (a prompt, say) from files in its own directory: ``{"file": "prompts/lead.md"}``.
 
@@ -116,6 +118,11 @@ def _parser() -> argparse.ArgumentParser:
     resume.add_argument("--dir", required=True)
     resume.add_argument("--budget", **budget)
     commands.add_parser("status", help="say where a run stands").add_argument("--dir", required=True)
+    control = commands.add_parser("control", help="pause, resume, stop or restart nodes of a run")
+    control.add_argument("action", choices=["pause", "resume", "stop", "restart"])
+    control.add_argument("nodes", nargs="+", metavar="NODE")
+    control.add_argument("--dir", required=True)
+    control.add_argument("--team", action="store_true", help="and every node they manage, all the way down")
     commands.add_parser("files", help="list the files in a run's workspace and who wrote them").add_argument("--dir", required=True)
     answer = commands.add_parser("answer", help="answer a question a person in the graph was asked")
     answer.add_argument("--dir", required=True)
@@ -196,6 +203,8 @@ def main(argv=None, out=None) -> int:
                 state = Run(args.dir).resume(budget=dict(args.budget))
             elif args.command == "answer":
                 state = Run(args.dir).answer(json.loads(args.json) if args.json is not None else args.text, args.question)
+            elif args.command == "control":
+                state = Run(args.dir).control(args.nodes, args.action, team=args.team)
             elif args.command == "files":
                 state = {"files": Run(args.dir).files()}
             else:

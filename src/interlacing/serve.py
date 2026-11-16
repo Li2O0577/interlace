@@ -16,7 +16,7 @@ the command line works on, so a run started here can be looked at or answered fr
 The transport is stdio: one JSON-RPC message per line, in on standard input and out on standard output.
 Standard output carries nothing else; anything a node prints goes to standard error.
 
-Tools: ``check``, ``start``, ``status``, ``resume``, ``stop``, ``answer``, ``runs``. Tool calls are handled
+Tools: ``check``, ``start``, ``status``, ``resume``, ``stop``, ``control``, ``answer``, ``runs``. Tool calls are handled
 side by side, so a long run does not hold up a question about another. A call to ``start`` or ``resume``
 lasts until the run is done, needs a person, or fails; with ``wait: false`` it returns at once and the run
 goes on in the server, to be asked about with ``status`` and ended early with ``stop``. A client that cancels
@@ -63,6 +63,14 @@ TOOLS = [
     {"name": "stop", "description": "Ask a run that is going to stop. Nothing new starts in it; it ends as stopped and "
      "can be resumed.",
      "inputSchema": {"type": "object", "properties": {"run": _RUN}, "required": ["run"]}},
+    {"name": "control", "description": "Pause, resume, stop or restart nodes of a run, while it goes or between "
+     "goes. pause: it waits at its next step; resume: it goes on; stop: it ends its present work, which is kept for "
+     "later; restart: it starts its work again, forgetting what it held.",
+     "inputSchema": {"type": "object", "properties": {
+         "run": _RUN, "nodes": {"type": "array", "items": {"type": "string"}, "description": "The nodes' ids."},
+         "action": {"type": "string", "enum": ["pause", "resume", "stop", "restart"]},
+         "team": {"type": "boolean", "description": "Also every node they manage, all the way down."}},
+         "required": ["run", "nodes", "action"]}},
     {"name": "answer", "description": "Give a person's answer to a question a run is waiting on. The answer must come "
      "from the person who was asked. Call resume afterwards.",
      "inputSchema": {"type": "object", "properties": {
@@ -177,6 +185,19 @@ class Server:
         while not run.stop() and arguments["run"] in self._going:
             time.sleep(0.005)                       # it has been taken on and its engine is about to exist
         return {"run": arguments["run"], "status": "stopping"}
+
+    def control(self, arguments: Mapping) -> dict:
+        run = self._run(arguments)
+        nodes, action = arguments.get("nodes"), arguments.get("action")
+        if not isinstance(nodes, list) or not all(isinstance(n, str) for n in nodes) or not nodes:
+            raise SpecError("nodes must be a list of node ids")
+        going = self._going.get(arguments["run"])
+        if going is not None:
+            while going._now is None and arguments["run"] in self._going:
+                time.sleep(0.005)                   # taken on: its engine is about to exist
+            if going._now is not None:
+                return {"run": arguments["run"], **going.control(nodes, str(action), team=bool(arguments.get("team")))}
+        return {"run": arguments["run"], **run.control(nodes, str(action), team=bool(arguments.get("team")))}
 
     def answer(self, arguments: Mapping) -> dict:
         if "answer" not in arguments:

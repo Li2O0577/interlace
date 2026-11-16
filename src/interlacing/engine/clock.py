@@ -30,7 +30,7 @@ def overrun(states: Iterable[State], now: float) -> tuple[State | None, float | 
     falls due (None when no running activation has a limit)."""
     wait = None
     for state in states:
-        if state.running and state.time_limit is not None and state.time_limit != INF:
+        if state.running and state.time_limit is not None and state.time_limit != INF and state.status != "paused":
             left = state.since + state.time_limit - now
             if left <= 0:
                 return state, None

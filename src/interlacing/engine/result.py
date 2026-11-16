@@ -32,6 +32,7 @@ class Result:
     complete: bool = True                                    # False when the run was stopped with work left
     problems: list[dict] = field(default_factory=list)       # what failed a check and was repaired or let through
     used: dict[str, float] = field(default_factory=dict)     # what the nodes reported using, added up
+    held: dict[str, str] = field(default_factory=dict)       # nodes whose switch was not on at the end: paused or stopped
 
     def last(self, name: str, default: Any = None) -> Any:
         values = self.outputs.get(name)

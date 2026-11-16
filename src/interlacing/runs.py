@@ -293,7 +293,8 @@ class Run:
             finally:
                 self._now = None
             return self._state(DONE if result.complete else STOPPED, outputs=result.outputs, rounds=result.rounds,
-                               limited=list(result.limited), problems=result.problems, used=result.used)
+                               limited=list(result.limited), problems=result.problems, used=result.used,
+                               **({"held": result.held} if result.held else {}))
 
     def stop(self) -> bool:
         """Ask the run this object is running to stop: nothing new starts, and it ends as ``stopped``, to be
@@ -303,6 +304,48 @@ class Run:
             return False
         engine.stop()
         return True
+
+    def control(self, nodes: Any, action: str, *, team: bool = False) -> dict:
+        """Pause, resume, stop or restart nodes of this run (see ``Engine.control``). While this object runs
+        it, at once; otherwise the change is written to the journal and holds when the run is taken up. A run
+        that another process is running is controlled through that process."""
+        engine = self._now
+        if engine is not None:
+            changed = engine.control(nodes, action, team=team)
+            return {"status": RUNNING, "changed": changed, "switches": self.switches()}
+        self._held()
+        path = self.directory / "journal.jsonl"
+        if not path.exists():
+            raise SpecError(f"{self.directory} has not been started")
+        from .engine.recorder import SWITCHED
+        if action not in SWITCHED:
+            raise SpecError(f"no action {action!r}: one of {', '.join(SWITCHED)}")
+        with _Lock(self.directory):              # refused while another process runs it
+            graph = self._engine().graph
+            journal = Journal(path)
+            known = {node.id for node in graph.nodes} | {r["node"] for r in journal.read() if r["kind"] == "act"}
+            ids = [nodes] if isinstance(nodes, str) else list(nodes)
+            missing = [id for id in ids if id not in known]
+            if missing:
+                raise SpecError(f"no node {', '.join(missing)}")
+            if team:
+                ids = [*ids, *(member for id in ids for member in graph.team(id))]
+            ids = list(dict.fromkeys(ids))
+            journal.write({"kind": "control", "nodes": ids, "action": action})
+            journal.close()
+        return {**self.status(), "changed": ids}
+
+    def switches(self) -> dict[str, str]:
+        """The nodes whose switch is not on, as the journal has it: node -> paused or stopped."""
+        from .engine.recorder import SWITCHED
+        path = self.directory / "journal.jsonl"
+        found: dict[str, str] = {}
+        if path.exists():
+            for record in Journal(path).read():
+                if record["kind"] == "control":
+                    for id in record["nodes"]:
+                        found[id] = SWITCHED[record["action"]]
+        return {id: status for id, status in found.items() if status != "active"}
 
     # ---- people ----------------------------------------------------------------------------------------
 
@@ -348,4 +391,5 @@ class Run:
             raise SpecError(f"{self.directory} holds no run")
         if _holder(self.directory) is not None:      # being run now: what state.json holds is from before
             state = {"status": RUNNING, "graph": state.get("graph"), "updated": state.get("updated")}
-        return {**state, "questions": self.questions()}
+        switches = self.switches()
+        return {**state, **({"switches": switches} if switches else {}), "questions": self.questions()}

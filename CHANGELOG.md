@@ -37,6 +37,14 @@ with a new major version.
   `workers=0` still runs one at a time in a fixed order. One that overruns its time is cancelled. `await
   ctx.acall(port, payload)` calls from such a node. `arun`, `aresume` and `ago` run such a graph on the
   caller's loop; `run` starts a loop of its own. `Node.asynchronous` says which kind a node is.
+- A switch on every node: `engine.control(nodes, "pause" | "resume" | "stop" | "restart", team=False)`, one
+  node or several. A running node acts on it at its next step (`ctx.checkpoint()`, called by `AgentNode`
+  before each request to its model and each tool): paused, it waits there; stopped, it ends and gives back
+  what it took; restarted, it also forgets what it held (`Node.reset`). Who manages whom is part of the graph
+  (`GraphBuilder.manage`, `"manages"` in a graph file, `Graph.team`), and `ctx.control` switches only nodes
+  under the caller. Switches are journaled and kept on resume; `Run.control`, `interlacing control` and the
+  MCP tool `control` set them, between goes too. A run whose remaining work is all paused ends, not complete,
+  with `Result.held`, to be taken up later. Time spent paused does not count against a time limit.
 - The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
   `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
   `Engine.used` says what the run has used so far.

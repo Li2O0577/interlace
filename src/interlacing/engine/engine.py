@@ -101,7 +101,7 @@ import inspect
 import secrets
 import threading
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from ..base import Change, Graph, GraphBuilder, GraphError, Invalid, Node, NodeError, Protocols, canonical, waited
 from .aio import Signal, Threads, athrough, through, to_end
@@ -115,7 +115,8 @@ from .result import OverBudget, Result, RunError
 from .scheduler import Scheduler
 from .stream import Stream
 from .transport import Transport
-from .wiring import INPUT, Feed, State, wire
+from .recorder import SWITCHED
+from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, State, wire
 
 __all__ = ["Engine", "OverBudget", "Result", "RunError"]
 
@@ -156,6 +157,7 @@ class Engine:
         self._lock = Signal()
         self._sched = Scheduler()
         self._active = 0
+        self._parked = 0                  # activations waiting at a checkpoint because their node is paused
         self._error: RunError | None = None
         self._result = Result(outputs={name: [] for name in graph.outputs})
         self._checks = Checks(self._result.problems, observe is not None)
@@ -312,6 +314,146 @@ class Engine:
     def _stopping(self) -> bool:
         return self._sched.stopped or (self._outer is not None and bool(self._outer()))
 
+    # ---- the switch on each node -------------------------------------------------------------------------
+
+    def control(self, nodes: str | Iterable[str], action: str, *, team: bool = False) -> list[str]:
+        """Set the switch of one node or several while the run goes on. ``action``:
+
+        * ``pause``: it does not start again; one that is running stops at its next step (``ctx.checkpoint``)
+          and waits there, holding its place;
+        * ``resume``: back on; a paused node goes on from where it waited, a stopped one takes up what waits
+          for it;
+        * ``stop``: off; one that is running ends at its next step, and what it took is put back for later;
+        * ``restart``: what it is doing is dropped as for ``stop``, what it holds is forgotten (``Node.reset``),
+          and it starts again.
+
+        ``team=True`` takes in every node the named ones manage, all the way down. Returns the nodes whose
+        switch changed. Every change is in the journal, and a resumed run keeps it."""
+        return self._control(nodes, action, team, None)
+
+    def _control(self, nodes: str | Iterable[str], action: str, team: bool, by: str | None) -> list[str]:
+        if action not in SWITCHED:
+            raise ValueError(f"no action {action!r}: one of {', '.join(SWITCHED)}")
+        ids = [nodes] if isinstance(nodes, str) else list(nodes)
+        lock = self._lock
+        with lock:
+            if not self._used or self._over:
+                raise RunError("only a run that is going can be controlled here; before or after, control it "
+                               "through its run directory")
+            graph = self.graph
+            for id in ids:
+                if id not in self._states:
+                    raise RunError(f"no node {id!r}")
+            if by is not None:
+                under = set(graph.team(by))
+                outside = [id for id in ids if id not in under]
+                if outside:
+                    raise NodeError(f"{by} does not manage {', '.join(outside)}")
+            if team:
+                ids = [*ids, *(member for id in ids for member in graph.team(id))]
+            changed = [id for id in dict.fromkeys(ids) if self._switch(self._states[id], action)]
+            if changed and self._recorder is not None:
+                self._recorder.control(changed, action, by)
+            lock.notify_all()
+        if changed and self._observe is not None:
+            self._tell("control", nodes=changed, action=action, **({"by": by} if by else {}))
+        return changed
+
+    def _switch(self, state: State, action: str) -> bool:
+        """Set one node's switch. Called under the lock. Returns whether anything changed."""
+        sched, was = self._sched, state.status
+        if was == PAUSED and action != "pause" and state.running:
+            state.since += time.monotonic() - state.paused_at    # time spent paused does not count against its limit
+        if action == "pause":
+            if was != ACTIVE:
+                return False
+            state.status = PAUSED
+            state.paused_at = time.monotonic()
+            sched.withdraw(state)
+        elif action == "stop":
+            if was == STOPPED:
+                return False
+            state.status = STOPPED
+            sched.withdraw(state)
+            if state.running:
+                state.halt = "stop"
+        elif action == "resume":
+            if was == ACTIVE:
+                return False
+            state.status = ACTIVE
+            if not state.running:
+                sched.consider(state)
+        else:                                   # restart
+            state.status = ACTIVE
+            sched.withdraw(state)
+            if state.running:
+                state.halt = "restart"
+            else:
+                state.node.reset()
+                sched.consider(state)
+        return True
+
+    def _checkpoint(self, state: State, ctx: RunContext) -> bool:
+        """A step boundary in a running activation: wait here while the node is paused. False when the
+        activation is to end now (the run is stopping, or the node was stopped or restarted)."""
+        if state.status == PAUSED and not state.halt:
+            lock, sched = self._lock, self._sched
+            with lock:
+                self._parked += 1
+                lock.notify_all()
+                try:
+                    while state.status == PAUSED and not state.halt and not sched.stopped and not self._over:
+                        if self._idle() or (self._outer is not None and self._outer()):
+                            break
+                        lock.wait(0.1)
+                finally:
+                    self._parked -= 1
+        if state.halt or self._stopping():
+            ctx._cut = True
+            return False
+        return True
+
+    async def _acheckpoint(self, state: State, ctx: RunContext) -> bool:
+        """``_checkpoint``, awaited: a paused coroutine waits without holding the loop."""
+        if state.status == PAUSED and not state.halt:
+            with self._lock:
+                self._parked += 1
+                self._lock.notify_all()
+            try:
+                while state.status == PAUSED and not state.halt and not self._sched.stopped and not self._over:
+                    with self._lock:
+                        if self._idle():
+                            break
+                    if self._outer is not None and self._outer():
+                        break
+                    await asyncio.sleep(0.05)
+            finally:
+                with self._lock:
+                    self._parked -= 1
+        if state.halt or self._stopping():
+            ctx._cut = True
+            return False
+        return True
+
+    def _idle(self) -> bool:
+        """Every activation under way is paused, and nothing else can start: the run ends here, to be taken up
+        once someone switches them on again. Called under the lock."""
+        if self._parked >= self._active and not self._sched.ready:
+            for state in self._states.values():
+                if state.running and state.status == PAUSED and not state.halt:
+                    state.halt = "park"
+            return True
+        return False
+
+    def _unfinished(self) -> dict[str, str]:
+        """Nodes whose switch is off and that still have something waiting for them."""
+        held = {}
+        for id, state in self._states.items():
+            if state.status != ACTIVE and (state.running or any(
+                    feed.box for port in state.ports.values() for feed in (*port.forward, *port.back))):
+                held[id] = state.status
+        return held
+
     def _drive(self, ended: bool = False) -> Result:
         """Run to the end in this thread: on an event loop when there are nodes to await, else in threads."""
         if self._asynchronous and not ended:
@@ -361,7 +503,7 @@ class Engine:
     def _wind_down(self, ended: bool) -> None:
         recorder = self._recorder
         if recorder is not None:
-            if not ended and not self._sched.stopped and self._error is None:
+            if not ended and not self._sched.stopped and self._error is None and not self._unfinished():
                 recorder.end()
             recorder.close()
 
@@ -382,7 +524,8 @@ class Engine:
         result.envelopes = self._sched.envelopes
         result.rounds = {id: state.round for id, state in self._states.items() if state.round}
         result.limited = tuple(self._limited)
-        result.complete = not self._sched.stopped
+        result.held = {id: state.status for id, state in self._states.items() if state.status != ACTIVE}
+        result.complete = not self._sched.stopped and not self._unfinished()
         result.used = dict(self._ledger.meter)
         self._flush()
         self._tell("ended", complete=result.complete)
@@ -652,7 +795,15 @@ class Engine:
                 self._end_streams(state)
                 state.running = False
                 self._active -= 1
-                sched.stopped = True
+                halt, state.halt = state.halt, False
+                if halt and not sched.stopped:
+                    # only this node was stopped or restarted: what it took goes back, the run goes on
+                    sched.give_back(state)
+                    if halt == "restart":
+                        state.node.reset()
+                    sched.consider(state)
+                else:
+                    sched.stopped = True
                 lock.notify_all()
             if self._observe is not None:
                 self._tell("stopped", node=node.id, round=state.round)
@@ -674,6 +825,9 @@ class Engine:
                     discard(path)
             state.running = False
             self._active -= 1
+            if state.halt == "restart":    # it finished before it looked: what it did stands, what it holds goes
+                state.node.reset()
+            state.halt = False
             sched.consider(state)
             if not sched.ready and not self._active:
                 lock.notify_all()
@@ -829,6 +983,8 @@ class Engine:
         with self._lock:
             if self._sched.stopped:
                 raise NodeError("the run is stopping")
+            if target.status != ACTIVE:
+                raise NodeError(f"{node.id} is {target.status}: it cannot answer now")
             feed.sent += 1
             target.round += 1
             self._sched.envelopes += 1
