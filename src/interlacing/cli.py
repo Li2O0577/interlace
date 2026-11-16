@@ -1,22 +1,26 @@
 """The command line.
 
-    interlacing check  graph.json [--allow MODULE]... [--processes] [--tools DIRECTORY] [--apps DIRECTORY]
+    interlacing check  graph.json [--allow MODULE]... [--processes] [--tools DIRECTORY] [--apps DIRECTORY] [--remote ADDRESS]...
     interlacing run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--tools DIRECTORY] [--workers N]
-                         [--time-limit SECONDS] [--workspace DIRECTORY] [--apps DIRECTORY]
+                         [--time-limit SECONDS] [--workspace DIRECTORY] [--apps DIRECTORY] [--remote ADDRESS]...
     interlacing resume --dir RUN
     interlacing answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
     interlacing status --dir RUN
     interlacing files  --dir RUN
     interlacing serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
-                         [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY]
+                         [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY] [--remote ADDRESS]...
+    interlacing node-serve MODULE:NAME [--listen HOST:PORT] [--make] [--token-env NAME]
 
 ``--tools`` names a tool pool: a directory of tool files the graph's agents may be given by path. ``--apps``
-names a directory whose folders may be nodes, each an application with a ``node.json``. ``files``
+names a directory whose folders may be nodes, each an application with a ``node.json``. ``--remote`` names
+an address of a served node the graph may reach. ``node-serve`` serves one node for graphs elsewhere: it
+prints ``{"address": ...}`` and serves until interrupted; listening beyond this machine needs a token in the
+environment variable ``--token-env`` names. ``files``
 lists what is in a run's workspace and which node wrote each file.
 
 A graph file may take text (a prompt, say) from files in its own directory: ``{"file": "prompts/lead.md"}``.
 
-Every command but ``serve`` prints JSON; ``serve`` is the MCP server in ``interlacing.serve``. The exit
+Every command but ``serve`` prints JSON (``node-serve`` one line, then serves); ``serve`` is the MCP server in ``interlacing.serve``. The exit
 status says how a run stands: 0 done, 1 failed or refused, 3 waiting for a person, 4 stopped.
 """
 from __future__ import annotations
@@ -24,7 +28,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .engine import JournalError
@@ -87,6 +93,8 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--processes", action="store_true", help="let the graph start external programs")
         command.add_argument("--tools", metavar="DIRECTORY", help="a tool pool: tool files the graph's agents may use")
         command.add_argument("--apps", metavar="DIRECTORY", help="a directory whose folders may be nodes (needs --processes)")
+        command.add_argument("--remote", action="append", default=[], metavar="ADDRESS",
+                             help="tcp://host:port of a served node the graph may reach (repeatable)")
 
     check = commands.add_parser("check", help="build the graph and describe it, without running anything")
     check.add_argument("graph")
@@ -122,7 +130,45 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--files", metavar="DIRECTORY", help="a directory graphs may take text from (default: none)")
     serve.add_argument("--budget", **budget)
     reach(serve)
+    served = commands.add_parser("node-serve", help="serve one node, for graphs elsewhere to use as a RemoteNode")
+    served.add_argument("target", help="module:name of a node, of a function, or (with --make) of a function that makes the node")
+    served.add_argument("--listen", default="127.0.0.1:0", metavar="HOST:PORT", help="where to listen (default: this machine, any free port)")
+    served.add_argument("--make", action="store_true", help="call the target to make the node")
+    served.add_argument("--token-env", default="INTERLACING_TOKEN", metavar="NAME",
+                        help="the environment variable holding the token clients must give (default: INTERLACING_TOKEN)")
     return parser
+
+
+def _node_serve(args, out) -> int:
+    """Serve one node until interrupted. The first line written is ``{"address": ...}``."""
+    import importlib
+    import os
+    from .nodes import serve_node
+    module, _, name = args.target.partition(":")
+    if not name:
+        module, _, name = args.target.rpartition(".")
+    if os.getcwd() not in sys.path:
+        sys.path.insert(0, os.getcwd())       # a module beside where the command is run can be named
+    try:
+        found: Any = importlib.import_module(module)
+        for part in name.split("."):
+            found = getattr(found, part)
+    except (ImportError, AttributeError, ValueError) as exc:
+        raise SpecError(f"{args.target} cannot be found: {exc}") from None
+    node = found() if args.make else found
+    host, _, port = args.listen.rpartition(":")
+    if not host or not port.isdigit():
+        raise SpecError(f"--listen is HOST:PORT, not {args.listen!r}")
+    server = serve_node(node, host=host, port=int(port), token=os.environ.get(args.token_env) or None)
+    out.write(json.dumps({"address": server.address, "node": server.describe()}) + "\n")
+    out.flush()
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.close()
+    return 0
 
 
 def main(argv=None, out=None) -> int:
@@ -130,18 +176,22 @@ def main(argv=None, out=None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "check":
-            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph), tools=args.tools, apps=args.apps), 0
+            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph), tools=args.tools, apps=args.apps,
+                                 remotes=args.remote), 0
+        elif args.command == "node-serve":
+            return _node_serve(args, out)
         elif args.command == "serve":
             from .serve import Server
             Server(args.runs, allow=args.allow, processes=args.processes, workers=args.workers, time_limit=args.time_limit,
-                   files=args.files, budget=dict(args.budget), tools=args.tools, apps=args.apps).serve()
+                   files=args.files, budget=dict(args.budget), tools=args.tools, apps=args.apps, remotes=args.remote).serve()
             return 0
         else:
             if args.command == "run":
                 inputs = _inputs(args)
                 state = Run.create(args.dir, _description(args.graph), allow=args.allow, processes=args.processes,
                                    workers=args.workers, files=_beside(args.graph), time_limit=args.time_limit,
-                                   workspace=args.workspace, budget=dict(args.budget), tools=args.tools, apps=args.apps).start(inputs)
+                                   workspace=args.workspace, budget=dict(args.budget), tools=args.tools, apps=args.apps,
+                                   remotes=args.remote).start(inputs)
             elif args.command == "resume":
                 state = Run(args.dir).resume(budget=dict(args.budget))
             elif args.command == "answer":

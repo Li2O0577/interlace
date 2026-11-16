@@ -92,6 +92,13 @@ builder.connect("draw.chart", "report.chart", "file")
 solver = FolderNode("apps/solver")      # apps/solver/node.json: {"command": ["python", "main.py"], "inputs": ["problem"], "outputs": ["answer"]}
 ```
 
+**A node that lives elsewhere.** A node that should stay up between activations (an open device, a loaded model) is served where it lives, in another process or on another machine, and `RemoteNode` stands for it in the graph. One JSON object per line goes over TCP; emits, what the node uses and a stop come through. A server listening beyond its own machine needs a token, read from an environment variable; a graph file reaches only the addresses its starter allows (`--remote ADDRESS`).
+
+```python
+serve_node(arm)                                       # or, on the other machine: interlacing node-serve mypkg.arm:arm --listen 0.0.0.0:7000 --token-env ARM_TOKEN
+far = RemoteNode("arm", "tcp://lab-pc:7000", token=os.environ["ARM_TOKEN"])
+```
+
 **A worker that works freely in its area.** `WorkerNode` is an agent with tools for the files of its area (list, read, write, edit, delete, move) and a tool that runs a command in its own directory. Its inputs and outputs are an agent's, checked the same way.
 
 ```python
@@ -206,14 +213,14 @@ The kernel carries information and looks after the run. How a model thinks, how 
 |---|---|---|
 | Abstractions | `interlacing.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
 | Engine | `interlacing.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `node`, `as_node`, `AgentNode`, `ProcessNode`, `FolderNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `WorkerNode`, `Desk`; `Workspace`, `ToolPool`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `node`, `as_node`, `AgentNode`, `ProcessNode`, `FolderNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `WorkerNode`, `RemoteNode`, `serve_node`, `Desk`; `Workspace`, `ToolPool`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
 | Blocks | `interlacing.blocks` | `Block`, `seq`, `par` |
 | Graphs as data | `interlacing.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
 | Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve`, `interlacing.quick` | `Run`; the command `interlacing`; the MCP server; `run` |
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that. Inside, the engine is a few small parts, each with one job: the mailboxes a graph becomes (`wiring`), when a node may run (`scheduler`), what is checked and what follows a problem (`checks`), the budget (`ledger`), the journal (`recorder`), time limits (`clock`).
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Thirteen examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Fourteen examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 

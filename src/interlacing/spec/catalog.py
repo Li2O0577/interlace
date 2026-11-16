@@ -34,6 +34,7 @@ class Catalog:
                     agents are shown the pictures in it, programs are started in it
     ``tools``       a tool pool: the directory an agent's tools may be taken from by path (``"tools": ["plot.py"]``);
                     without it no tool file is read or run
+    ``remotes``     the addresses (``tcp://host:port``) a ``remote`` node may reach; none when not given
     ``apps``        the directory whose folders may be nodes (``{"kind": "folder", "path": "solver"}``); without it
                     no folder is; a folder node also needs ``processes``
     ``max_workers`` the most threads a block written in a description may ask for (``None``: as many as it asks)
@@ -44,7 +45,7 @@ class Catalog:
     def __init__(self, *, allow: Iterable[str] = (), processes: bool = False,
                  models: Callable[[str], Any] | None = None, ask: Callable[[str, int, Any], Any] | None = None,
                  protocols: Protocols = DEFAULT, files=None, defaults: Mapping[str, Mapping] | None = None,
-                 workspace=None, max_workers: int | None = None, tools=None, apps=None):
+                 workspace=None, max_workers: int | None = None, tools=None, apps=None, remotes: Iterable[str] = ()):
         self.allow, self.processes, self.max_workers = tuple(allow), bool(processes), max_workers
         self.files = Path(files).resolve() if files is not None else None
         self.defaults = {kind: dict(settings) for kind, settings in (defaults or {}).items()}
@@ -54,6 +55,7 @@ class Catalog:
         self.space = Workspace(self.workspace) if self.workspace is not None else None
         self.pool = ToolPool(tools) if tools is not None else None
         self.apps = Path(apps).resolve() if apps is not None else None
+        self.remotes = tuple(remotes)
         self.layer: tuple = ()      # the blocks the nodes being built are inside, outermost first
         self._kinds: dict[str, Callable[[Mapping, "Catalog", Mapping], Node]] = {}
         from .kinds import BUILT_IN
@@ -112,6 +114,17 @@ class Catalog:
         if found != self.apps and self.apps not in found.parents:
             raise SpecError(f"{path} is outside the apps directory")
         return found
+
+    def remote(self, address: str) -> str:
+        """``address``, when it is one of ``remotes``; anything else is refused."""
+        from ..nodes.remote import parse_address
+        try:
+            wanted = parse_address(address)
+            if any(parse_address(allowed) == wanted for allowed in self.remotes):
+                return address
+        except NodeError as exc:
+            raise SpecError(str(exc)) from None
+        raise SpecError(f"{address} is not among the addresses this catalog lets a graph reach")
 
     def inside(self, block: str) -> "Catalog":
         """This catalog for the nodes of a graph that is a node, ``block``, of the one being built: their

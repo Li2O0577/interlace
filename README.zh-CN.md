@@ -89,6 +89,13 @@ builder.connect("draw.chart", "report.chart", "file")
 solver = FolderNode("apps/solver")      # apps/solver/node.json: {"command": ["python", "main.py"], "inputs": ["problem"], "outputs": ["answer"]}
 ```
 
+**放在别处的节点。** 需要在多次激活之间一直开着的节点（打开的设备、加载好的模型）放在它所在的进程或机器上服务，图里用 `RemoteNode` 代表它。连接是 TCP 上一行一个 JSON 对象，发出的内容、用量和停止信号都能过去。不在本机监听的服务必须有令牌，令牌从环境变量读；图文件只能连启动的人允许的地址（`--remote 地址`）。
+
+```python
+serve_node(arm)                                       # 或者在另一台机器上：interlacing node-serve mypkg.arm:arm --listen 0.0.0.0:7000 --token-env ARM_TOKEN
+far = RemoteNode("arm", "tcp://lab-pc:7000", token=os.environ["ARM_TOKEN"])
+```
+
 **在自己的区域里自由干活的节点。** `WorkerNode` 是一个 agent，自带操作区域内文件的工具（列目录、读、写、改、删、移动）和一个在自己目录里运行命令的工具。输入输出和普通 agent 一样，也一样经过检查。
 
 ```python
@@ -203,14 +210,14 @@ interlacing resume --dir /tmp/run                                               
 |---|---|---|
 | 抽象 | `interlacing.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
 | 引擎 | `interlacing.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`node`、`as_node`、`AgentNode`、`ProcessNode`、`FolderNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`WorkerNode`、`Desk`；`Workspace`、`ToolPool`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`node`、`as_node`、`AgentNode`、`ProcessNode`、`FolderNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`WorkerNode`、`RemoteNode`、`serve_node`、`Desk`；`Workspace`、`ToolPool`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `interlacing.blocks` | `Block`、`seq`、`par` |
 | 写成数据的图 | `interlacing.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
 | 对外 | `interlacing.runs`、`interlacing.cli`、`interlacing.serve`、`interlacing.quick` | `Run`；命令 `interlacing`；MCP 服务；`run` |
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十三个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十四个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 

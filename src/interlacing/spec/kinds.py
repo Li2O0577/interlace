@@ -5,7 +5,7 @@ from typing import Mapping
 
 from ..base import ANY, Is, ListOf, Port, Record, Schema
 from ..protocols import FileOf
-from ..nodes import (AgentNode, Branch, Collect, Desk, FolderNode, FunctionNode, GraphNode, HumanNode, IsolatedNode, Pass, ProcessNode, Roster, SinkNode,
+from ..nodes import (AgentNode, Branch, Collect, Desk, FolderNode, FunctionNode, RemoteNode, GraphNode, HumanNode, IsolatedNode, Pass, ProcessNode, Roster, SinkNode,
                      SourceNode, Until, WorkerNode)
 
 _TYPES = {t.__name__: t for t in (str, int, float, bool, list, dict, bytes, type(None))}
@@ -135,6 +135,19 @@ def folder(d, catalog, graphs):
     return node
 
 
+def remote(d, catalog, graphs):
+    """A node served elsewhere. Its token is read from the environment variable ``token_env`` names, never
+    from the graph file."""
+    import os
+    c = d["config"]
+    address = catalog.remote(c["address"])
+    token = os.environ.get(c["token_env"]) if c.get("token_env") else None
+    node = RemoteNode(d["id"], address, token=token, firing=d.get("firing"),
+                      inputs=ports(d, "inputs", catalog), outputs=ports(d, "outputs", catalog))
+    node.token_env = c.get("token_env")
+    return node
+
+
 def source(d, catalog, graphs):
     c = d["config"]
     return SourceNode(d["id"], catalog.function(c["read"]), schema=_first_schema(d, "outputs"),
@@ -197,7 +210,7 @@ def block(d, catalog, graphs):
 
 BUILT_IN = {
     "block": block,
-    "function": function, "agent": agent, "worker": worker, "process": process, "isolated": isolated, "folder": folder, "source": source, "sink": sink, "human": human,
+    "function": function, "agent": agent, "worker": worker, "process": process, "isolated": isolated, "folder": folder, "remote": remote, "source": source, "sink": sink, "human": human,
     "graph": graph,
     "roster": lambda d, catalog, graphs: Roster(d["id"], d["config"]["size"]),
     "pass": lambda d, catalog, graphs: Pass(d["id"], schema=_first_schema(d, "inputs")),

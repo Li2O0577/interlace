@@ -114,6 +114,23 @@ run(Chain(clean, Fan(words, letters), report), {"in": " the cat "}).last("out")
 
 在 Python 里：`FolderNode("apps/solver")`，id 默认是文件夹名。写在 JSON 图里是 `{"id": "solve", "kind": "folder", "path": "solver"}`：路径相对于启动的人给的应用目录（`Catalog(apps=目录)`，命令行和 MCP 服务是 `--apps 目录`），出了这个目录就拒绝，而且和 `process` 一样需要允许启动进程。`node.json` 的内容进了图的摘要，改了它，旧的运行要用 `resume(change=True)` 接着跑。
 
+### 在别的进程或别的机器上的节点
+
+`FolderNode` 每次激活都重新启动程序；有些东西应该一直开着，跨越多次激活保留它拿着的东西：一台打开的设备、一个加载好的模型、一个连接。这样的节点放在它所在的进程里“服务”，图里用 `RemoteNode` 代表它：
+
+```python
+server = serve_node(arm)                     # 远端：任何节点或普通函数；也可以在命令行里 interlacing node-serve
+far = RemoteNode("arm", server.address)      # 图里：端口向远端问来，每次激活在远端执行
+run(Chain(plan, far), {"in": task})
+```
+
+- 在另一台机器上：`interlacing node-serve mypkg.arm:make --listen 0.0.0.0:7000 --token-env ARM_TOKEN`。目标写成 `模块:名字`，是节点、普通函数，或者加 `--make` 时是造出节点的函数。它先打印一行 `{"address": ..., "node": ...}`，然后一直服务到被中断。
+- 连接上是一行一个 JSON 对象（UTF-8）：`hello`（带令牌）之后，每次激活发一条 `run`（带输入、轮次和 `ctx.key`），远端回 `emit`、`use`，最后 `done` 或 `error`；运行要停下时近端发 `stop`，远端的 `ctx.stopping()` 随之变真。
+- 过去和回来的都只能是普通数据。远端一次只跑一次激活，不论是谁请求的；`ctx.call` 被拒绝（远端够不到图里），`ctx.once` 每次都会做，因为远端没有日志。远端用量通过 `use` 回到这次运行，受预算约束。
+- 连接在激活中途断了，这次激活失败，可以照常重试或从日志恢复；下一次激活会重新连接。
+- 不在本机（`127.0.0.1`）监听的服务必须有令牌，每个客户端都要带上。这不是加密：跨机器时放在已经可信的网络里，或者经过隧道。
+- 写在 JSON 图里是 `{"id": "arm", "kind": "remote", "address": "tcp://host:7000", "token_env": "ARM_TOKEN"}`。图文件只能连启动的人允许的地址（`Catalog(remotes=[...])`，命令行和 MCP 服务是 `--remote 地址`，可以重复）；令牌只从 `token_env` 指的环境变量读，不写进图文件、运行目录或日志。端口不写时在建图时向远端询问，所以建图时远端要已经在服务。
+
 ## 边和协议
 
 边从一个输出口到一个输入口，带一个协议名。协议决定什么能通过、怎么投递、到达时是否启动接收节点。
@@ -466,8 +483,9 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
 | `files --dir RUN` | 列出工作区里的文件，以及每个文件是哪个节点在第几次激活里写的 |
+| `node-serve 模块:名字` | 把一个节点放在这个进程里服务，供别处的 `RemoteNode` 使用；`--listen 地址:端口`、`--token-env 变量名`、`--make`，见“在别的进程或别的机器上的节点” |
 
-`check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes`、`--tools 工具池目录` 和 `--apps 应用目录` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
+`check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes`、`--tools 工具池目录`、`--apps 应用目录` 和 `--remote 地址` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
 
 `run` 和 `resume` 的退出码说明运行停在哪里：0 完成，1 失败或被拒绝，3 在等人回答，4 因为轮数或停止条件而停下。
 
@@ -497,7 +515,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 
 ## MCP 服务
 
-`interlacing serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--tools 目录] [--apps 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
+`interlacing serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--tools 目录] [--apps 目录] [--remote 地址]... [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
 
 ```json
 {"mcpServers": {"interlacing": {"command": "interlacing", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
@@ -533,12 +551,12 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十三个可以直接运行的示例：只用普通函数写的图、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十四个可以直接运行的示例：只用普通函数写的图、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 
 - 恢复是“至少一次”：被打断的节点会重跑。`ctx.once` 让图外做过的事不再重复，只有“做完”到“记下”之间的一瞬间例外，那一瞬间靠把 `ctx.key` 交给外部服务去重。
-- 流和调用还不经过传输接口；目前只有进程内的实现。
+- 流和调用还不经过传输接口；目前只有进程内的实现。远端节点（`RemoteNode`）只能发普通的值，不能接流或调用，也不能在远端调用图里的节点。
 - 设备节点只用假设备测试过。两种模型接口各对一个真实的兼容服务做过一次很小的验证（普通回答、流式、图里的工具调用、JSON 输出、密钥错误、命令行跑一条链），自动测试仍然只用脚本化的假模型；思考内容、图片输入、限流重试没有对真实服务验证过。
 - 运行目录的锁只在 `Run`、命令行和 MCP 服务这一层；直接用 `Engine` 和 `Journal` 时，同一个日志文件不能给两个引擎同时用。Windows 上不会自动接管死进程留下的锁。
 - 测试在 Linux、macOS 和 Windows 上都跑。Windows 上外部程序输出的 `\r\n` 会换成 `\n`；控制台不是 UTF-8 时，命令行输出的 JSON 里非 ASCII 字符写成转义。
