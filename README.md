@@ -22,6 +22,22 @@ Python 3.11 or later, on Linux, macOS and Windows.
 ## A first graph
 
 ```python
+from interlacing import Chain, run
+
+def double(x: int) -> int: return x * 2
+def show(x: int) -> str: return f"={x}"
+
+print(run(Chain(double, show), {"in": 21}).last("out"))     # =42
+```
+
+A plain function is a node: its name is the node's id, its parameters are the inputs, its annotations the
+schemas, and what it returns leaves through `out`. Every method takes functions, nodes and other methods
+alike. What a node is can be as small as one function or as large as a whole application in a folder; the
+graph only draws the parts that need to be kept apart.
+
+The same graph written out in full, where every name and protocol is chosen by hand:
+
+```python
 from interlacing import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
@@ -29,6 +45,13 @@ show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=
 
 graph = Chain(double, show).build(DEFAULT)
 print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
+```
+
+`@node` sits between the two: it writes only what differs from what the function says about itself.
+
+```python
+@node(outputs=["kept", "dropped"], check=...)
+def sort(x: list): ...
 ```
 
 ## What it does
@@ -62,6 +85,12 @@ builder.connect("draw.chart", "report.chart", "file")
 ```
 
 **A workspace laid out by node.** A run's files live in one workspace. Each node has its own directory, `shared/` is for everyone, and a block is one more layer (`review/writer/`, `review/shared/`). A node reads everything and writes to its own directory and the shared ones of its layers, unless its description says otherwise (`"reads"`, `"writes"`). The workspace records which node wrote each file in which activation: `interlacing files --dir RUN`.
+
+**A whole application as one node.** A folder that holds a `node.json` (how to start it, what it takes, what it gives) is a node, whatever language it is written in and however large it is. Each activation starts it in its folder, hands it the inputs as one JSON object and takes one back; a plain command-line program that reads and writes text fits too. A graph file names a folder with `{"kind": "folder", "path": "solver"}`, and only inside the directory its starter gives (`--apps DIRECTORY`).
+
+```python
+solver = FolderNode("apps/solver")      # apps/solver/node.json: {"command": ["python", "main.py"], "inputs": ["problem"], "outputs": ["answer"]}
+```
 
 **A worker that works freely in its area.** `WorkerNode` is an agent with tools for the files of its area (list, read, write, edit, delete, move) and a tool that runs a command in its own directory. Its inputs and outputs are an agent's, checked the same way.
 
@@ -177,14 +206,14 @@ The kernel carries information and looks after the run. How a model thinks, how 
 |---|---|---|
 | Abstractions | `interlacing.base` | `Node`, `Port`, `Schema`, `Edge`, `Protocol`, `Envelope`, `Graph`, `GraphBuilder`, `Method`, `Context` |
 | Engine | `interlacing.engine` | `Engine`, `Result`, `RunError`, `Journal`, `Transport` |
-| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `AgentNode`, `ProcessNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `WorkerNode`, `Desk`; `Workspace`, `ToolPool`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
+| Parts | `interlacing.nodes`, `.protocols`, `.methods`, `.models` | `FunctionNode`, `node`, `as_node`, `AgentNode`, `ProcessNode`, `FolderNode`, `SourceNode`, `SinkNode`, `HumanNode`, `GraphNode`, `IsolatedNode`, `WorkerNode`, `Desk`; `Workspace`, `ToolPool`; `Chain`, `Loop`, `Fan`, `Tree`, `Star`, `Governed`, `Pool` |
 | Blocks | `interlacing.blocks` | `Block`, `seq`, `par` |
 | Graphs as data | `interlacing.spec` | `dump`, `load`, `read`, `write`, `Catalog`, `SpawnNode` |
-| Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve` | `Run`; the command `interlacing`; the MCP server |
+| Outside | `interlacing.runs`, `interlacing.cli`, `interlacing.serve`, `interlacing.quick` | `Run`; the command `interlacing`; the MCP server; `run` |
 
-Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that.
+Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that. Inside, the engine is a few small parts, each with one job: the mailboxes a graph becomes (`wiring`), when a node may run (`scheduler`), what is checked and what follows a problem (`checks`), the budget (`ledger`), the journal (`recorder`), time limits (`clock`).
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Ten examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Twelve examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 

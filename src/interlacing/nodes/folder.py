@@ -22,7 +22,7 @@ writes plain text, as most command-line programs do.
 A command that starts with ``python`` runs under the Python that runs the graph. A non-zero exit fails the
 node, with the end of what the application wrote to standard error. The application is killed when it runs
 longer than ``timeout`` seconds, or the run's time limit, or the run is stopped. When the graph has a
-workspace, ``INTERLACING_WORK`` names it.
+workspace, ``INTERLACING_WORKSPACE`` names it.
 
 This is not a sandbox: the application has the rights of the process that runs the graph.
 """
@@ -130,7 +130,7 @@ class FolderNode(Node):
         env = {**os.environ, **self.env, "INTERLACING_IN": str(given), "INTERLACING_OUT": str(answer),
                "PYTHONIOENCODING": "utf-8"}
         if self.workspace is not None:
-            env["INTERLACING_WORK"] = self.workspace
+            env["INTERLACING_WORKSPACE"] = self.workspace
         return env
 
     def run(self, ctx, inputs: Mapping[str, Any]):

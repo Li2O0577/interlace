@@ -39,15 +39,39 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 
 `run` 也可以直接返回 `{输出口: 内容}`。`open`、`close`、`snapshot`、`restore` 是可选的。
 
-端口：`Port(name, schema, required=True, many=False, call=False)`。`schema` 描述内容的形状，建图时检查两端是否相容，运行时检查每一份内容。`many` 的输入口可以接多条边，收到的是列表。`call=True` 的输出口用来发起调用。
+端口：`Port(name, schema, required=True, many=False, call=False)`。`schema` 描述内容的形状，建图时检查两端是否相容，运行时检查每一份内容。一个不声明形状的输出口（什么都可能给）可以接到任何输入口上：建图时放行，内容到达时按接收口的形状检查，不合就按接收口的 `invalid` 失败或警告。两端都声明了而且不相容（比如 `int` 接 `str`）仍然在建图时拒绝。`many` 的输入口可以接多条边，收到的是列表。`call=True` 的输出口用来发起调用。
 
 触发方式：`Firing.ALL`（默认）等所有必需输入到齐后运行一次；`Firing.ANY` 每到一份输入就运行一次。
 
-现成的节点：
+### 轻写法
+
+一个节点可以小到一个函数，也可以大到一个文件夹里的整个应用；图里只画需要分开管的几块（要并行的、要换模型的、要人介入的、要中断后接着跑的），其余都是节点内部的普通代码。为了不让“接进图”本身变成负担，同一个内核有三层写法，最后都是同一种节点、同一个引擎，随时可以从轻的换成重的：
+
+1. **普通函数**。函数名是节点 id，参数是输入口（有默认值的是可选输入），类型标注是端口的形状（`int`、`str`、`list[float]`、`dict`；`float` 也收整数；联合类型等不按形状检查），返回值从 `out` 出去，标注 `-> None` 就没有输出；第一个参数叫 `ctx` 时它拿到的是上下文。`Chain`、`Loop`、`Fan`、`Tree` 等方法直接收函数，也直接收别的方法（成为一个以方法名命名的 `GraphNode`）；同一个函数出现两次，第二个叫 `名字_2`。`as_node(f)` 把函数变成节点，lambda 没有名字，要给 id：`as_node(f, "名字")`。
+2. **`@node`**。写在函数定义上，只写和默认不同的地方：`@node(outputs=["kept", "dropped"], check=..., repairs=2, firing=Firing.ANY, id=...)`。被装饰的仍然可以当函数直接调用。
+3. **完整写法**。`Node` 子类、`Port`、`GraphBuilder`，全部照旧。
+
+协议也可以不写：`build()`、`compile()`、`Engine(graph)`、`GraphNode(id, graph)`、`ctx.engine(graph)` 不给协议时用 `DEFAULT`，图记住自己建时用的协议，引擎默认用它；`connect(a, b)` 不写协议时是 `value`。`interlacing.run(东西, 输入, **引擎参数)` 一步建图并运行，东西可以是图、方法、节点或函数；单个节点或函数时，图的输入输出就是它的端口名。
+
+```python
+from interlacing import Chain, Fan, node, run
+
+def clean(text: str) -> str: return " ".join(text.split())
+def words(text: str) -> int: return len(text.split())
+def letters(text: str) -> int: return sum(c.isalpha() for c in text)
+
+@node(check=lambda line: not line.startswith("0 ") or "没有词")
+def report(x: list) -> str: return f"{x[0]} 词, {x[1]} 字母"
+
+run(Chain(clean, Fan(words, letters), report), {"in": " the cat "}).last("out")
+```
+
+### 现成的节点
 
 | 节点 | 是什么 |
 |---|---|
-| `FunctionNode` | 一个 Python 函数 |
+| `FunctionNode` | 一个 Python 函数（`FunctionNode.of(f)`、`as_node(f)`、`@node` 从函数本身读出端口） |
+| `FolderNode` | 一个文件夹里的整个应用，见下面“整个文件夹作为一个节点”。写在 JSON 图里是 `"kind": "folder"` |
 | `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`interlacing.models` 里有现成的。`memory` 可以是一个函数，见下 |
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `IsolatedNode` | 一个 Python 函数，在单独的进程里运行：超过运行的时间上限、自己的 `timeout`，或者运行被停止时，进程被杀掉；它崩溃只让这个节点失败。函数必须是可导入模块顶层的函数（或它的带点名字），输入和返回值以 JSON 在两个进程之间传递，拿不到 `ctx`。它不是沙箱。写在 JSON 图里是 `"kind": "isolated"`，需要目录允许启动进程 |
@@ -66,6 +90,29 @@ print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
 - 图片：到达的内容里只要有 `{"mime": "image/png", "data": <base64>}`，就作为图片交给模型，文字里留一个 `[image 1]` 的位置。
 
 系统提示词默认是空的，包不替你写提示词。要限定一个智能体读写哪些文件、遵守什么目录结构，写在它的 `system` 里；需要硬性限制时，把读写文件做成一个工具节点，由那个节点检查路径。
+
+### 整个文件夹作为一个节点
+
+一个文件夹里放一个 `node.json`，写明怎么启动这个应用、它接收什么、给出什么，这个文件夹就是一个节点。应用可以用任何语言写、有任何大小，不需要知道 interlacing：
+
+```json
+{
+  "command": ["python", "main.py"],
+  "inputs": ["problem", {"name": "data", "required": false, "type": "list"}],
+  "outputs": ["answer", "notes"],
+  "timeout": 600
+}
+```
+
+- 每次激活在这个文件夹里启动 `command`。以 `python` 开头的命令用运行图的那个 Python。
+- 到达的输入作为一个 JSON 对象（输入名到值）写到标准输入，也写在环境变量 `INTERLACING_IN` 指的文件里。
+- 应用的回答是一个 JSON 对象（输出名到值）：写进 `INTERLACING_OUT` 指的文件，这样标准输出可以随便打印；没写这个文件时，整个标准输出就是回答。没出现的输出口不发东西，出现了不认识的输出名算失败。
+- `"format": "text"`：最多一个输入、一个输出，读写纯文本，适合普通命令行程序。
+- 端口的 `type` 可以是 `any`（默认）、`int`、`float`、`number`、`str`、`bool`、`list`、`dict`。
+- 非零退出算失败，报错带上标准错误的最后一段；超过 `timeout`、运行的时间上限或运行被停止时，进程被杀掉。图有工作区时，`INTERLACING_WORKSPACE` 是它的路径。
+- 它不是沙箱：应用有启动它的进程的权限。
+
+在 Python 里：`FolderNode("apps/solver")`，id 默认是文件夹名。写在 JSON 图里是 `{"id": "solve", "kind": "folder", "path": "solver"}`：路径相对于启动的人给的应用目录（`Catalog(apps=目录)`，命令行和 MCP 服务是 `--apps 目录`），出了这个目录就拒绝，而且和 `process` 一样需要允许启动进程。`node.json` 的内容进了图的摘要，改了它，旧的运行要用 `resume(change=True)` 接着跑。
 
 ## 边和协议
 
@@ -299,6 +346,18 @@ graph = Chain(planner, grow).build(DEFAULT)
 
 `transport` 是发送和接收之间的接口，进程内不需要它；跨进程或跨机器的传递方式放在这里。
 
+引擎内部按职责分成几个部件，`Engine` 只负责把它们串起来，各部件不对外公开，接口可能变：
+
+| 部件 | 管什么 |
+|---|---|
+| `wiring` | 图在运行时的样子：每条边的信箱、每个输入口、每个节点的状态，开始运行时建一次 |
+| `scheduler` | 信封入箱、取出，节点还缺几个输入，就绪队列 |
+| `checks` | 发出时和到达时的检查，退回重做、放行警告、记录问题 |
+| `ledger` | 用量的累计和预算，`ctx.once` 记下的结果 |
+| `recorder` | 往日志里写什么，以及从日志恢复一次运行 |
+| `clock` | 每个节点的时限，以及哪个激活超时了 |
+| `context` | 节点拿到的 `ctx` |
+
 ## 把图写成数据
 
 `interlacing.spec` 把图写成 JSON，再从 JSON 建回同一张图：
@@ -380,7 +439,7 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
 | `files --dir RUN` | 列出工作区里的文件，以及每个文件是哪个节点在第几次激活里写的 |
 
-`check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes` 和 `--tools 工具池目录` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
+`check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes`、`--tools 工具池目录` 和 `--apps 应用目录` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
 
 `run` 和 `resume` 的退出码说明运行停在哪里：0 完成，1 失败或被拒绝，3 在等人回答，4 因为轮数或停止条件而停下。
 
@@ -410,7 +469,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 
 ## MCP 服务
 
-`interlacing serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
+`interlacing serve --runs 目录 [--allow 模块]... [--processes] [--workers N] [--time-limit 秒] [--files 目录] [--tools 目录] [--apps 目录] [--budget 名=数]...` 把同样的操作通过 Model Context Protocol 提供给别的应用（通常是那个应用里的模型）。传输是 stdio，一行一条 JSON-RPC 消息。在支持 MCP 的应用里这样配置：
 
 ```json
 {"mcpServers": {"interlacing": {"command": "interlacing", "args": ["serve", "--runs", "/path/to/runs", "--allow", "mypkg"]}}}
@@ -431,6 +490,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 - 图能够到哪些模块、能不能启动程序、用几个线程，都由启动服务的人在命令行上定。客户端在调用里多写什么都不起作用，默认什么都够不到。
 - 运行放在哪里由服务决定，名字由服务生成；客户端给的名字只用来在 `--runs` 目录下查找，带路径的名字一律查不到。
 - 图里的 `{"file": ...}` 只能读 `--files` 目录下的文件，不给这个参数就一个文件都读不了。
+- 工具文件只能来自 `--tools` 目录，当作节点的应用只能是 `--apps` 目录下的文件夹。
 - 模型的密钥来自服务进程的环境变量，客户端看不到，也传不进来。
 - 节点打印的东西去标准错误，标准输出上只有协议消息。
 
@@ -445,7 +505,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十个可以直接运行的示例：在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十二个可以直接运行的示例：只用普通函数写的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 

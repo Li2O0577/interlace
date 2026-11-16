@@ -4,6 +4,25 @@ Versions before 1.0 may change any interface; each change is listed here. From 1
 by `interlacing` and the formats of graph files, run directories and journals change incompatibly only
 with a new major version.
 
+## 0.14.0
+
+- Shorter ways to write a graph. A plain function is a node: its name is the id, its parameters the inputs,
+  its annotations the schemas, and what it returns leaves through `out` (`as_node`, `FunctionNode.of`).
+  `@node(...)` writes only what differs. `Chain`, `Loop`, `Fan` and `Tree` take functions and other methods
+  where they take nodes. `interlacing.run(thing, inputs)` builds and runs in one step.
+- Protocols may be left out: a compiled graph keeps the protocols it was built with, and `build()`,
+  `compile()`, `Engine(graph)`, `GraphNode(id, graph)` and `ctx.engine(graph)` use them, or `DEFAULT`.
+  `connect(a, b)` is a `value` edge.
+- A port that says nothing of what it produces may feed a port that asks for a schema; what arrives is
+  checked there, and fails or warns as the receiving port says. Ports whose schemas disagree are still refused.
+- `FolderNode` (`"kind": "folder"`): a whole application in a folder, described by its `node.json`, as one
+  node. Inputs go in as one JSON object and the answer comes back as one, by file or on standard output; a
+  text format suits plain command-line programs. Graph files reach only the folders under `--apps`
+  (`Catalog(apps=)`, `Run.create(apps=)`, the server).
+- The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
+  `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
+  `Engine.used` says what the run has used so far.
+
 ## 0.13.0
 
 - `Workspace` and `Area`: a run's files laid out by node (`<node>/`, `shared/`), one more layer for each block;

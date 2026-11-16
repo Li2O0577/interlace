@@ -22,6 +22,19 @@ pip install -e .            # 或者从代码检出安装
 ## 第一张图
 
 ```python
+from interlacing import Chain, run
+
+def double(x: int) -> int: return x * 2
+def show(x: int) -> str: return f"={x}"
+
+print(run(Chain(double, show), {"in": 21}).last("out"))     # =42
+```
+
+普通函数就是节点：函数名是节点的 id，参数是输入口，类型标注是端口的类型，返回值从 `out` 出去。每个方法都同样接受函数、节点和别的方法。一个节点可以小到一个函数，也可以大到一个文件夹里的整个应用；图里只画需要分开管的那几块。
+
+同一张图的完整写法，每个名字和协议都自己定：
+
+```python
 from interlacing import DEFAULT, Chain, Engine, FunctionNode, Port
 
 double = FunctionNode("double", lambda x: x * 2, inputs=[Port("x", int)], outputs=[Port("y", int)])
@@ -29,6 +42,13 @@ show = FunctionNode("show", lambda x: f"={x}", inputs=[Port("x", int)], outputs=
 
 graph = Chain(double, show).build(DEFAULT)
 print(Engine(graph, DEFAULT).run({"in": 21}).last("out"))     # =42
+```
+
+`@node` 在两者之间：只写和函数本身说的不一样的地方。
+
+```python
+@node(outputs=["kept", "dropped"], check=...)
+def sort(x: list): ...
 ```
 
 ## 能做什么
@@ -62,6 +82,12 @@ builder.connect("draw.chart", "report.chart", "file")
 ```
 
 **按节点分层的工作区。** 一次运行的文件都在一个工作区里。每个节点有自己的目录，`shared/` 是公共区，块多一层（`review/writer/`、`review/shared/`）。节点默认能读全部、能写自己的目录和所在各层的 `shared/`，描述里可以用 `"reads"`、`"writes"` 另行规定。工作区记下每个文件是哪个节点在哪次激活里写的：`interlacing files --dir RUN`。
+
+**整个应用作为一个节点。** 一个放着 `node.json`（怎么启动、接收什么、给出什么）的文件夹就是一个节点，不管它用什么语言写、有多大。每次激活都在它的文件夹里启动它，把输入作为一个 JSON 对象交给它，再收回一个；读写纯文本的普通命令行程序也能接。图文件用 `{"kind": "folder", "path": "solver"}` 指名文件夹，而且只能在启动的人给的目录里（`--apps 目录`）。
+
+```python
+solver = FolderNode("apps/solver")      # apps/solver/node.json: {"command": ["python", "main.py"], "inputs": ["problem"], "outputs": ["answer"]}
+```
 
 **在自己的区域里自由干活的节点。** `WorkerNode` 是一个 agent，自带操作区域内文件的工具（列目录、读、写、改、删、移动）和一个在自己目录里运行命令的工具。输入输出和普通 agent 一样，也一样经过检查。
 
@@ -177,14 +203,14 @@ interlacing resume --dir /tmp/run                                               
 |---|---|---|
 | 抽象 | `interlacing.base` | `Node`、`Port`、`Schema`、`Edge`、`Protocol`、`Envelope`、`Graph`、`GraphBuilder`、`Method`、`Context` |
 | 引擎 | `interlacing.engine` | `Engine`、`Result`、`RunError`、`Journal`、`Transport` |
-| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`AgentNode`、`ProcessNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`WorkerNode`、`Desk`；`Workspace`、`ToolPool`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
+| 部件 | `interlacing.nodes`、`.protocols`、`.methods`、`.models` | `FunctionNode`、`node`、`as_node`、`AgentNode`、`ProcessNode`、`FolderNode`、`SourceNode`、`SinkNode`、`HumanNode`、`GraphNode`、`IsolatedNode`、`WorkerNode`、`Desk`；`Workspace`、`ToolPool`；`Chain`、`Loop`、`Fan`、`Tree`、`Star`、`Governed`、`Pool` |
 | 块 | `interlacing.blocks` | `Block`、`seq`、`par` |
 | 写成数据的图 | `interlacing.spec` | `dump`、`load`、`read`、`write`、`Catalog`、`SpawnNode` |
-| 对外 | `interlacing.runs`、`interlacing.cli`、`interlacing.serve` | `Run`；命令 `interlacing`；MCP 服务 |
+| 对外 | `interlacing.runs`、`interlacing.cli`、`interlacing.serve`、`interlacing.quick` | `Run`；命令 `interlacing`；MCP 服务；`run` |
 
-每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。
+每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十二个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 
