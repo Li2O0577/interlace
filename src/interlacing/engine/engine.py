@@ -825,6 +825,9 @@ class Engine:
                     discard(path)
             state.running = False
             self._active -= 1
+            if state.halt == "restart":    # it finished before it looked: what it did stands, what it holds goes
+                state.node.reset()
+            state.halt = False
             sched.consider(state)
             if not sched.ready and not self._active:
                 lock.notify_all()

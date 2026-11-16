@@ -308,3 +308,46 @@ def test_an_agent_forgets_its_conversation_when_restarted():
     agent.messages = [{'role': 'user', 'content': 'earlier'}]
     agent.reset()
     assert agent.messages == []
+
+
+def test_a_restart_the_node_never_looked_at_still_forgets_what_it_held():
+    gate, started = threading.Event(), threading.Event()
+    resets = []
+
+    class Deaf(Node):
+        kind = 'deaf'
+        def __init__(self):
+            super().__init__('d', inputs=[Port('x')], outputs=[Port('y')])
+
+        def run(self, ctx, inputs):
+            started.set()
+            gate.wait(5)                          # it never asks whether it should stop
+            return {'y': inputs['x']}
+
+        def reset(self):
+            resets.append(1)
+
+    engine = Engine(GraphBuilder().add(Deaf()).input('in', 'd.x').output('out', 'd.y').compile(), workers=1)
+    thread, box = in_background(engine, {'in': 4})
+    assert started.wait(5)
+    engine.control('d', 'restart')
+    gate.set()
+    thread.join(10)
+    assert box['result'].last('out') == 4 and resets == [1] and engine._states['d'].halt is False
+
+
+def test_a_node_answering_a_call_finishes_the_answer_when_it_is_stopped():
+    seen = []
+
+    def caller(ctx, x):
+        return ctx.call('ask', x)
+    node = FunctionNode('caller', caller, context=True, inputs=[Port('x')], outputs=[Port('y'), Port('ask', call=True)])
+    graph = (GraphBuilder().add(node, stepper('callee', 30, seen)).connect('caller.ask', 'callee.x', 'call')
+             .input('in', 'caller.x').output('out', 'caller.y').compile())
+    engine = Engine(graph, workers=2)
+    thread, box = in_background(engine, {'in': 1})
+    until(lambda: len(seen) > 2)
+    assert engine.control('callee', 'stop') == ['callee']
+    thread.join(10)
+    result = box['result']
+    assert result.last('out') == 1 and len(seen) == 30 and result.held == {'callee': 'stopped'}
