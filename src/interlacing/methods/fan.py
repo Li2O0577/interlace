@@ -1,8 +1,11 @@
 """Fan out and in: the same input goes to several branches side by side, and their outputs are joined."""
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from ..base import Graph, GraphBuilder, GraphError, Method, Node, Protocols
-from ..nodes import Collect, Pass
+
+from ..nodes import Collect, Pass, as_node, as_nodes
 from .chain import sole_input, sole_output
 
 
@@ -31,12 +34,16 @@ class Fan(Method):
 
     name = "fan"
 
-    def __init__(self, *branches: Node, split: Node | None = None, join: Node | None = None, protocol: str = "value"):
+    def __init__(self, *branches: Node | Callable[..., Any], split: Node | Callable[..., Any] | None = None,
+                 join: Node | Callable[..., Any] | None = None, protocol: str = "value"):
         if not branches:
             raise GraphError("a fan needs at least one branch")
-        self.branches, self.split, self.join, self.protocol = branches, split, join, protocol
+        self.branches = as_nodes(branches)
+        self.split = as_node(split) if split is not None else None
+        self.join = as_node(join) if join is not None else None
+        self.protocol = protocol
 
-    def build(self, protocols: Protocols) -> Graph:
+    def build(self, protocols: Protocols | None = None) -> Graph:
         split = self.split if self.split is not None else Pass("split")
         join = self.join if self.join is not None else Collect("join")
         gives = [name for name, port in split.outputs.items() if not port.call]

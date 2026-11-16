@@ -3,6 +3,7 @@ A star is a tree one level deep."""
 from __future__ import annotations
 
 from ..base import Firing, Graph, GraphBuilder, GraphError, Method, Node, Protocols
+from ..nodes import as_node
 from .chain import sole_input, sole_output
 
 
@@ -25,6 +26,8 @@ class Tree(Method):
 
     def __init__(self, root: Node, *children: "Node | Tree", max_rounds: int, reply: str = "reply",
                  send: str = "send", result: str = "out", protocol: str = "value"):
+        root = as_node(root)
+        children = tuple(child if isinstance(child, Tree) else as_node(child) for child in children)
         if not children:
             raise GraphError(f"{root.id}: a {self.name} needs at least one child")
         if type(max_rounds) is not int or max_rounds < 1:
@@ -32,7 +35,7 @@ class Tree(Method):
         self.root, self.children, self.max_rounds = root, children, max_rounds
         self.reply, self.send, self.result, self.protocol = reply, send, result, protocol
 
-    def build(self, protocols: Protocols) -> Graph:
+    def build(self, protocols: Protocols | None = None) -> Graph:
         builder = GraphBuilder()
         task, result = self._wire(builder)
         return builder.input("in", task).output("out", result).compile(protocols)
@@ -95,7 +98,7 @@ class Governed(Tree):
         super().__init__(root, *children, **options)
         self.operator, self.approve = operator, approve
 
-    def build(self, protocols: Protocols) -> Graph:
+    def build(self, protocols: Protocols | None = None) -> Graph:
         builder = GraphBuilder()
         task, result = self._wire(builder)
         builder.add(self.operator)

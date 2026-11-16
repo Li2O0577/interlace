@@ -581,6 +581,8 @@ class Engine:
                     target.opened = True
                     node.open(ctx)
                 value = feed.protocol.decode(body, feed.port.port)
+                if feed.guard is not None:
+                    feed.guard.check(value)
                 returned = node.run(ctx, {feed.port.port.name: [value] if feed.port.port.many else value})
                 if ctx._cut:            # it was told to stop: the caller must not take what it left for an answer
                     raise NodeError("the run is stopping")

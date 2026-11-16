@@ -87,7 +87,10 @@ class Checks:
         if feed.protocol is None:
             return body
         try:
-            return feed.protocol.decode(body, feed.port.port)
+            value = feed.protocol.decode(body, feed.port.port)
+            if feed.guard is not None:
+                feed.guard.check(value)
+            return value
         except ValueError as exc:
             port = feed.port.port
             if port.invalid != "warn":

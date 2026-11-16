@@ -19,7 +19,7 @@ INPUT = "input:"   # prefix of the pseudo edge id of a graph input
 class Feed:
     """One edge (or one graph input) as the run sees it: its mailbox and how it delivers."""
 
-    __slots__ = ("id", "port", "back", "latest", "stream", "passive", "reply", "protocol", "box", "sent", "limit")
+    __slots__ = ("id", "port", "back", "latest", "stream", "passive", "reply", "protocol", "box", "sent", "limit", "guard")
 
     def __init__(self, id, port, back, protocol, limit):
         self.id, self.port, self.back, self.protocol, self.limit = id, port, back, protocol, limit
@@ -30,6 +30,7 @@ class Feed:
         self.reply: str | None = None     # CALL only: the output port of the called node that holds the answer
         self.box: deque = deque()
         self.sent = 0
+        self.guard: Any = None            # the receiving port's schema, when what arrives must be checked against it
 
 
 class InPort:
@@ -106,6 +107,9 @@ def wire(graph: Graph, protocols: Protocols) -> Wiring:
         target = states[edge.target.node]
         port = target.ports[edge.target.port]
         feed = feeds[edge.id] = Feed(edge.id, port, edge.back, protocol, edge.max_rounds)
+        source = states[edge.source.node].node.outputs[edge.source.port]
+        if not feed.stream and protocol.guarded(source, port.port):
+            feed.guard = port.port.schema
         if protocol.delivery is Delivery.CALL:
             if edge.back:
                 raise RunError(f"edge {edge.id}: a call cannot be a back edge")

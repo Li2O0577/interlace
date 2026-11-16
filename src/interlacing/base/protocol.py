@@ -7,9 +7,10 @@ from __future__ import annotations
 import re
 from abc import ABC
 from enum import Enum
-from typing import Any, ClassVar, Iterable, Iterator
+from typing import Any, Callable, ClassVar, Iterable, Iterator
 
 from .port import Port
+from .schema import Anything
 
 NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
 
@@ -34,12 +35,20 @@ class Protocol(ABC):
                                        # node only finds the newest value there whenever something else starts it
 
     def check(self, source: Port, target: Port) -> None:
-        """When a graph is built: may an edge with this protocol join these two ports?"""
+        """When a graph is built: may an edge with this protocol join these two ports? A port that says
+        nothing of what it produces may feed any port: what arrives is then checked against the receiving
+        port's schema (see ``guarded``)."""
         if source.call != (self.delivery is Delivery.CALL):
             raise ProtocolError(f"{source.name} is a call port and needs a call edge" if source.call else
                                 f"a call edge must leave a port declared with call=True, and {source.name} is not")
-        if not target.schema.accepts(source.schema):
+        if not target.schema.accepts(source.schema) and not isinstance(source.schema, Anything):
             raise ProtocolError(f"{target.name} does not accept what {source.name} produces")
+
+    @staticmethod
+    def guarded(source: Port, target: Port) -> bool:
+        """Whether what travels from ``source`` to ``target`` must be checked again on arrival: when the
+        receiving port asks for more than the sending one promises."""
+        return not target.schema.accepts(source.schema)
 
     def encode(self, payload: Any, source: Port) -> Any:
         """When a node emits: validate the payload and return the envelope body."""
@@ -88,3 +97,24 @@ class Protocols:
 
     def copy(self) -> "Protocols":
         return Protocols(self._by_name.values())
+
+
+# Where the protocols come from when none are named. This layer knows no particular protocol, so the
+# package that defines the standard ones puts a function here (``set_standard``); ``interlacing`` does so
+# when it is imported.
+_standard: Callable[[], Protocols] | None = None
+
+
+def set_standard(load: Callable[[], Protocols]) -> None:
+    """Name the function that gives the protocols used wherever none are given."""
+    global _standard
+    _standard = load
+
+
+def resolve(protocols: Protocols | None) -> Protocols:
+    """``protocols``, or the standard ones when it is None."""
+    if protocols is not None:
+        return protocols
+    if _standard is None:
+        raise ProtocolError("no protocols were given and no standard ones are set")
+    return _standard()

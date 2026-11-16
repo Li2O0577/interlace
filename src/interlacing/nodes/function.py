@@ -1,11 +1,17 @@
-"""A node that is one Python function."""
+"""A node that is one Python function, and the short ways of making one.
+
+The long way names everything: ``FunctionNode("double", f, inputs=[Port("x", int)], outputs=[Port("y", int)])``.
+The short way reads it all from the function: ``as_node(f)``, or ``@node`` over its definition, and every
+method takes a plain function wherever it takes a node.
+"""
 from __future__ import annotations
 
 import asyncio
 import inspect
+import typing
 from typing import Any, Callable, Iterable, Mapping
 
-from ..base import Firing, Node, NodeError, Port
+from ..base import Firing, Node, NodeError, Port, PortError, SchemaError, schema
 
 
 def named(function: Callable) -> str:
@@ -29,10 +35,13 @@ class FunctionNode(Node):
 
     def __init__(self, id: str, function: Callable, *, inputs: Iterable[Port] = (), outputs: Iterable[Port] = (),
                  firing: Firing | None = None, context: bool = False):
+        if isinstance(function, FunctionNode):
+            function = function.function   # a function made into a node with @node: the function itself
         if not callable(function):
             raise NodeError(f"{id}: not callable: {function!r}")
         super().__init__(id, inputs=inputs, outputs=outputs, firing=firing)
-        self.function, self.context = function, context
+        self.function: Callable = function
+        self.context = context
         self._sends = [name for name, port in self.outputs.items() if not port.call]
 
     def config(self) -> Mapping:
@@ -49,3 +58,128 @@ class FunctionNode(Node):
         if not isinstance(result, Mapping):
             raise NodeError(f"{self.id} has {len(self._sends)} output ports: its function must return a mapping of port to payload")
         return result
+
+    def __call__(self, *args, **kwargs):
+        """The function itself, so that a function made into a node with ``@node`` can still be called."""
+        return self.function(*args, **kwargs)
+
+    @classmethod
+    def of(cls, function: Callable, id: str | None = None, *, outputs: Iterable[Port | str] | None = None,
+           firing: Firing | None = None, check: Any = (), repairs: int | None = None, invalid: str = "fail") -> "FunctionNode":
+        """A node made from what ``function`` says about itself.
+
+        * its id is the function's name;
+        * each parameter is an input of the same name; one with a default value is optional; a first
+          parameter called ``ctx`` is the engine's context and not an input;
+        * a parameter's annotation is the port's schema, where it is one (``int``, ``str``, ``list[float]``,
+          ``dict``...); anything else is taken as any value;
+        * the output is ``out``, with the return annotation as its schema; ``-> None`` means no output.
+          ``outputs`` names others instead (the function then returns a mapping of port to payload);
+        * ``check``, ``repairs`` and ``invalid`` go to the output port when there is one.
+        """
+        if isinstance(function, FunctionNode):
+            function = function.function
+        if not callable(function):
+            raise NodeError(f"not a function: {function!r}")
+        name: str = id or getattr(function, "__name__", "") or ""
+        if not id and (not name or name == "<lambda>"):
+            raise NodeError("a function with no name of its own (a lambda) needs an id: as_node(f, 'name')")
+        try:
+            signature = inspect.signature(function)
+        except (TypeError, ValueError) as exc:
+            raise NodeError(f"{name}: its parameters cannot be read: {exc}") from None
+        hints = _hints(function)
+        params = list(signature.parameters.values())
+        context = bool(params) and params[0].name == "ctx"
+        if context:
+            params = params[1:]
+        inputs = []
+        for param in params:
+            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+                raise NodeError(f"{name}: *{param.name} cannot be an input; name each input as a parameter")
+            if param.kind is param.POSITIONAL_ONLY:
+                raise NodeError(f"{name}: {param.name} is positional only; inputs are passed by name")
+            try:
+                inputs.append(Port(param.name, _schema(hints.get(param.name)),
+                                   required=param.default is inspect.Parameter.empty))
+            except PortError as exc:
+                raise NodeError(f"{name}: {exc}") from None
+        rule = {"check": check, "repairs": repairs, "invalid": invalid}
+        try:
+            if outputs is not None:
+                made = [out if isinstance(out, Port) else Port(out, **rule) for out in outputs]
+            elif "return" in hints and hints["return"] is type(None):
+                made = []
+            else:
+                made = [Port("out", _schema(hints.get("return")), **rule)]
+        except PortError as exc:
+            raise NodeError(f"{name}: {exc}") from None
+        return cls(name, function, inputs=inputs, outputs=made, firing=firing, context=context)
+
+
+def _hints(function: Callable) -> dict:
+    """The function's annotations, resolved where they can be."""
+    try:
+        return typing.get_type_hints(function)
+    except Exception:   # noqa: BLE001 - an annotation that names something not to be found: take it as given
+        return dict(getattr(function, "__annotations__", {}) or {})
+
+
+def _schema(hint: Any):
+    """The schema an annotation stands for, or anything when it stands for none."""
+    if hint is None or hint is Any or isinstance(hint, str):
+        return None
+    origin, args = typing.get_origin(hint), typing.get_args(hint)
+    if origin in (list, tuple, set, frozenset, dict) and origin is not None:
+        if origin is list and len(args) == 1:
+            inner = _schema(args[0])
+            return [inner] if inner is not None else list
+        return origin
+    if origin is not None:      # a union, a literal and so on: not checked by shape
+        return None
+    if hint is float:
+        return (float, int)     # a whole number is a number too
+    try:
+        return schema(hint)
+    except SchemaError:
+        return None
+
+
+def as_node(thing: Any, id: str | None = None) -> Node:
+    """``thing`` as a node: a node as it is, a plain function made into one (``FunctionNode.of``)."""
+    if isinstance(thing, Node):
+        return thing
+    if callable(thing):
+        return FunctionNode.of(thing, id)
+    raise NodeError(f"not a node or a function: {thing!r}")
+
+
+def as_nodes(things: Iterable[Any]) -> tuple[Node, ...]:
+    """Each of ``things`` as a node (see ``as_node``). A plain function that comes more than once becomes a
+    node each time, the second called ``<name>_2``, the third ``<name>_3`` and so on."""
+    made: list[Node] = []
+    seen: dict[str, int] = {}
+    for thing in things:
+        if isinstance(thing, Node) or not callable(thing):
+            made.append(as_node(thing))
+            continue
+        name = getattr(thing, "__name__", "")
+        seen[name] = count = seen.get(name, 0) + 1
+        made.append(as_node(thing, f"{name}_{count}" if count > 1 and name != "<lambda>" else None))
+    return tuple(made)
+
+
+def node(function: Callable | None = None, /, *, id: str | None = None, outputs: Iterable[Port | str] | None = None,
+         firing: Firing | None = None, check: Any = (), repairs: int | None = None, invalid: str = "fail"):
+    """Make a function into a node where it is defined, writing only what differs from what the function
+    says about itself (see ``FunctionNode.of``). The node can still be called as the function.
+
+        @node
+        def double(x: int) -> int: ...
+
+        @node(outputs=["kept", "dropped"], firing=Firing.ANY)
+        def sort(x): ...
+    """
+    def make(function: Callable) -> FunctionNode:
+        return FunctionNode.of(function, id, outputs=outputs, firing=firing, check=check, repairs=repairs, invalid=invalid)
+    return make(function) if function is not None else make

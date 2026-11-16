@@ -24,7 +24,7 @@ from typing import Iterable, Mapping
 from .canonical import digest
 from .edge import Edge, EdgeError, Endpoint
 from .node import Firing, Node
-from .protocol import Delivery, ProtocolError, Protocols
+from .protocol import Delivery, ProtocolError, Protocols, resolve
 
 
 class GraphError(ValueError):
@@ -139,9 +139,10 @@ class GraphBuilder:
             self._nodes[node.id] = node
         return self
 
-    def connect(self, source, target, protocol: str, *, id: str | None = None, back: bool = False,
+    def connect(self, source, target, protocol: str = "value", *, id: str | None = None, back: bool = False,
                 max_rounds: int | None = None) -> "GraphBuilder":
-        """Join ``"node.port"`` to ``"node.port"``. The id defaults to ``"a.out>b.in"``."""
+        """Join ``"node.port"`` to ``"node.port"`` under the protocol named (``value`` when none is). The id
+        defaults to ``"a.out>b.in"``."""
         try:
             source, target = Endpoint.of(source), Endpoint.of(target)
             edge = Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds)
@@ -171,7 +172,9 @@ class GraphBuilder:
 
     # ---- compile ---------------------------------------------------------------------------------------
 
-    def compile(self, protocols: Protocols) -> Graph:
+    def compile(self, protocols: Protocols | None = None) -> Graph:
+        """Check the graph against ``protocols`` (the standard ones when None) and freeze it."""
+        protocols = resolve(protocols)
         nodes, edges = tuple(self._nodes.values()), tuple(self._edges.values())
         if not nodes:
             raise GraphError("a graph needs at least one node")

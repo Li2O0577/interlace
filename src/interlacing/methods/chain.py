@@ -1,7 +1,10 @@
 """A chain: each node's output feeds the next node's input."""
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from ..base import Graph, GraphBuilder, GraphError, Method, Node, Protocols
+from ..nodes import as_nodes
 
 
 def sole_input(node: Node) -> str | None:
@@ -26,16 +29,16 @@ def sole_output(node: Node) -> str:
 
 class Chain(Method):
     """``Chain(a, b, c)``: a → b → c. The graph's input ``in`` is a's input (when it has one), its output
-    ``out`` is c's output."""
+    ``out`` is c's output. A part may be a node or a plain function (see ``as_node``)."""
 
     name = "chain"
 
-    def __init__(self, *nodes: Node, protocol: str = "value"):
+    def __init__(self, *nodes: Node | Callable[..., Any], protocol: str = "value"):
         if not nodes:
             raise GraphError("a chain needs at least one node")
-        self.nodes, self.protocol = nodes, protocol
+        self.nodes, self.protocol = as_nodes(nodes), protocol
 
-    def build(self, protocols: Protocols) -> Graph:
+    def build(self, protocols: Protocols | None = None) -> Graph:
         builder = GraphBuilder().add(*self.nodes)
         for upstream, downstream in zip(self.nodes, self.nodes[1:]):
             target = sole_input(downstream)
