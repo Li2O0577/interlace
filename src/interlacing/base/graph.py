@@ -34,7 +34,7 @@ class GraphError(ValueError):
 class Graph:
     """A compiled graph. Construct it with ``GraphBuilder.compile``."""
 
-    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "_node", "_edge", "_out", "_in", "_needs")
+    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "protocols", "_node", "_edge", "_out", "_in", "_needs")
 
     def __init__(self, nodes, edges, inputs, outputs, order, out_index, in_index, needs):
         self.nodes: tuple[Node, ...] = nodes
@@ -46,6 +46,7 @@ class Graph:
         self._edge = {edge.id: edge for edge in edges}
         self._out, self._in, self._needs = out_index, in_index, needs
         self.digest: str = digest(self.describe())
+        self.protocols: Protocols | None = None     # what it was compiled with: an engine runs it with these by default
 
     # ---- lookups ---------------------------------------------------------------------------------------
 
@@ -218,7 +219,9 @@ class GraphBuilder:
         self._check_loops(edges, out_index)
         freeze = lambda index: {n: MappingProxyType({p: tuple(es) for p, es in ports.items()})  # noqa: E731
                                 for n, ports in index.items()}
-        return Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs)
+        graph = Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs)
+        graph.protocols = protocols
+        return graph
 
     def _port(self, end: Endpoint, side: str, where):
         node = self._nodes.get(end.node)

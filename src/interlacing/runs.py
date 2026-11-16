@@ -279,7 +279,7 @@ class Run:
             try:
                 result = action(engine)
             except Pending:
-                return self._state(WAITING, used=dict(engine._meter))
+                return self._state(WAITING, used=engine.used)
             except RunError as exc:
                 return self._state(FAILED, error=str(exc), node=exc.node, problems=exc.problems, used=exc.used)
             finally:
