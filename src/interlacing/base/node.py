@@ -78,6 +78,12 @@ class Context(ABC):
         answers."""
         return self.call(port, payload)
 
+    def paused(self) -> bool:
+        """True while this node is paused and has not yet been told to end. For a node that hands its work to
+        something outside (a program, a server) and wants to pause that too; most nodes need only
+        ``checkpoint``."""
+        return False
+
     def checkpoint(self) -> bool:
         """Say that a step is done (a call to a model, a tool, one item of a long list). While this node is
         paused it waits here; it returns False when the activation should end now, because the run is stopping

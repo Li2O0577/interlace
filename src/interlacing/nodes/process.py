@@ -7,7 +7,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import signal
 import threading
+import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..base import Firing, Node, NodeError, Port, canonical
@@ -75,14 +77,13 @@ class ProcessNode(Node):
             def overrun():
                 expired.set()
                 process.kill()
-            timer = threading.Timer(self.timeout, overrun) if self.timeout else None
-            if timer:
-                timer.start()
+            timer = _Timer(self.timeout or None, overrun)
+            timer.start()
             try:
-                output = self._lines(ctx, process, data) if self.lines else self._whole(ctx, process, data)
+                output = (self._lines(ctx, process, data, timer) if self.lines
+                          else self._whole(ctx, process, data, timer))
             finally:
-                if timer:
-                    timer.cancel()
+                timer.cancel()
                 if process.poll() is None:
                     process.kill()
                 process.wait()
@@ -99,7 +100,7 @@ class ProcessNode(Node):
                 raise NodeError(f"{self.command[0]} exited with {process.returncode}" + (f": {said}" if said else ""))
         return None if output is None else {"out": output}
 
-    def _whole(self, ctx, process, data: bytes):
+    def _whole(self, ctx, process, data: bytes, timer: _Timer):
         given: bytes | None = data
         while True:
             try:
@@ -107,10 +108,10 @@ class ProcessNode(Node):
                 return self._read(out) if not process.returncode else None
             except subprocess.TimeoutExpired:
                 given = None            # already handed over; asking again loses nothing
-                if ctx.stopping():
+                if not _held(ctx, process, timer) or ctx.stopping():
                     process.kill()
 
-    def _lines(self, ctx, process, data: bytes):
+    def _lines(self, ctx, process, data: bytes, timer: _Timer):
         def feed():
             try:
                 process.stdin.write(data)
@@ -120,7 +121,7 @@ class ProcessNode(Node):
         writer = threading.Thread(target=feed, daemon=True)
         writer.start()
         for line in process.stdout:
-            if ctx.stopping():
+            if not _held(ctx, process, timer) or ctx.stopping():
                 process.kill()
                 break
             line = line.rstrip(b"\r\n")
@@ -128,6 +129,60 @@ class ProcessNode(Node):
                 ctx.emit("out", self._read(line))
         writer.join()
         return None
+
+
+class _Timer:
+    """The program's own time limit, which does not run while the program is held paused."""
+
+    def __init__(self, seconds: float | None, fire: Callable[[], None]):
+        self.left, self.fire = seconds, fire
+        self._timer: threading.Timer | None = None
+        self._since = 0.0
+
+    def start(self) -> None:
+        if self.left is not None:
+            self._since = time.monotonic()
+            self._timer = threading.Timer(max(self.left, 0.0), self.fire)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def hold(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+            assert self.left is not None
+            self.left -= time.monotonic() - self._since
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+
+
+def _held(ctx, process, timer: _Timer, group: bool = False) -> bool:
+    """While the node is paused, the program is paused with it (on Windows it goes on, and only this waits)
+    and its time limit does not run. False when the node is to end now, and the program with it."""
+    paused = getattr(ctx, "paused", None)
+    if paused is None or not paused():
+        return True
+    timer.hold()
+    held = os.name == "posix" and _signal(process, signal.SIGSTOP, group)
+    try:
+        return ctx.checkpoint()
+    finally:
+        if held:
+            _signal(process, signal.SIGCONT, group)
+        timer.start()
+
+
+def _signal(process, number: int, group: bool) -> bool:
+    try:
+        if group:
+            os.killpg(process.pid, number)
+        else:
+            process.send_signal(number)
+        return True
+    except OSError:
+        return False
 
 
 def answer_of(command: Sequence[str] | str, data: bytes, ctx, *, timeout: float | None = None, cwd=None,
@@ -161,9 +216,8 @@ def answer_of(command: Sequence[str] | str, data: bytes, ctx, *, timeout: float 
         def overrun():
             expired.set()
             end(process)
-        timer = threading.Timer(timeout, overrun) if timeout else None
-        if timer:
-            timer.start()
+        timer = _Timer(timeout or None, overrun)
+        timer.start()
         given: bytes | None = data
         try:
             while True:
@@ -172,11 +226,10 @@ def answer_of(command: Sequence[str] | str, data: bytes, ctx, *, timeout: float 
                     break
                 except subprocess.TimeoutExpired:
                     given = None            # already handed over; asking again loses nothing
-                    if ctx.stopping():
+                    if not _held(ctx, process, timer, group) or ctx.stopping():
                         end(process)
         finally:
-            if timer:
-                timer.cancel()
+            timer.cancel()
             if process.poll() is None:
                 end(process)
             process.wait()

@@ -11,6 +11,8 @@ and continued by a third::
     answers/        one file per answer given
     files/          the workspace of the graph's nodes: what the ``file`` protocol's paths are relative to, with
                     a directory for each node that works there (``Run.files()`` says who wrote what)
+    controls/       switches set from another process while this run is going (see ``Run.control``),
+                    waiting to be taken up by the process that runs it
     state.json      where the run stands: done, waiting, stopped or failed (``running`` is told from the lock)
     lock            there while a process is running the graph, and names that process
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -283,7 +286,11 @@ class Run:
             if budget:
                 options = _read(self.directory / "options.json")
                 _write(self.directory / "options.json", {**options, "budget": {**(options.get("budget") or {}), **_budget(budget)}})
+            self._absorb()                          # switches set while no process ran it
             engine = self._now = self._engine()
+            over = threading.Event()
+            watcher = threading.Thread(target=self._watch, args=(engine, over), name="run-controls", daemon=True)
+            watcher.start()
             try:
                 result = action(engine)
             except Pending:
@@ -292,6 +299,9 @@ class Run:
                 return self._state(FAILED, error=str(exc), node=exc.node, problems=exc.problems, used=exc.used)
             finally:
                 self._now = None
+                over.set()
+                watcher.join()
+                self._absorb()                      # what came too late for this run holds for the next
             return self._state(DONE if result.complete else STOPPED, outputs=result.outputs, rounds=result.rounds,
                                limited=list(result.limited), problems=result.problems, used=result.used,
                                **({"held": result.held} if result.held else {}))
@@ -307,44 +317,92 @@ class Run:
 
     def control(self, nodes: Any, action: str, *, team: bool = False) -> dict:
         """Pause, resume, stop or restart nodes of this run (see ``Engine.control``). While this object runs
-        it, at once; otherwise the change is written to the journal and holds when the run is taken up. A run
-        that another process is running is controlled through that process."""
+        it, at once. While another process runs it, the change is left in ``controls/`` and that process
+        takes it up within a moment. Otherwise it is written to the journal and holds when the run is taken
+        up. ``changed`` names the nodes the change was for; ``switches`` is where they stand."""
         engine = self._now
         if engine is not None:
             changed = engine.control(nodes, action, team=team)
             return {"status": RUNNING, "changed": changed, "switches": self.switches()}
         self._held()
-        path = self.directory / "journal.jsonl"
-        if not path.exists():
-            raise SpecError(f"{self.directory} has not been started")
         from .engine.recorder import SWITCHED
         if action not in SWITCHED:
             raise SpecError(f"no action {action!r}: one of {', '.join(SWITCHED)}")
-        with _Lock(self.directory):              # refused while another process runs it
-            graph = self._engine().graph
-            journal = Journal(path)
-            known = {node.id for node in graph.nodes} | {r["node"] for r in journal.read() if r["kind"] == "act"}
-            ids = [nodes] if isinstance(nodes, str) else list(nodes)
-            missing = [id for id in ids if id not in known]
-            if missing:
-                raise SpecError(f"no node {', '.join(missing)}")
-            if team:
-                ids = [*ids, *(member for id in ids for member in graph.team(id))]
-            ids = list(dict.fromkeys(ids))
-            journal.write({"kind": "control", "nodes": ids, "action": action})
-            journal.close()
-        return {**self.status(), "changed": ids}
+        graph = self._engine().graph
+        path = self.directory / "journal.jsonl"
+        known = {node.id for node in graph.nodes}
+        if path.exists():
+            known |= {r["node"] for r in Journal(path).read() if r["kind"] == "act"}
+        ids = [nodes] if isinstance(nodes, str) else list(nodes)
+        missing = [id for id in ids if id not in known]
+        if missing:
+            raise SpecError(f"no node {', '.join(missing)}")
+        if team:
+            ids = [*ids, *(member for id in ids for member in graph.team(id))]
+        ids = list(dict.fromkeys(ids))
+        request = {"nodes": ids, "action": action}
+        if _holder(self.directory) is None:
+            if not path.exists():
+                raise SpecError(f"{self.directory} has not been started")
+            try:
+                with _Lock(self.directory):
+                    before = self.switches()
+                    changed = [id for id in ids if action == "restart" or before.get(id, "active") != SWITCHED[action]]
+                    if changed:
+                        journal = Journal(path)
+                        journal.write({"kind": "control", "nodes": changed, "action": action})
+                        journal.close()
+                return {**self.status(), "changed": changed}
+            except SpecError:
+                pass                                # a process took it up meanwhile: leave it for that one
+        _write(self.directory / "controls" / f"{time.time_ns()}-{os.getpid()}.json", request)
+        return {**self.status(), "changed": ids, "sent": True}
+
+    def _controls(self) -> list[Path]:
+        return sorted((self.directory / "controls").glob("*.json"))
+
+    def _watch(self, engine: Engine, over: threading.Event) -> None:
+        """While this process runs the graph, take up switches set from other processes."""
+        while not over.wait(0.1):
+            for path in self._controls():
+                request = _read(path)
+                if not engine.going:
+                    break                           # not started yet, or over: taken up later
+                try:
+                    if request:
+                        engine.control(request["nodes"], request["action"])
+                except RunError:
+                    if not engine.going:
+                        break                       # it ended meanwhile: taken up later
+                except (ValueError, KeyError, TypeError):
+                    pass                            # not a request this run can act on
+                path.unlink(missing_ok=True)
+
+    def _absorb(self) -> None:
+        """Switches left in ``controls/`` when no process is taking them up go into the journal. Holds the lock."""
+        waiting = self._controls()
+        path = self.directory / "journal.jsonl"
+        if not waiting or not path.exists():
+            return
+        journal = Journal(path)
+        for each in waiting:
+            request = _read(each)
+            if request:
+                journal.write({"kind": "control", "nodes": list(request["nodes"]), "action": request["action"]})
+            each.unlink(missing_ok=True)
+        journal.close()
 
     def switches(self) -> dict[str, str]:
         """The nodes whose switch is not on, as the journal has it: node -> paused or stopped."""
         from .engine.recorder import SWITCHED
         path = self.directory / "journal.jsonl"
         found: dict[str, str] = {}
-        if path.exists():
-            for record in Journal(path).read():
-                if record["kind"] == "control":
-                    for id in record["nodes"]:
-                        found[id] = SWITCHED[record["action"]]
+        records = Journal(path).read() if path.exists() else []
+        sent = [request for request in map(_read, self._controls()) if request]      # not yet taken up
+        for record in [*records, *({"kind": "control", **request} for request in sent)]:
+            if record["kind"] == "control" and record.get("action") in SWITCHED:
+                for id in record["nodes"]:
+                    found[id] = SWITCHED[record["action"]]
         return {id: status for id, status in found.items() if status != "active"}
 
     # ---- people ----------------------------------------------------------------------------------------

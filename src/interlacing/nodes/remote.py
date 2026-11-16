@@ -14,10 +14,12 @@ The connection carries one JSON object per line, in UTF-8:
     <- {"id": 1, "emit": "out", "payload": ...}           any number, as the node emits
     <- {"id": 1, "use": {"seconds": 2.5}}                  what the node reports using
     <- {"id": 1, "done": true, "returned": {...} | null}   or {"id": 1, "error": "..."}
-    -> {"op": "stop", "id": 1}                             the run is being stopped
+    -> {"op": "stop", "id": 1}                             the run is being stopped, or this node stopped
+    -> {"op": "pause", "id": 1}                            this node is paused: wait at the next step
+    -> {"op": "resume", "id": 1}                           go on from there
 
 What crosses is plain data. A served node runs one activation at a time, whoever asks. Its context has
-``emit``, ``use``, ``stopping``, ``key``, ``round``, and ``engine`` for a graph run inside it; ``once`` does
+``emit``, ``use``, ``stopping``, ``checkpoint`` (which waits while the node is paused), ``key``, ``round``, and ``engine`` for a graph run inside it; ``once`` does
 the thing every time, because the far side keeps no journal; ``call`` is refused, since the far side cannot
 reach back into the graph.
 
@@ -27,6 +29,7 @@ tunnel.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import socket
@@ -168,12 +171,15 @@ class RemoteNode(Node):
                 try:
                     message = stream.read()
                 except (socket.timeout, TimeoutError):
+                    if not stopped and ctx.paused():
+                        # paused: the far side waits at its next step, and so does this activation, so that the
+                        # run knows it is held; what the far side sends meanwhile waits in the connection
+                        _tell(stream, "pause", id)
+                        if ctx.checkpoint():
+                            _tell(stream, "resume", id)
                     if not stopped and ctx.stopping():
                         stopped = True
-                        try:
-                            stream.send({"op": "stop", "id": id})
-                        except OSError:
-                            pass
+                        _tell(stream, "stop", id)
                     continue
                 except (OSError, ValueError) as exc:
                     self._drop()
@@ -191,6 +197,13 @@ class RemoteNode(Node):
                     return returned if isinstance(returned, Mapping) else None
 
 
+def _tell(stream, op: str, id: int) -> None:
+    try:
+        stream.send({"op": op, "id": id})
+    except OSError:
+        pass                            # a lost connection shows up at the next read
+
+
 # ---- the far side ----------------------------------------------------------------------------------------
 
 class _FarContext(Context):
@@ -202,6 +215,8 @@ class _FarContext(Context):
         self.within: tuple = ()
         self._send = send
         self.stop = threading.Event()
+        self.going = threading.Event()      # cleared while the node is paused
+        self.going.set()
 
     def emit(self, port: str, payload: Any) -> None:
         self._send({"emit": port, "payload": payload})
@@ -211,6 +226,19 @@ class _FarContext(Context):
 
     def stopping(self) -> bool:
         return self.stop.is_set()
+
+    def paused(self) -> bool:
+        return not self.going.is_set() and not self.stop.is_set()
+
+    def checkpoint(self) -> bool:
+        while self.paused():
+            self.going.wait(0.1)
+        return not self.stopping()
+
+    async def acheckpoint(self) -> bool:
+        while self.paused():
+            await asyncio.sleep(0.05)
+        return not self.stopping()
 
     def engine(self, graph: Any, protocols: Any = None, *, workers: int = 0, firm: bool = False) -> Any:
         from ..engine import Engine
@@ -305,10 +333,15 @@ class NodeServer:
             send({"ok": True, "node": self.describe(), "version": VERSION})
             for line in stream:
                 message = json.loads(line)
-                if message.get("op") == "stop":
+                if message.get("op") in ("stop", "pause", "resume"):
                     ctx = running.get(message.get("id"))
                     if ctx is not None:
-                        ctx.stop.set()
+                        if message["op"] == "stop":
+                            ctx.stop.set()
+                        elif message["op"] == "pause":
+                            ctx.going.clear()
+                        else:
+                            ctx.going.set()
                 elif message.get("op") == "run":
                     id = message.get("id")
                     ctx = running[id] = _FarContext(self.node, int(message.get("round", 0)), str(message.get("key", "")),
