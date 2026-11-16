@@ -83,9 +83,9 @@ class _Unbuilt:
         raise RuntimeError("a graph that is only being checked does not run")
 
 
-def check(description: Mapping, *, allow=(), processes: bool = False, files=None, tools=None) -> dict:
+def check(description: Mapping, *, allow=(), processes: bool = False, files=None, tools=None, apps=None) -> dict:
     """Build the graph a description stands for, without running anything, and say what it is."""
-    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt, files=files, workspace=".", tools=tools))
+    graph = load(description, Catalog(allow=allow, processes=processes, models=_Unbuilt, files=files, workspace=".", tools=tools, apps=apps))
     return {"digest": graph.digest, "nodes": {node.id: type(node).kind for node in graph.nodes},
             "edges": len(graph.edges), "inputs": sorted(graph.inputs), "outputs": sorted(graph.outputs)}
 
@@ -191,7 +191,8 @@ class Run:
     def create(cls, directory, description: Mapping, *, allow=(), processes: bool = False, workers: int = 0,
                models: Callable[[str], Any] | None = models_from_environment, files=None,
                time_limit: float | None = None, observe: Callable[[Mapping], None] | None = None,
-               workspace=None, budget: Mapping[str, float] | None = None, strict: bool = False, tools=None) -> "Run":
+               workspace=None, budget: Mapping[str, float] | None = None, strict: bool = False, tools=None,
+               apps=None) -> "Run":
         """Check the description and set up a directory for one run of it. Nothing runs yet. ``files`` is
         the directory the description may take text from; the text is kept in the run, the files are not
         needed again. ``time_limit`` is the longest one activation may take, in seconds. ``workspace`` is the
@@ -199,7 +200,8 @@ class Run:
         unless another is given. ``budget`` is the most the run may use of what its nodes report using,
         by name: ``{"tokens": 200000}``. ``strict=True`` is for a description that is not trusted: no node
         in it may give itself more time than ``time_limit``, and no block more threads than ``workers``.
-        ``tools`` is a tool pool: the directory the graph's agents may take tool files from."""
+        ``tools`` is a tool pool: the directory the graph's agents may take tool files from. ``apps`` is the
+        directory whose folders may be nodes."""
         run = cls(directory, models=models, observe=observe)
         if (run.directory / "graph.json").exists():
             raise SpecError(f"{run.directory} already holds a run")
@@ -208,7 +210,8 @@ class Run:
         options = {"allow": list(allow), "processes": bool(processes), "workers": int(workers), "time_limit": time_limit,
                    "budget": _budget(budget), "strict": bool(strict),
                    "workspace": str(Path(workspace).resolve()) if workspace is not None else None,
-                   "tools": str(Path(tools).resolve()) if tools is not None else None}
+                   "tools": str(Path(tools).resolve()) if tools is not None else None,
+                   "apps": str(Path(apps).resolve()) if apps is not None else None}
         run.workspace(options).mkdir(parents=True, exist_ok=True)
         graph = load(description, run._catalog(options, files))
         _write(run.directory / "graph.json", dump(graph))
@@ -230,7 +233,7 @@ class Run:
     def _catalog(self, options: Mapping, files=None) -> Catalog:
         return Catalog(allow=options["allow"], processes=options["processes"], models=self.models, ask=self._ask, files=files,
                        workspace=self.workspace(options), max_workers=options["workers"] if options.get("strict") else None,
-                       tools=options.get("tools"))
+                       tools=options.get("tools"), apps=options.get("apps"))
 
     def _engine(self) -> Engine:
         description = _read(self.directory / "graph.json")

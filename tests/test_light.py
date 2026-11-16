@@ -136,3 +136,11 @@ def test_run_takes_a_graph_a_method_a_node_or_a_function():
     assert run(as_node(double), {'x': 4}).last('out') == 8
     assert run(Chain(double), {'in': 4}).last('out') == 8
     assert run(Chain(double).build(), {'in': 4}, workers=2).last('out') == 8
+
+
+def test_a_method_inside_a_method_is_a_node():
+    def inc(x: int) -> int:
+        return x + 1
+    nested = Chain(inc, Fan(inc, double), Chain(inc, inc), Chain(inc))
+    assert [n.id for n in nested.nodes] == ['inc', 'fan', 'chain', 'chain_2']
+    assert run(Chain(inc, Fan(inc, double)), {'in': 1}).last('out') == [3, 4]

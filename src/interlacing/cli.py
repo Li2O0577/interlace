@@ -1,16 +1,17 @@
 """The command line.
 
-    interlacing check  graph.json [--allow MODULE]... [--processes] [--tools DIRECTORY]
+    interlacing check  graph.json [--allow MODULE]... [--processes] [--tools DIRECTORY] [--apps DIRECTORY]
     interlacing run    graph.json --dir RUN [--input NAME=VALUE]... [--allow MODULE]... [--processes] [--tools DIRECTORY] [--workers N]
-                         [--time-limit SECONDS] [--workspace DIRECTORY]
+                         [--time-limit SECONDS] [--workspace DIRECTORY] [--apps DIRECTORY]
     interlacing resume --dir RUN
     interlacing answer --dir RUN [QUESTION] (--json VALUE | --text TEXT)
     interlacing status --dir RUN
     interlacing files  --dir RUN
     interlacing serve  --runs DIRECTORY [--allow MODULE]... [--processes] [--workers N] [--time-limit SECONDS]
-                         [--files DIRECTORY] [--tools DIRECTORY]
+                         [--files DIRECTORY] [--tools DIRECTORY] [--apps DIRECTORY]
 
-``--tools`` names a tool pool: a directory of tool files the graph's agents may be given by path. ``files``
+``--tools`` names a tool pool: a directory of tool files the graph's agents may be given by path. ``--apps``
+names a directory whose folders may be nodes, each an application with a ``node.json``. ``files``
 lists what is in a run's workspace and which node wrote each file.
 
 A graph file may take text (a prompt, say) from files in its own directory: ``{"file": "prompts/lead.md"}``.
@@ -85,6 +86,7 @@ def _parser() -> argparse.ArgumentParser:
                              help="a module the graph's functions may come from (repeatable)")
         command.add_argument("--processes", action="store_true", help="let the graph start external programs")
         command.add_argument("--tools", metavar="DIRECTORY", help="a tool pool: tool files the graph's agents may use")
+        command.add_argument("--apps", metavar="DIRECTORY", help="a directory whose folders may be nodes (needs --processes)")
 
     check = commands.add_parser("check", help="build the graph and describe it, without running anything")
     check.add_argument("graph")
@@ -128,18 +130,18 @@ def main(argv=None, out=None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "check":
-            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph), tools=args.tools), 0
+            state, code = check(_description(args.graph), allow=args.allow, processes=args.processes, files=_beside(args.graph), tools=args.tools, apps=args.apps), 0
         elif args.command == "serve":
             from .serve import Server
             Server(args.runs, allow=args.allow, processes=args.processes, workers=args.workers, time_limit=args.time_limit,
-                   files=args.files, budget=dict(args.budget), tools=args.tools).serve()
+                   files=args.files, budget=dict(args.budget), tools=args.tools, apps=args.apps).serve()
             return 0
         else:
             if args.command == "run":
                 inputs = _inputs(args)
                 state = Run.create(args.dir, _description(args.graph), allow=args.allow, processes=args.processes,
                                    workers=args.workers, files=_beside(args.graph), time_limit=args.time_limit,
-                                   workspace=args.workspace, budget=dict(args.budget), tools=args.tools).start(inputs)
+                                   workspace=args.workspace, budget=dict(args.budget), tools=args.tools, apps=args.apps).start(inputs)
             elif args.command == "resume":
                 state = Run(args.dir).resume(budget=dict(args.budget))
             elif args.command == "answer":

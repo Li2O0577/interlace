@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node'):
         sys.modules.pop(name, None)
 
 
@@ -88,3 +88,15 @@ def test_camera_to_arm():
     from interlacing.protocols import DEFAULT
     steady = Engine(camera_to_arm.build(arm, [{'target': 5}] * 4, speed=2), DEFAULT).run()   # one thread: only the newest frame is seen
     assert steady.outputs['at'] == [2] and arm.log == ['connected', 'moved to 2', 'disconnected']
+
+
+def test_plain_functions(capsys):
+    import plain_functions
+    counted, short = plain_functions.main()
+    assert counted.last('out') == '5 words, 15 letters' and len(short.last('out')) <= 40
+
+
+def test_folder_as_node(capsys):
+    import folder_as_node
+    result = folder_as_node.main()
+    assert result.last('common') == [['the', 3], ['and', 2]] and result.last('total') == 8

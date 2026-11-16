@@ -11,7 +11,7 @@ import inspect
 import typing
 from typing import Any, Callable, Iterable, Mapping
 
-from ..base import Firing, Node, NodeError, Port, PortError, SchemaError, schema
+from ..base import Firing, Method, Node, NodeError, Port, PortError, SchemaError, schema
 
 
 def named(function: Callable) -> str:
@@ -146,24 +146,28 @@ def _schema(hint: Any):
 
 
 def as_node(thing: Any, id: str | None = None) -> Node:
-    """``thing`` as a node: a node as it is, a plain function made into one (``FunctionNode.of``)."""
+    """``thing`` as a node: a node as it is, a plain function made into one (``FunctionNode.of``), and a
+    method (a chain, a fan...) as a ``GraphNode`` called after the method unless an id is given."""
     if isinstance(thing, Node):
         return thing
+    if isinstance(thing, Method):
+        from .graph import GraphNode
+        return GraphNode(id or thing.name or "graph", thing)
     if callable(thing):
         return FunctionNode.of(thing, id)
     raise NodeError(f"not a node or a function: {thing!r}")
 
 
 def as_nodes(things: Iterable[Any]) -> tuple[Node, ...]:
-    """Each of ``things`` as a node (see ``as_node``). A plain function that comes more than once becomes a
-    node each time, the second called ``<name>_2``, the third ``<name>_3`` and so on."""
+    """Each of ``things`` as a node (see ``as_node``). A plain function (or a method) that comes more than once
+    becomes a node each time, the second called ``<name>_2``, the third ``<name>_3`` and so on."""
     made: list[Node] = []
     seen: dict[str, int] = {}
     for thing in things:
-        if isinstance(thing, Node) or not callable(thing):
+        if isinstance(thing, Node) or not (callable(thing) or isinstance(thing, Method)):
             made.append(as_node(thing))
             continue
-        name = getattr(thing, "__name__", "")
+        name = (thing.name or "graph") if isinstance(thing, Method) else getattr(thing, "__name__", "")
         seen[name] = count = seen.get(name, 0) + 1
         made.append(as_node(thing, f"{name}_{count}" if count > 1 and name != "<lambda>" else None))
     return tuple(made)
