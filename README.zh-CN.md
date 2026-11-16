@@ -141,6 +141,13 @@ engine = Engine(graph, DEFAULT, workers=4,
                 observe=print)                                 # 每个事件，在发生的当时
 ```
 
+**每个节点都有开关。** 运行中可以对任何一个节点、或者一批节点暂停、恢复、停止、重启。操作者能拨（`engine.control`、`interlacing control`、MCP 工具 `control`），管着它的节点也能拨。谁管谁写在图里（`manage("lead", "a", "b")`），一个节点只能拨它下面的节点。正在运行的节点做完手上这一步就停（agent 是在两次调用模型之间）；暂停时就停在那里等着，位置和对话都保留。每次拨动都写进日志。
+
+```python
+graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # lead 里：ctx.control("a", "pause")
+engine.control(["a", "b"], "restart")                                  # 从外面：a 和 b 重新开始手上的工作
+```
+
 不能在图外把同一件事做两遍的节点把它包进 `ctx.once`：结果记进日志，这次激活重跑时直接拿回结果，不再执行。
 
 ```python

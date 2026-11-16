@@ -78,6 +78,21 @@ class Context(ABC):
         answers."""
         return self.call(port, payload)
 
+    def checkpoint(self) -> bool:
+        """Say that a step is done (a call to a model, a tool, one item of a long list). While this node is
+        paused it waits here; it returns False when the activation should end now, because the run is stopping
+        or this node was stopped or restarted. A node that never calls it is paused between activations."""
+        return not self.stopping()
+
+    async def acheckpoint(self) -> bool:
+        """``checkpoint``, for a node whose ``run`` is a coroutine."""
+        return not self.stopping()
+
+    def control(self, nodes: Any, action: str, *, team: bool = False) -> list:
+        """Pause, resume, stop or restart nodes this node manages (``GraphBuilder.manage``); ``team`` takes in
+        those they manage. Returns the nodes whose switch changed."""
+        raise NotImplementedError("this context cannot control other nodes")
+
     def once(self, name: str, do: Any) -> Any:
         """Do something outside the graph once for this activation, however often the activation runs.
 
@@ -168,6 +183,9 @@ class Node(ABC):
 
     def close(self, ctx: Context) -> Any:
         """Release what ``open`` acquired. May be ``async def``."""
+
+    def reset(self) -> None:
+        """Forget what the node holds from earlier activations: it is being restarted."""
 
     def snapshot(self) -> Mapping:
         """Plain data from which ``restore`` can rebuild the node's own state after a restart."""

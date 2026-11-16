@@ -43,6 +43,12 @@ class Tool:
         return {**self.spec(), **({"file": self.file} if self.file else {"own": True} if self.run is not None else {})}
 
 
+def _step(ctx) -> bool:
+    """A step is done: wait while paused; False when the activation is to end now."""
+    checkpoint = getattr(ctx, "checkpoint", None)
+    return checkpoint() if checkpoint is not None else not ctx.stopping()
+
+
 def is_image(value: Any) -> bool:
     """A picture, as it travels on an edge: ``{"mime": "image/png", "data": <base64 text>}``."""
     return (isinstance(value, Mapping) and isinstance(value.get("data"), str)
@@ -139,6 +145,9 @@ class AgentNode(Node):
                 "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs,
                 **(self.area.given if self.area is not None else {})}
 
+    def reset(self) -> None:
+        self.messages = []
+
     def snapshot(self) -> Mapping:
         return {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
 
@@ -163,7 +172,7 @@ class AgentNode(Node):
             messages.append({"role": "user", "content": f"What you sent was not accepted: {problem}"})
         unparsed = self.repairs
         for _ in range(self.max_steps):
-            if ctx.stopping():
+            if not _step(ctx):             # paused: waits here; stopped, restarted or the run is ending: leaves
                 return None
             if self.keep is not None:
                 kept = self.keep(messages)
@@ -207,6 +216,8 @@ class AgentNode(Node):
                                                                 f"Put that right and give your answer again."})
                     continue
             for call in message["tool_calls"]:
+                if not _step(ctx):
+                    return None
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
                                  "content": self._use(ctx, call["name"], call["args"])})
         raise NodeError(f"the model was still calling tools after {self.max_steps} steps")

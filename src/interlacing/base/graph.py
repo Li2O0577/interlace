@@ -13,7 +13,9 @@ Rules checked by ``compile``:
   feed it as well, since they only arrive in later rounds, and so may any number of calls;
 * a required input has a forward feed, otherwise its node could never start;
 * without its back edges the graph has no cycle, and every back edge really closes a loop. With the
-  ``max_rounds`` every back edge carries, no run can go on for ever.
+  ``max_rounds`` every back edge carries, no run can go on for ever;
+* who manages whom (``manage``) is a tree of existing nodes: a node has at most one manager, and no node
+  manages itself, directly or through others.
 """
 from __future__ import annotations
 
@@ -34,9 +36,10 @@ class GraphError(ValueError):
 class Graph:
     """A compiled graph. Construct it with ``GraphBuilder.compile``."""
 
-    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "protocols", "_node", "_edge", "_out", "_in", "_needs")
+    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "protocols", "managers", "_node", "_edge", "_out",
+                 "_in", "_needs", "_teams")
 
-    def __init__(self, nodes, edges, inputs, outputs, order, out_index, in_index, needs):
+    def __init__(self, nodes, edges, inputs, outputs, order, out_index, in_index, needs, managers=None):
         self.nodes: tuple[Node, ...] = nodes
         self.edges: tuple[Edge, ...] = edges
         self.inputs: Mapping[str, Endpoint] = MappingProxyType(inputs)     # the graph's own inputs, by name
@@ -45,6 +48,11 @@ class Graph:
         self._node = {node.id: node for node in nodes}
         self._edge = {edge.id: edge for edge in edges}
         self._out, self._in, self._needs = out_index, in_index, needs
+        self.managers: Mapping[str, str] = MappingProxyType(dict(managers or {}))   # node id -> the node that manages it
+        teams: dict[str, list[str]] = {}
+        for subordinate, manager in self.managers.items():
+            teams.setdefault(manager, []).append(subordinate)
+        self._teams = {manager: tuple(sorted(members)) for manager, members in teams.items()}
         self.digest: str = digest(self.describe())
         self.protocols: Protocols | None = None     # what it was compiled with: an engine runs it with these by default
 
@@ -82,6 +90,18 @@ class Graph:
         """How many required inputs must arrive before the node's first activation (0: it starts by itself)."""
         return self._needs[node]
 
+    def team(self, node: str, *, deep: bool = True) -> tuple[str, ...]:
+        """The nodes ``node`` manages: all the way down, or (``deep=False``) only those directly under it."""
+        if not deep:
+            return self._teams.get(node, ())
+        found: list[str] = []
+        below = list(self._teams.get(node, ()))
+        while below:
+            member = below.pop(0)
+            found.append(member)
+            below.extend(self._teams.get(member, ()))
+        return tuple(found)
+
     @property
     def sources(self) -> tuple[str, ...]:
         """Nodes that wait for nothing."""
@@ -92,7 +112,8 @@ class Graph:
         return {"nodes": sorted((n.describe() for n in self.nodes), key=lambda d: d["id"]),
                 "edges": sorted((e.describe() for e in self.edges), key=lambda d: d["id"]),
                 "inputs": {name: str(end) for name, end in sorted(self.inputs.items())},
-                "outputs": {name: str(end) for name, end in sorted(self.outputs.items())}}
+                "outputs": {name: str(end) for name, end in sorted(self.outputs.items())},
+                **({"manages": {manager: list(team) for manager, team in sorted(self._teams.items())}} if self._teams else {})}
 
     def __repr__(self):
         return f"<Graph {len(self.nodes)} nodes, {len(self.edges)} edges, {self.digest[:12]}>"
@@ -104,6 +125,7 @@ class GraphBuilder:
         self._edges: dict[str, Edge] = {}
         self._inputs: dict[str, Endpoint] = {}
         self._outputs: dict[str, Endpoint] = {}
+        self._managers: dict[str, str] = {}
 
     @classmethod
     def of(cls, graph: "Graph") -> "GraphBuilder":
@@ -112,6 +134,7 @@ class GraphBuilder:
         builder._nodes = {node.id: node for node in graph.nodes}
         builder._edges = {edge.id: edge for edge in graph.edges}
         builder._inputs, builder._outputs = dict(graph.inputs), dict(graph.outputs)
+        builder._managers = dict(graph.managers)
         return builder
 
     def remove(self, node: str) -> "GraphBuilder":
@@ -122,12 +145,22 @@ class GraphBuilder:
         self._edges = {id: e for id, e in self._edges.items() if node not in (e.source.node, e.target.node)}
         self._inputs = {name: end for name, end in self._inputs.items() if end.node != node}
         self._outputs = {name: end for name, end in self._outputs.items() if end.node != node}
+        self._managers = {member: manager for member, manager in self._managers.items() if node not in (member, manager)}
         return self
 
     def disconnect(self, edge: str) -> "GraphBuilder":
         if edge not in self._edges:
             raise GraphError(f"no edge {edge!r}")
         del self._edges[edge]
+        return self
+
+    def manage(self, manager: str, *members: str) -> "GraphBuilder":
+        """``manager`` manages ``members``: it may pause, resume, stop and restart them, and those they manage
+        in turn. A node has one manager at most."""
+        for member in members:
+            if member in self._managers and self._managers[member] != manager:
+                raise GraphError(f"{member} is already managed by {self._managers[member]}")
+            self._managers[member] = manager
         return self
 
     def add(self, *nodes: Node) -> "GraphBuilder":
@@ -220,11 +253,26 @@ class GraphBuilder:
             needs[node.id] = count
         order = self._order(nodes, edges)
         self._check_loops(edges, out_index)
+        self._check_managers()
         freeze = lambda index: {n: MappingProxyType({p: tuple(es) for p, es in ports.items()})  # noqa: E731
                                 for n, ports in index.items()}
-        graph = Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs)
+        graph = Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs,
+                      self._managers)
         graph.protocols = protocols
         return graph
+
+    def _check_managers(self) -> None:
+        for member, manager in self._managers.items():
+            for id in (member, manager):
+                if id not in self._nodes:
+                    raise GraphError(f"{manager} manages {member}: no node {id!r}")
+            seen: set[str] = {member}
+            above: str | None = manager
+            while above is not None:
+                if above in seen:
+                    raise GraphError(f"{member} would manage itself through {manager}")
+                seen.add(above)
+                above = self._managers.get(above)
 
     def _port(self, end: Endpoint, side: str, where):
         node = self._nodes.get(end.node)

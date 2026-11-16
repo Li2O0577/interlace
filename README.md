@@ -144,6 +144,13 @@ engine = Engine(graph, DEFAULT, workers=4,
                 observe=print)                                 # every event, as it happens
 ```
 
+**A switch on every node.** Any node, or several at once, can be paused, resumed, stopped or restarted while the run goes on: by the operator (`engine.control`, `interlacing control`, the MCP tool `control`), or by the node that manages it. Who manages whom is written in the graph (`manage("lead", "a", "b")`), and a node can only switch those under it. A running node stops at its next step (an agent between two calls to its model) and, when paused, waits there with its place and its conversation kept. Every switch is in the journal.
+
+```python
+graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # in lead: ctx.control("a", "pause")
+engine.control(["a", "b"], "restart")                                  # from outside: a and b start their work again
+```
+
 A node that must not do something twice outside the graph wraps it in `ctx.once`: the result is kept in the journal, and when the activation runs again it is returned without being done again.
 
 ```python

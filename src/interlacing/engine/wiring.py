@@ -14,6 +14,7 @@ from ..base import Delivery, Edge, Firing, Graph, Node, Protocols
 from .result import RunError
 
 INPUT = "input:"   # prefix of the pseudo edge id of a graph input
+ACTIVE, PAUSED, STOPPED = "active", "paused", "stopped"     # what a node's switch is set to
 
 
 class Feed:
@@ -55,7 +56,7 @@ class State:
 
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
                  "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
-                 "inner")
+                 "inner", "status", "halt", "holding", "paused_at")
 
     def __init__(self, node: Node):
         self.node = node
@@ -76,6 +77,10 @@ class State:
         self.rejected: dict[str, int] = {}        # this activation: output port -> times a payload was given back
         self.delivered = False                    # this activation has sent something on
         self.inner: list = []                     # this activation: the journals of the runs it made inside itself
+        self.status = ACTIVE                      # its switch: active, paused or stopped
+        self.halt: str | bool = False             # this activation is to end at its next step: "stop" or "restart"
+        self.holding: list = []                   # this activation: (feed, envelope) it took, to give back if it is cut
+        self.paused_at = 0.0                      # when it was paused: that time does not count against its limit
 
     def begin(self) -> None:
         """A new activation starts: forget what the last one did."""
@@ -84,6 +89,7 @@ class State:
         if self.rejected:
             self.rejected = {}
         self.delivered = False
+        self.halt = False
         if self.inner:
             self.inner = []
 

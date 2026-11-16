@@ -233,6 +233,28 @@ review/            块 review：多一层
 new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "check.x", "value").compile(DEFAULT)
 ```
 
+### 每个节点的开关，以及谁管谁
+
+运行中的每个节点都有一个开关：开着、暂停、停止。可以单个拨，也可以成批拨。动作有四个：
+
+| 动作 | 没在运行的节点 | 正在运行的节点 |
+|---|---|---|
+| `pause` 暂停 | 不再开始 | 做完手上这一步，停在那里等着，位置和对话都保留 |
+| `resume` 恢复 | 照常开始，处理等着它的消息 | 从停下的地方接着做 |
+| `stop` 停止 | 不再开始，等着它的消息留着 | 做完手上这一步就结束这次工作；它取走的输入放回去，留给以后 |
+| `restart` 重启 | 忘掉它记着的东西（`Node.reset`，agent 就是清空对话），重新开始 | 同上，并且用原来的输入重新做 |
+
+“一步”指节点调用 `ctx.checkpoint()` 的地方。`AgentNode` 在每次调用模型和每次使用工具之前都会调用它；自己写的长任务节点每做完一项也应当调用一次，返回 `False` 就该结束（协程节点用 `await ctx.acheckpoint()`）。从来不调用它的节点，要等这次激活做完，开关才起作用。
+
+谁能拨开关：
+
+- 操作者：`engine.control(节点, 动作, team=False)`；运行目录用 `Run.control(...)` 或命令行 `interlacing control 动作 节点... --dir RUN`；MCP 服务用工具 `control`。运行正在进行时立刻生效，没在进行时写进日志，下次 `resume` 时生效。
+- 节点自己的上级：图里用 `GraphBuilder.manage("lead", "a", "b")` 写明谁管谁（图文件里是 `"manages": {"lead": ["a", "b"]}`）。这是一棵树：一个节点最多一个上级，不能绕一圈管到自己。节点在运行中用 `ctx.control(节点, 动作, team=False)` 只能拨它下面的节点（多层也算），拨别的会被拒绝。`team=True` 时连同对方管着的节点一起拨。
+
+开关的每次变化都写进日志，恢复后保持原样，观察函数会收到 `control` 事件。暂停的时间不计入激活的时间上限。正被暂停的节点不能被调用（`call`）。
+
+剩下的工作全都被暂停时，运行不会一直挂着：停在暂停处的节点把输入放回去，运行以“没做完”结束，`Result.held` 列出开关没开的节点，运行目录的状态里是 `held` 和 `switches`。之后把开关拨回来再 `resume` 就能接着跑；这和图里的人还没回答时运行先停下是同一个思路。
+
 ## 方法
 
 方法接受节点，返回一张图。运行规则已经在图里：每个节点何时触发，每条回边最多几轮。
@@ -485,6 +507,7 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `answer --dir RUN [问题] --json 值` 或 `--text 文字` | 回答图里的人被问到的问题；只有一个待答问题时不用写问题的名字 |
 | `status --dir RUN` | 输出运行的状态和待答的问题 |
 | `files --dir RUN` | 列出工作区里的文件，以及每个文件是哪个节点在第几次激活里写的 |
+| `control 动作 节点... --dir RUN [--team]` | 暂停、恢复、停止或重启节点，见“每个节点的开关，以及谁管谁”；运行没在进行时写进日志，下次 `resume` 生效 |
 | `node-serve 模块:名字` | 把一个节点放在这个进程里服务，供别处的 `RemoteNode` 使用；`--listen 地址:端口`、`--token-env 变量名`、`--make`，见“在别的进程或别的机器上的节点” |
 
 `check` 和 `run` 用 `--allow 模块`（可以重复）、`--processes`、`--tools 工具池目录`、`--apps 应用目录` 和 `--remote 地址` 划定图能够到的范围，和 `Catalog` 的含义相同；不给就什么都够不到。范围在 `run` 时写进运行目录，`resume` 沿用它。`--workers N` 是并行运行节点的线程数。
@@ -530,6 +553,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 | `status` | `run` | 运行的状态和待答的问题 |
 | `resume` | `run`、`wait` | 从日志接着跑，`wait` 同上 |
 | `stop` | `run` | 让正在进行的运行停下，之后可以再 `resume` |
+| `control` | `run`、`nodes`、`action`、`team` | 暂停、恢复、停止或重启其中的节点；运行正在进行时立刻生效 |
 | `answer` | `run`、`answer`、可选 `question` | 写下人对问题的回答，之后要再调 `resume` |
 | `runs` | 无 | 服务手里的所有运行和各自的状态 |
 

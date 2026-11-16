@@ -100,6 +100,8 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
             builder.input(name, end)
         for name, end in description.get("outputs", {}).items():
             builder.output(name, end)
+        for manager, members in description.get("manages", {}).items():
+            builder.manage(manager, *([members] if isinstance(members, str) else members))
         return builder.compile(catalog.protocols)
     except KeyError as exc:
         raise SpecError(f"the description lacks {exc.args[0]!r}") from None
