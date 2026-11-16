@@ -22,7 +22,7 @@ class GraphNode(Node):
     kind = "graph"
     time_limit = float("inf")      # the nodes inside are timed one by one
 
-    def __init__(self, id: str, graph: Graph | Method, protocols: Protocols, *, workers: int = 0,
+    def __init__(self, id: str, graph: Graph | Method, protocols: Protocols | None = None, *, workers: int = 0,
                  firing: Firing | None = None):
         if isinstance(graph, Method):
             graph = graph.build(protocols)
@@ -35,7 +35,8 @@ class GraphNode(Node):
         except PortError as exc:
             raise NodeError(f"{id}: a graph's input and output names become port names: {exc}") from None
         super().__init__(id, inputs=inputs, outputs=outputs, firing=firing)
-        self.graph, self.protocols, self.workers = graph, protocols, workers
+        # the protocols it runs with: those given, else those the graph was compiled with
+        self.graph, self.protocols, self.workers = graph, protocols or graph.protocols, workers
         self.last: Result | None = None
 
     def config(self) -> Mapping:

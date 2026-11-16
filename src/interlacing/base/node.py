@@ -64,7 +64,7 @@ class Context(ABC):
         """True once the run is being stopped: a long activation should return soon."""
 
     @abstractmethod
-    def engine(self, graph: Any, protocols: Any, *, workers: int = 0, firm: bool = False) -> Any:
+    def engine(self, graph: Any, protocols: Any = None, *, workers: int = 0, firm: bool = False) -> Any:
         """An engine for a graph that runs inside this activation. It stops when the outer run stops, keeps
         its own journal beside the outer one when there is one, tells the outer observer what happens in it,
         and works under the same time limit. ``go(inputs)`` runs it, or takes it up where an interrupted

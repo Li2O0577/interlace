@@ -17,5 +17,6 @@ class Method(ABC):
     name: ClassVar[str] = ""
 
     @abstractmethod
-    def build(self, protocols: Protocols) -> Graph:
-        """The graph this method makes of its parts."""
+    def build(self, protocols: Protocols | None = None) -> Graph:
+        """The graph this method makes of its parts, checked against ``protocols`` (the standard ones when
+        None)."""

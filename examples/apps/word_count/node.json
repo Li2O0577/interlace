@@ -1,0 +1,7 @@
+{
+  "about": "Counts the words of a text and gives the most common ones. Any program in any language could stand here.",
+  "command": ["python", "count.py"],
+  "inputs": [{"name": "text", "type": "str"}, {"name": "top", "type": "int", "required": false}],
+  "outputs": ["common", "total"],
+  "timeout": 60
+}

@@ -168,12 +168,16 @@ def test_an_engine_runs_once_and_nodes_really_run_in_parallel():
 def test_envelopes_record_where_they_came_from():
     seen = {}
 
-    class Spy(Engine):
-        def _place(self, feed, envelope):
-            super()._place(feed, envelope)
-            seen[envelope.id] = envelope
     graph = Chain(fn('a', lambda x: x + 1), fn('b', lambda x: x)).build(DEFAULT)
-    Spy(graph, DEFAULT).run({'in': 1})
+    from interlacing.engine.scheduler import Scheduler
+
+    class Spy(Scheduler):
+        def place(self, feed, envelope):
+            super().place(feed, envelope)
+            seen[envelope.id] = envelope
+    engine = Engine(graph, DEFAULT)
+    engine._sched = Spy()
+    engine.run({'in': 1})
     first, second = seen['input:in#1'], seen['a.y>b.x#1']
     assert first.cause == () and first.round == 0 and second.cause == ('input:in#1',) and second.round == 1
     assert second.body == 2 and len(second.digest) == 64 and second.seq == 1

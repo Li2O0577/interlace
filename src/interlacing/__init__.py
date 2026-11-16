@@ -13,11 +13,12 @@ Layers, bottom up (each imports only from below):
 4. spec        graphs written as data: dump, load, and the Catalog that says what data may reach
 5. runs, cli, serve   a run kept in a directory, the ``interlacing`` command that works on one, and the
                same operations offered to an MCP client
+   quick       ``run``: build and run in one step
 
 Public names are importable from the package root. Standard library only.
 """
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 _PUBLIC = {
     # base
@@ -29,7 +30,7 @@ _PUBLIC = {
     # parts
     "FunctionNode": "nodes", "AgentNode": "nodes", "Tool": "nodes", "ProcessNode": "nodes", "SourceNode": "nodes",
     "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes", "Desk": "nodes", "IsolatedNode": "nodes",
-    "WorkerNode": "nodes", "Workspace": "nodes", "Area": "nodes", "ToolPool": "nodes",
+    "WorkerNode": "nodes", "FolderNode": "nodes", "Workspace": "nodes", "Area": "nodes", "ToolPool": "nodes",
     "Chain": "methods", "Loop": "methods", "Fan": "methods", "Tree": "methods", "Star": "methods",
     "Governed": "methods", "Pool": "methods",
     "Block": "blocks", "seq": "blocks", "par": "blocks",
@@ -37,8 +38,19 @@ _PUBLIC = {
     "with_files": "protocols",
     "Provider": "models", "FakeProvider": "models", "ChatResult": "models",
     # graphs as data
+    "node": "nodes", "as_node": "nodes", "run": "quick",
     "Catalog": "spec", "SpecError": "spec", "SpawnNode": "spec", "dump": "spec", "load": "spec",
 }
+
+
+def _standard():
+    from .protocols import DEFAULT
+    return DEFAULT
+
+
+from .base import set_standard as _set_standard  # noqa: E402 - the standard protocols are named once, here
+
+_set_standard(_standard)
 
 
 def __getattr__(name):

@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..base import Graph, GraphBuilder, GraphError, Method, Node, Protocols
-from ..nodes import Until
+from ..nodes import Until, as_nodes
 from .chain import sole_input, sole_output
 
 
@@ -24,7 +24,7 @@ class Loop(Method):
 
     name = "loop"
 
-    def __init__(self, *nodes: Node, max_rounds: int, until: Callable[[Any], bool] | None = None,
+    def __init__(self, *nodes: Node | Callable[..., Any], max_rounds: int, until: Callable[[Any], bool] | None = None,
                  strict: bool = False, again: str = "again", protocol: str = "value"):
         if not nodes:
             raise GraphError("a loop needs at least one node")
@@ -32,10 +32,10 @@ class Loop(Method):
             raise GraphError("a loop needs max_rounds of at least 1")
         if strict and until is None:
             raise GraphError("strict only applies to a loop with until")
-        self.nodes, self.max_rounds, self.until, self.strict = nodes, max_rounds, until, strict
+        self.nodes, self.max_rounds, self.until, self.strict = as_nodes(nodes), max_rounds, until, strict
         self.again, self.protocol = again, protocol
 
-    def build(self, protocols: Protocols) -> Graph:
+    def build(self, protocols: Protocols | None = None) -> Graph:
         nodes, protocol = self.nodes, self.protocol
         builder = GraphBuilder().add(*nodes)
         first = sole_input(nodes[0])

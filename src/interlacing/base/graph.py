@@ -24,7 +24,7 @@ from typing import Iterable, Mapping
 from .canonical import digest
 from .edge import Edge, EdgeError, Endpoint
 from .node import Firing, Node
-from .protocol import Delivery, ProtocolError, Protocols
+from .protocol import Delivery, ProtocolError, Protocols, resolve
 
 
 class GraphError(ValueError):
@@ -34,7 +34,7 @@ class GraphError(ValueError):
 class Graph:
     """A compiled graph. Construct it with ``GraphBuilder.compile``."""
 
-    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "_node", "_edge", "_out", "_in", "_needs")
+    __slots__ = ("nodes", "edges", "inputs", "outputs", "order", "digest", "protocols", "_node", "_edge", "_out", "_in", "_needs")
 
     def __init__(self, nodes, edges, inputs, outputs, order, out_index, in_index, needs):
         self.nodes: tuple[Node, ...] = nodes
@@ -46,6 +46,7 @@ class Graph:
         self._edge = {edge.id: edge for edge in edges}
         self._out, self._in, self._needs = out_index, in_index, needs
         self.digest: str = digest(self.describe())
+        self.protocols: Protocols | None = None     # what it was compiled with: an engine runs it with these by default
 
     # ---- lookups ---------------------------------------------------------------------------------------
 
@@ -138,9 +139,10 @@ class GraphBuilder:
             self._nodes[node.id] = node
         return self
 
-    def connect(self, source, target, protocol: str, *, id: str | None = None, back: bool = False,
+    def connect(self, source, target, protocol: str = "value", *, id: str | None = None, back: bool = False,
                 max_rounds: int | None = None) -> "GraphBuilder":
-        """Join ``"node.port"`` to ``"node.port"``. The id defaults to ``"a.out>b.in"``."""
+        """Join ``"node.port"`` to ``"node.port"`` under the protocol named (``value`` when none is). The id
+        defaults to ``"a.out>b.in"``."""
         try:
             source, target = Endpoint.of(source), Endpoint.of(target)
             edge = Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds)
@@ -170,7 +172,9 @@ class GraphBuilder:
 
     # ---- compile ---------------------------------------------------------------------------------------
 
-    def compile(self, protocols: Protocols) -> Graph:
+    def compile(self, protocols: Protocols | None = None) -> Graph:
+        """Check the graph against ``protocols`` (the standard ones when None) and freeze it."""
+        protocols = resolve(protocols)
         nodes, edges = tuple(self._nodes.values()), tuple(self._edges.values())
         if not nodes:
             raise GraphError("a graph needs at least one node")
@@ -218,7 +222,9 @@ class GraphBuilder:
         self._check_loops(edges, out_index)
         freeze = lambda index: {n: MappingProxyType({p: tuple(es) for p, es in ports.items()})  # noqa: E731
                                 for n, ports in index.items()}
-        return Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs)
+        graph = Graph(nodes, edges, dict(self._inputs), dict(self._outputs), order, freeze(out_index), freeze(in_index), needs)
+        graph.protocols = protocols
+        return graph
 
     def _port(self, end: Endpoint, side: str, where):
         node = self._nodes.get(end.node)
