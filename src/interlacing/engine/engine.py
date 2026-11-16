@@ -193,6 +193,11 @@ class Engine:
         self._begin()
         return self._drive(self._restore(change))
 
+    @property
+    def going(self) -> bool:
+        """Whether a run of this engine is under way now (and so can be controlled)."""
+        return bool(self._used) and not self._over
+
     def stop(self) -> None:
         """Ask the run to end: nothing new starts; running nodes see ``ctx.stopping()``."""
         with self._lock:

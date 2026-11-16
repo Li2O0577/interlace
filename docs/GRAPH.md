@@ -246,9 +246,11 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 
 “一步”指节点调用 `ctx.checkpoint()` 的地方。`AgentNode` 在每次调用模型和每次使用工具之前都会调用它；自己写的长任务节点每做完一项也应当调用一次，返回 `False` 就该结束（协程节点用 `await ctx.acheckpoint()`）。从来不调用它的节点，要等这次激活做完，开关才起作用。这时它做出的结果照常算数；如果拨的是 `restart`，结果算数之后它记着的东西照样清掉。正在回答别人调用（`call`）的节点被暂停时会停在下一步等着；被停止时会把这次回答做完，因为调用方还在等，之后才不再开始。
 
+把工作交给外面的节点也跟着开关走：`RemoteNode` 被暂停时，远端节点停在它自己的下一个 `checkpoint` 等着，停止时远端也被告知；外部程序（`ProcessNode`、`FolderNode`、`IsolatedNode`、agent 调用的命令和工具程序）被暂停时，在 Linux 和 macOS 上程序本身也被挂起（Windows 上程序继续跑，只是节点等着），暂停期间程序自己的 `timeout` 不走表。自己写这类节点时可以用 `ctx.paused()` 知道现在是否被暂停。
+
 谁能拨开关：
 
-- 操作者：`engine.control(节点, 动作, team=False)`；运行目录用 `Run.control(...)` 或命令行 `interlacing control 动作 节点... --dir RUN`；MCP 服务用工具 `control`。运行正在进行时立刻生效，没在进行时写进日志，下次 `resume` 时生效。
+- 操作者：`engine.control(节点, 动作, team=False)`；运行目录用 `Run.control(...)` 或命令行 `interlacing control 动作 节点... --dir RUN`；MCP 服务用工具 `control`。运行正在进行时立刻生效；运行在别的进程里进行时（比如另开一个终端跑的 `interlacing run`），变化先放进运行目录的 `controls/`，那个进程片刻之内就会接手；没在进行时写进日志，下次 `resume` 时生效。返回的 `changed` 只列真正变了的节点。只用 `Engine`、不给它日志时，因全部暂停而先结束的运行没法接着跑：要接着跑就用运行目录，或者给 `Engine` 传 `journal`。
 - 节点自己的上级：图里用 `GraphBuilder.manage("lead", "a", "b")` 写明谁管谁（图文件里是 `"manages": {"lead": ["a", "b"]}`）。这是一棵树：一个节点最多一个上级，不能绕一圈管到自己。节点在运行中用 `ctx.control(节点, 动作, team=False)` 只能拨它下面的节点（多层也算），拨别的会被拒绝。`team=True` 时连同对方管着的节点一起拨。
 
 开关的每次变化都写进日志，恢复后保持原样，观察函数会收到 `control` 事件。暂停的时间不计入激活的时间上限。正被暂停的节点不能被调用（`call`）。
@@ -553,7 +555,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 | `status` | `run` | 运行的状态和待答的问题 |
 | `resume` | `run`、`wait` | 从日志接着跑，`wait` 同上 |
 | `stop` | `run` | 让正在进行的运行停下，之后可以再 `resume` |
-| `control` | `run`、`nodes`、`action`、`team` | 暂停、恢复、停止或重启其中的节点；运行正在进行时立刻生效 |
+| `control` | `run`、`nodes`、`action`、`team` | 暂停、恢复、停止或重启其中的节点；运行正在进行时（在这个服务里或别的进程里）片刻之内生效 |
 | `answer` | `run`、`answer`、可选 `question` | 写下人对问题的回答，之后要再调 `resume` |
 | `runs` | 无 | 服务手里的所有运行和各自的状态 |
 

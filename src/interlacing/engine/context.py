@@ -34,6 +34,10 @@ class RunContext(Context):
             return True
         return False
 
+    def paused(self) -> bool:
+        state = self._state
+        return state.status == "paused" and not state.halt
+
     def checkpoint(self) -> bool:
         return self._engine._checkpoint(self._state, self)
 

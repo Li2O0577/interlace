@@ -45,6 +45,10 @@ with a new major version.
   under the caller. Switches are journaled and kept on resume; `Run.control`, `interlacing control` and the
   MCP tool `control` set them, between goes too. A run whose remaining work is all paused ends, not complete,
   with `Result.held`, to be taken up later. Time spent paused does not count against a time limit.
+  A run going in another process is switched through its directory (`controls/`), and `changed` names only
+  the nodes that changed. Pausing reaches work handed outside: a `RemoteNode`'s far side waits at its own
+  next step, and a program a node runs is suspended with it (on POSIX), its own timeout not counting the
+  pause. `ctx.paused()` tells a node it is paused. `Engine.going` says whether a run is under way.
 - The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
   `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
   `Engine.used` says what the run has used so far.

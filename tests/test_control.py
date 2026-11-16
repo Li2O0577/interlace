@@ -1,6 +1,7 @@
 """The switch on each node: pause, resume, stop and restart, one node or several, by the operator or a manager."""
 import asyncio
 import json
+import os
 import threading
 import time
 
@@ -351,3 +352,96 @@ def test_a_node_answering_a_call_finishes_the_answer_when_it_is_stopped():
     thread.join(10)
     result = box['result']
     assert result.last('out') == 1 and len(seen) == 30 and result.held == {'callee': 'stopped'}
+
+
+def test_a_served_node_is_paused_at_its_own_steps():
+    from interlacing import RemoteNode, serve_node
+    seen = []
+    with serve_node(stepper('far', 40, seen, 0.01)) as server:
+        graph = side_by_side(RemoteNode('far', server.address), stepper('other', 400, [], 0.01)).compile()
+        engine = Engine(graph, workers=2)
+        thread, box = in_background(engine, {'far': 5, 'other': 1})
+        until(lambda: len(seen) > 3)
+        engine.control('far', 'pause')
+        time.sleep(0.4)
+        held = len(seen)
+        time.sleep(0.3)
+        assert len(seen) == held < 40                  # the far side waits at its step
+        engine.control('far', 'resume')
+        until(lambda: len(seen) == 40)
+        engine.control('other', 'stop')
+        thread.join(10)
+    assert box['result'].last('far') == 5 and len(seen) == 40
+
+
+def test_a_served_node_that_is_left_paused_ends_the_run_and_is_told_to_stop():
+    from interlacing import RemoteNode, serve_node
+    seen = []
+    with serve_node(stepper('far', 40, seen, 0.01)) as server:
+        graph = GraphBuilder().add(RemoteNode('far', server.address)).input('in', 'far.x').output('out', 'far.y').compile()
+        engine = Engine(graph, workers=1)
+        thread, box = in_background(engine, {'in': 5})
+        until(lambda: len(seen) > 3)
+        engine.control('far', 'pause')
+        thread.join(10)
+        result = box['result']
+        assert not result.complete and result.held == {'far': 'paused'} and not result.outputs.get('out')
+        time.sleep(0.3)
+        assert len(seen) < 40                          # stopped there, not run to its end
+
+
+def test_a_program_is_paused_with_its_node_and_its_time_limit_waits(tmp_path):
+    import sys
+    from interlacing.nodes import ProcessNode
+    ticks = tmp_path / 'ticks'
+    script = (f"import time\nfor _ in range(20):\n    open({str(ticks)!r}, 'a').write('x')\n    time.sleep(0.05)\n"
+              "print('done')")
+    program = ProcessNode('p', [sys.executable, '-c', script], timeout=3, takes_input=False)
+    other = stepper('other', 400, [], 0.01)
+    builder = GraphBuilder().add(program, other).input('o', 'other.x').output('out', 'p.out').output('o', 'other.y')
+    engine = Engine(builder.compile(), workers=2)
+    thread, box = in_background(engine, {'o': 1})
+    until(lambda: ticks.exists() and ticks.stat().st_size > 2)
+    engine.control('p', 'pause')
+    time.sleep(0.3)
+    held = ticks.stat().st_size
+    time.sleep(3)                                  # longer than the program's own time limit
+    if os.name == 'posix':
+        assert ticks.stat().st_size == held < 20   # the program itself is held
+    engine.control('p', 'resume')
+    engine.control('other', 'stop')
+    thread.join(20)
+    assert [o.strip() for o in box['result'].outputs['out']] == ['done'] and ticks.stat().st_size == 20
+
+
+def test_another_process_controls_a_run_that_is_going(tmp_path):
+    described = {"nodes": [{"id": "slow", "kind": "function", "function": f"{HERE}.slow_steps", "context": True,
+                            "inputs": ["x"], "outputs": ["y"]}],
+                 "inputs": {"in": "slow.x"}, "outputs": {"out": "slow.y"}}
+    Run.create(tmp_path / 'run', described, allow=[HERE])
+    box = {}
+    thread = threading.Thread(target=lambda: box.update(state=Run(tmp_path / 'run').start({'in': 3})))
+    thread.start()
+    until(lambda: SLOW and Run(tmp_path / 'run').status()['status'] == 'running')
+    said = Run(tmp_path / 'run').control('slow', 'stop')       # not the object running it: as from another process
+    assert said['sent'] and said['changed'] == ['slow'] and said['switches'] == {'slow': 'stopped'}
+    thread.join(10)
+    assert box['state']['status'] == 'stopped' and box['state']['held'] == {'slow': 'stopped'}
+    assert len(SLOW) < 200 and not list((tmp_path / 'run' / 'controls').glob('*.json'))
+    assert Run(tmp_path / 'run').control('slow', 'stop')['changed'] == []      # already stopped: nothing changes
+    assert Run(tmp_path / 'run').control('slow', 'resume')['changed'] == ['slow']
+    SLOW.clear()
+    state = Run(tmp_path / 'run').resume()
+    assert state['status'] == 'done' and state['outputs'] == {'out': [3]}
+
+
+SLOW = []
+
+
+def slow_steps(ctx, x):
+    for _ in range(200):
+        if not ctx.checkpoint():
+            return None
+        SLOW.append(1)
+        time.sleep(0.01)
+    return x
