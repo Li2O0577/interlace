@@ -33,7 +33,7 @@ import socket
 import threading
 from typing import Any, Callable, Iterable, Mapping
 
-from ..base import Context, Node, NodeError, Port
+from ..base import Context, Node, NodeError, Port, waited
 from .function import as_node
 
 VERSION = 1
@@ -330,8 +330,8 @@ class NodeServer:
             with self._busy:
                 if not self._opened:
                     self._opened = True
-                    self.node.open(ctx)
-                returned = self.node.run(ctx, dict(inputs))
+                    waited(self.node.open(ctx))
+                returned = waited(self.node.run(ctx, dict(inputs)))
             if returned is not None and not isinstance(returned, Mapping):
                 raise NodeError("run must return a mapping of output port to payload, or None")
             send({"id": id, "done": True, "returned": dict(returned) if returned is not None else None})

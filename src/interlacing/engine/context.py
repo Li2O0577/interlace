@@ -25,6 +25,9 @@ class RunContext(Context):
     def call(self, port: str, payload: Any) -> Any:
         return self._engine._call(self._state, port, payload, self._act)
 
+    async def acall(self, port: str, payload: Any) -> Any:
+        return await self._engine._acall(self._state, port, payload, self._act)
+
     def stopping(self) -> bool:
         if self._engine._stopping():
             self._cut = True

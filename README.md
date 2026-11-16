@@ -150,7 +150,7 @@ A node that must not do something twice outside the graph wraps it in `ctx.once`
 receipt = ctx.once("charge", lambda: bank.charge(order, key=ctx.key))   # ctx.key names this activation, the same on every attempt
 ```
 
-**Awaited, where the caller is a coroutine.** The run goes on in threads and the event loop stays free; cancelling the wait stops the run. A node's function may itself be `async def`.
+**Nodes that are coroutines, and runs that are awaited.** A node's `run` (or the function given to `FunctionNode` and `@node`) may be `async def`. The engine then runs on an event loop: those nodes are awaited there without a thread each, so a hundred agents waiting on a model take `workers=100` and no extra threads; the other nodes still go to threads. One that overruns its time is cancelled. A call from such a node is `await ctx.acall(port, payload)`. Where the caller is a coroutine, `arun` runs the graph on the caller's loop; cancelling the wait stops the run.
 
 ```python
 result = await Engine(graph, DEFAULT).arun({"in": 21})          # also aresume() and ago()
@@ -240,7 +240,6 @@ The tests run on Linux, macOS and Windows, with scripted models, a stand-in mode
 - A node that overruns in the engine's own process is abandoned, not killed. `IsolatedNode` and `ProcessNode` are killed.
 - `allow` is a list of modules whose functions a graph may name. It is not a sandbox, and neither is `IsolatedNode`: its process has the rights of the one that started it. The same holds for a worker's commands and a pool's tools: the file tools stay in a node's area, a command does not have to.
 - The MCP server speaks over stdio only. It has been run by the reference client in tests, not yet by a desktop application.
-- The awaited interface runs the engine in threads; the engine itself is not written as coroutines.
 
 ## License
 

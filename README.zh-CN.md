@@ -147,7 +147,7 @@ engine = Engine(graph, DEFAULT, workers=4,
 receipt = ctx.once("charge", lambda: bank.charge(order, key=ctx.key))   # ctx.key 是这次激活的名字，每次重试都相同
 ```
 
-**可以 await。** 调用方是协程时，运行在线程里进行，事件循环保持空闲；取消等待就会停止运行。节点的函数本身也可以是 `async def`。
+**协程节点，以及可以 await 的运行。** 节点的 `run`（或者交给 `FunctionNode`、`@node` 的函数）可以是 `async def`。这时引擎在事件循环上运行：这些节点在循环里被 await，不各占一个线程，所以一百个等模型回答的 agent 用 `workers=100` 就行，不会多出线程；别的节点照旧放进线程。超时的协程节点会被取消。这样的节点要调用别的节点，写 `await ctx.acall(port, payload)`。调用方是协程时，`arun` 就在调用方的事件循环上跑这张图；取消等待会停下运行。
 
 ```python
 result = await Engine(graph, DEFAULT).arun({"in": 21})          # 还有 aresume() 和 ago()
@@ -237,7 +237,6 @@ python scripts/bench_engine.py       # 引擎给每个信封增加的开销（�
 - 在引擎自己进程里超时的节点是被放弃，而不是被杀掉。`IsolatedNode` 和 `ProcessNode` 会被杀掉。
 - `allow` 是一份模块清单，图可以点名其中的函数。它不是沙箱，`IsolatedNode` 也不是：它的进程拥有启动它的进程的全部权限。worker 的命令和工具池里的工具也一样：文件工具出不了节点的区域，命令可以。
 - MCP 服务只走 stdio。测试里由参考客户端跑通过，还没有接过桌面应用。
-- 可以 await 的接口是让引擎在线程里运行；引擎本身不是用协程写的。
 
 ## 许可
 

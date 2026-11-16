@@ -6,7 +6,6 @@ method takes a plain function wherever it takes a node.
 """
 from __future__ import annotations
 
-import asyncio
 import inspect
 import typing
 from typing import Any, Callable, Iterable, Mapping
@@ -47,10 +46,18 @@ class FunctionNode(Node):
     def config(self) -> Mapping:
         return {"function": named(self.function), "context": self.context}
 
+    @property
+    def asynchronous(self) -> bool:
+        function = self.function
+        return inspect.iscoroutinefunction(function) or inspect.iscoroutinefunction(getattr(function, "__call__", None))
+
     def run(self, ctx, inputs: Mapping[str, Any]):
         result = self.function(ctx, **inputs) if self.context else self.function(**inputs)
-        if inspect.iscoroutine(result):
-            result = asyncio.run(result)
+        if inspect.isawaitable(result):
+            return _Later(self, result)          # the engine awaits it
+        return self._shaped(result)
+
+    def _shaped(self, result) -> Mapping[str, Any] | None:
         if result is None:
             return None
         if len(self._sends) == 1:
@@ -187,3 +194,20 @@ def node(function: Callable | None = None, /, *, id: str | None = None, outputs:
     def make(function: Callable) -> FunctionNode:
         return FunctionNode.of(function, id, outputs=outputs, firing=firing, check=check, repairs=repairs, invalid=invalid)
     return make(function) if function is not None else make
+
+
+class _Later:
+    """What an ``async def`` function gave, to be awaited: then shaped like any function's answer."""
+
+    __slots__ = ("node", "pending")
+
+    def __init__(self, node: FunctionNode, pending):
+        self.node, self.pending = node, pending
+
+    def __await__(self):
+        return self.node._shaped((yield from self.pending.__await__()))
+
+    def close(self) -> None:
+        close = getattr(self.pending, "close", None)
+        if close is not None:
+            close()
