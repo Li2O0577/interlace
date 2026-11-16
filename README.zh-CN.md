@@ -117,7 +117,7 @@ team = Fan(analyst, modeller,                                   # 每个成员�
            join=Desk("exit", takes=["analyst", "modeller"], sort=report))
 ```
 
-**不事先固定的图。** `Pool` 为成员留好位置，成员在被叫到之前什么也不做。`SpawnNode` 构建并运行一张由节点在运行中写出的图，范围由创建这个节点的人限定。
+**不事先固定的图。** 节点用一个显式操作改它所在的图：`ctx.change(Change().add(...).connect(...))`。改动按建图的全部规则检查，要么整个被拒绝，要么立刻生效；它和提出它的那次激活一起写进日志，恢复时照样重做。`Pool` 为成员留好位置，成员在被叫到之前什么也不做。`SpawnNode` 构建并运行一张由节点在运行中写出的图，范围由创建这个节点的人限定。
 
 ```python
 grow = SpawnNode("grow", Catalog(allow=["my_steps"]), max_nodes=20)
@@ -210,7 +210,7 @@ interlacing resume --dir /tmp/run                                               
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十二个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十三个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 

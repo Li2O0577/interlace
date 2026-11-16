@@ -120,7 +120,7 @@ team = Fan(analyst, modeller,                                   # each member ge
            join=Desk("exit", takes=["analyst", "modeller"], sort=report))
 ```
 
-**Graphs that are not fixed in advance.** `Pool` keeps places for members that do nothing until they are called for. `SpawnNode` builds and runs a graph that a node wrote during the run, within limits set by whoever made the node.
+**Graphs that are not fixed in advance.** A node changes the graph it runs in with one explicit operation, `ctx.change(Change().add(...).connect(...))`: the change is checked by every rule a graph is built by, refused whole or made at once, journaled with the activation that asked for it, and made again when the run is taken up. `Pool` keeps places for members that do nothing until they are called for. `SpawnNode` builds and runs a graph that a node wrote during the run, within limits set by whoever made the node.
 
 ```python
 grow = SpawnNode("grow", Catalog(allow=["my_steps"]), max_nodes=20)
@@ -213,7 +213,7 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that. Inside, the engine is a few small parts, each with one job: the mailboxes a graph becomes (`wiring`), when a node may run (`scheduler`), what is checked and what follows a problem (`checks`), the budget (`ledger`), the journal (`recorder`), time limits (`clock`).
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Twelve examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Thirteen examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 

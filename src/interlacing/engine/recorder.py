@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ..base import Envelope
 from .journal import Journal, pack, pack_body, unpack_body
@@ -21,7 +21,7 @@ from .wiring import Wiring
 class Act:
     """What one activation did, for the journal."""
 
-    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems")
+    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems", "changes")
 
     def __init__(self, node: str, round: int, took: tuple) -> None:
         self.node, self.round, self.took = node, round, took
@@ -31,6 +31,7 @@ class Act:
         self.calls: list[str] = []
         self.snaps: dict[str, Any] = {}
         self.problems: list[dict] = []
+        self.changes: list = []           # the changes to the graph it made, as plain data
 
 
 def discard(journal: Path) -> None:
@@ -61,7 +62,8 @@ class Recorder:
                             "sent": [pack(e) for e in act.sent],
                             "out": [[name, pack_body(payload)] for name, payload in act.out],
                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps,
-                            **({"problems": act.problems} if act.problems else {})})
+                            **({"problems": act.problems} if act.problems else {}),
+                            **({"changes": act.changes} if act.changes else {})})
 
     def use(self, node: str, round: int, amounts: Mapping[str, float]) -> None:
         self.journal.write({"kind": "use", "node": node, "round": round, "amounts": dict(amounts)})
@@ -98,11 +100,11 @@ def under(records: list[dict]) -> str | None:
 
 
 def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: Ledger, result: Result,
-            limited: dict[str, None]) -> tuple[str | None, set[str], int]:
+            limited: dict[str, None], change: Callable[[list], int]) -> tuple[str | None, set[str], int]:
     """Rebuild counters, node state and waiting envelopes from the journal. Returns the run's id, the
     envelopes already dealt with whose sender must run again, and how many waiting envelopes were dropped
-    because their edge is not in this graph."""
-    states, feeds = wiring.states, wiring.feeds
+    because their edge is not in this graph. ``change`` makes again a change an activation made to the graph."""
+    states = wiring.states
     run_id: str | None = None
     sent: dict[str, dict[int, list]] = {}
     took: set[str] = set()
@@ -116,12 +118,14 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
         elif kind == "once":
             ledger.keep(record["node"], record["round"], record["name"], record["value"])
         if kind == "act":
+            for described in record.get("changes", ()):
+                change(described)
             took.update(record["took"])
             for name, body in record["out"]:
                 if name in result.outputs:
                     result.outputs[name].append(unpack_body(body))
             for id in record["limited"]:
-                if id in feeds:
+                if id in wiring.feeds:
                     limited[id] = None
             result.problems.extend(record.get("problems", ()))
             for id in (record["node"], *record["calls"]):
@@ -140,7 +144,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
     for id, by_seq in sent.items():
         seqs = sorted(by_seq)
         waiting = [seq for seq in seqs if f"{id}#{seq}" not in took]
-        feed = feeds.get(id)
+        feed = wiring.feeds.get(id)
         if feed is None:
             dropped += len(waiting)
             continue

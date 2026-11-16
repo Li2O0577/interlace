@@ -81,6 +81,12 @@ class Context(ABC):
         again: for that last gap, give the outside service ``ctx.key`` as well."""
         return do()
 
+    def change(self, change: Any) -> None:
+        """Change the graph this node runs in (a ``Change``): checked like a graph being built, and either
+        refused with ``GraphError`` (nothing changes) or made at once. With a journal it is kept with this
+        activation and made again when the run is taken up."""
+        raise NotImplementedError("this context cannot change its graph")
+
     def use(self, **amounts: float) -> None:
         """Report what this activation used up, under names of the node's choosing (``tokens=1200``,
         ``calls=1``, ``seconds=3.5``). The run adds it up; when a total goes over the run's budget for that

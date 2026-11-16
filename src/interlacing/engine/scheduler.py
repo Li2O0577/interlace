@@ -12,7 +12,7 @@ from collections import deque
 from typing import Any, Callable
 
 from ..base import Envelope, Ref, digest
-from .wiring import Feed, InPort, State
+from .wiring import Feed, State, refresh
 
 # how one envelope taken from a feed is turned into what the node sees: (feed, envelope body) -> value
 Read = Callable[[Feed, Any], Any]
@@ -43,16 +43,7 @@ class Scheduler:
             state.queued = True
             self.ready.append(state)
 
-    @staticmethod
-    def refresh(port: InPort) -> None:
-        ready = (bool(port.forward) and port.forward_full == len(port.forward)) or port.back_full > 0
-        if ready != port.ready:
-            port.ready = ready
-            state = port.state
-            if port.port.required:
-                state.missing += -1 if ready else 1
-            else:
-                state.optional_ready += 1 if ready else -1
+    refresh = staticmethod(refresh)
 
     def envelope(self, feed: Feed, body: Any, round: int, cause: tuple) -> Envelope:
         """The next envelope on ``feed``."""

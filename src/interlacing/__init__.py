@@ -24,7 +24,7 @@ _PUBLIC = {
     # base
     "Node": "base", "Port": "base", "Firing": "base", "Context": "base", "Schema": "base", "Edge": "base",
     "Invalid": "base", "Protocol": "base", "Protocols": "base", "Delivery": "base", "Envelope": "base", "Ref": "base",
-    "Graph": "base", "GraphBuilder": "base", "GraphError": "base", "NodeError": "base", "Method": "base",
+    "Graph": "base", "GraphBuilder": "base", "Change": "base", "GraphError": "base", "NodeError": "base", "Method": "base",
     # engine
     "Engine": "engine", "Result": "engine", "RunError": "engine", "OverBudget": "engine", "Journal": "engine", "Transport": "engine",
     # parts

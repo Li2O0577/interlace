@@ -19,6 +19,12 @@ with a new major version.
   node. Inputs go in as one JSON object and the answer comes back as one, by file or on standard output; a
   text format suits plain command-line programs. Graph files reach only the folders under `--apps`
   (`Catalog(apps=)`, `Run.create(apps=)`, the server).
+- A graph changes while it runs through one explicit operation: `ctx.change(Change().add(...).connect(...)
+  .remove(...).disconnect(...).output(...))`. The change is checked by every rule a graph is built by and is
+  refused whole (`GraphError`) or made at once; observers are told (`changed`); with a journal it is kept with
+  the activation and made again on resume, the added nodes rebuilt from their descriptions
+  (`Engine(rebuild=)`, done by `Run` itself; `spec.load_node`). `Engine(max_nodes=)` bounds the growth, and
+  `Engine.graph` is the graph as it stands.
 - The engine is split into parts that each do one thing (`wiring`, `scheduler`, `checks`, `ledger`,
   `recorder`, `clock`, `context`, `result`). Nothing exported changed, and it is as fast as before.
   `Engine.used` says what the run has used so far.

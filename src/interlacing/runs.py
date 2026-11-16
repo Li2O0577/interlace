@@ -33,7 +33,7 @@ from typing import Any, Callable, Mapping
 from .engine import Engine, Journal, RunError
 from .nodes import Workspace
 from .models import ChatResult, FakeProvider, ProviderError, build
-from .spec import Catalog, SpecError, dump, load
+from .spec import Catalog, SpecError, dump, load, load_node
 
 DONE, WAITING, STOPPED, FAILED, NEW, RUNNING = "done", "waiting", "stopped", "failed", "new", "running"
 
@@ -243,7 +243,8 @@ class Run:
         catalog = self._catalog(options)
         return Engine(load(description, catalog), catalog.protocols, workers=options["workers"],
                       journal=Journal(self.directory / "journal.jsonl"), time_limit=options.get("time_limit"),
-                      observe=self.observe, budget=options.get("budget"), firm=bool(options.get("strict")))
+                      observe=self.observe, budget=options.get("budget"), firm=bool(options.get("strict")),
+                      rebuild=lambda described: load_node(described, catalog))
 
     # ---- running ---------------------------------------------------------------------------------------
 
