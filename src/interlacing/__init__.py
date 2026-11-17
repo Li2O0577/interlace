@@ -30,7 +30,7 @@ _PUBLIC = {
     # parts
     "FunctionNode": "nodes", "AgentNode": "nodes", "Tool": "nodes", "ProcessNode": "nodes", "SourceNode": "nodes",
     "SinkNode": "nodes", "HumanNode": "nodes", "GraphNode": "nodes", "Desk": "nodes", "IsolatedNode": "nodes",
-    "WorkerNode": "nodes", "FolderNode": "nodes", "RemoteNode": "nodes", "serve_node": "nodes", "Workspace": "nodes", "Area": "nodes", "ToolPool": "nodes",
+    "WorkerNode": "nodes", "FolderNode": "nodes", "RemoteNode": "nodes", "serve_node": "nodes", "time_left": "nodes", "Workspace": "nodes", "Area": "nodes", "ToolPool": "nodes",
     "Chain": "methods", "Loop": "methods", "Fan": "methods", "Tree": "methods", "Star": "methods",
     "Governed": "methods", "Pool": "methods",
     "Block": "blocks", "seq": "blocks", "par": "blocks",

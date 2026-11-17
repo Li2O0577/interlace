@@ -167,6 +167,8 @@ class Catalog:
                         tools.extend(self.pool.tools(path, cwd=cwd, top=top))
                 except NodeError as exc:
                     raise SpecError(str(exc)) from None
+            elif isinstance(tool, Mapping) and tool.get("function"):
+                tools.append(Tool.of(self.function(tool["function"]), tool.get("name"), tool.get("description")))
             elif isinstance(tool, Mapping) and tool.get("own"):
                 raise SpecError(f"the tool {tool.get('name')!r} was the node's own function, which a description cannot hold")
             elif isinstance(tool, Mapping) and "name" in tool:

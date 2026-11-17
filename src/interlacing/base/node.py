@@ -78,6 +78,10 @@ class Context(ABC):
         answers."""
         return self.call(port, payload)
 
+    def time_left(self) -> float | None:
+        """Seconds until this activation's time limit; None when it has none."""
+        return None
+
     #: True when this activation goes on from progress an earlier one saved with ``commit``: the node's own
     #: state is as it was then, the inputs are empty, and what has come since is there to ``receive``.
     resumed = False

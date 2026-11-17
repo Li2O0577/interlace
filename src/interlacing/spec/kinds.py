@@ -76,7 +76,7 @@ def _agent(d, catalog, area) -> dict:
                 inputs=ports(d, "inputs", catalog), outputs=[p for p in outputs if not p.call] if outputs is not None else None,
                 firing=d.get("firing"), memory=catalog.function(memory) if isinstance(memory, str) else memory, json=c.get("json", False),
                 max_steps=c.get("max_steps", 50), max_tokens=c.get("max_tokens", 4096), files=catalog.workspace,
-                repairs=c.get("repairs"))
+                repairs=c.get("repairs"), resident=c.get("resident", False))
 
 
 def agent(d, catalog, graphs):

@@ -146,6 +146,8 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 **A switch on every node.** Any node, or several at once, can be paused, resumed, stopped or restarted while the run goes on: by the operator (`engine.control`, `interlacing control`, the MCP tool `control`), or by the node that manages it. Who manages whom is written in the graph (`manage("lead", "a", "b")`), and a node can only switch those under it. A running node stops at its next step (an agent between two calls to its model) and, when paused, waits there with its place and its conversation kept. Every switch is in the journal. It reaches beyond the process: a run going in another process is switched through its run directory, a `RemoteNode` makes its far side wait at its own next step, and a program a node runs is suspended with it (on Linux and macOS), its own time limit waiting too.
 
+**Agents that stay.** `AgentNode(..., resident=True)` is one activation from start to finish, ended when the agent says it has finished. It sends each output when it is ready, waits for the others' messages (`wait`, which holds no worker and says so when nothing more can come), keeps a task board (`plan`, `done`, `note`) and saves its progress, so a run taken up again goes on where it stood. Underneath are two things any node can use: `ctx.receive()`, to take the next message in the middle of an activation, and `ctx.commit()`, to save progress. Plain functions are tools too: `AgentNode(tools=[check, time_left])`, called by the agent itself, with no node or edge.
+
 ```python
 graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # in lead: ctx.control("a", "pause")
 engine.control(["a", "b"], "restart")                                  # from outside: a and b start their work again
@@ -243,7 +245,7 @@ The tests run on Linux, macOS and Windows, with scripted models, a stand-in mode
 
 - Taking a run up again is at-least-once: an interrupted node runs again. `ctx.once` keeps what was done outside the graph from being done again, except in the moment between the deed and its record; for that, give the outside service `ctx.key`.
 - Edges are in-process. A node can live elsewhere (`RemoteNode`), but streams and calls between nodes do not cross processes; `Transport` is the place for that, and nothing is there yet.
-- Switches and managers hold within one graph: the nodes of a graph run inside a node cannot be switched from outside it, and a node cannot pause itself. On Windows a paused program keeps running; only its node waits.
+- Switches and managers hold within one graph: the nodes of a graph run inside a node cannot be switched from outside it. On Windows a paused program keeps running; only its node waits.
 - Both model interfaces are tested against a stand-in service: tools, pictures, thinking, streams, and waiting when the service is busy. Against a real service they have been tried once, with very small requests; thinking and picture input have not. Device nodes have only met stand-ins.
 - A node that overruns in the engine's own process is abandoned, not killed. `IsolatedNode` and `ProcessNode` are killed.
 - `allow` is a list of modules whose functions a graph may name. It is not a sandbox, and neither is `IsolatedNode`: its process has the rights of the one that started it. The same holds for a worker's commands and a pool's tools: the file tools stay in a node's area, a command does not have to.
