@@ -78,6 +78,33 @@ class Context(ABC):
         answers."""
         return self.call(port, payload)
 
+    #: True when this activation goes on from progress an earlier one saved with ``commit``: the node's own
+    #: state is as it was then, the inputs are empty, and what has come since is there to ``receive``.
+    resumed = False
+
+    def commit(self) -> bool:
+        """Save the progress of a long activation: what it has taken, sent and holds (its ``snapshot``) is
+        put on record now, and the activation goes on. Should the process end, ``resume`` does not run it
+        again from the start: the node is given back its state as saved and runs once more with ``resumed``
+        true and no inputs, to go on from there. What it took before the save is no longer given back when
+        it is stopped. Returns whether it was journaled (False when the run keeps no journal)."""
+        return False
+
+    def receive(self, ports: Any = None, timeout: float | None = None) -> dict | None:
+        """Wait, in the middle of an activation, for the next message to this node, and take it:
+        ``{port: value}``, from the messages that came while it ran, in the order they came (``ports`` keeps
+        to some input ports). A node that waits here holds none of the run's workers.
+
+        None when there is no message to wait for: ``timeout`` seconds passed; the node was stopped or
+        restarted, or the run is ending (``stopping()`` says so); or nothing more can come, because every other
+        activation has ended or is waiting too. Two nodes waiting for each other both get None, and can
+        finish. What is taken here belongs to the activation, as what it started with does."""
+        raise NotImplementedError("this context cannot receive in the middle of an activation")
+
+    async def areceive(self, ports: Any = None, timeout: float | None = None) -> dict | None:
+        """``receive``, for a node whose ``run`` is a coroutine."""
+        raise NotImplementedError("this context cannot receive in the middle of an activation")
+
     def paused(self) -> bool:
         """True while this node is paused and has not yet been told to end. For a node that hands its work to
         something outside (a program, a server) and wants to pause that too; most nodes need only
