@@ -1,6 +1,7 @@
 """What a node sees of the run while one of its activations runs: ``ctx``."""
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..base import Context, Graph, Protocols
@@ -39,6 +40,12 @@ class RunContext(Context):
     def paused(self) -> bool:
         state = self._state
         return state.status == "paused" and not state.halt
+
+    def time_left(self) -> float | None:
+        state = self._state
+        if state.time_limit is None or state.time_limit == float("inf"):
+            return None
+        return max(0.0, state.since + state.time_limit - time.monotonic())
 
     def commit(self) -> bool:
         return self._engine._commit(self._state, self)

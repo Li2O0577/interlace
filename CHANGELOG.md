@@ -17,6 +17,17 @@ with a new major version.
   on. Taken up after the process ended, or switched on again after a stop, it is not run again from the start:
   the node gets back its saved state and runs once more with `ctx.resumed` true and no inputs. A restart
   starts it again from what it first had.
+- Resident agents: `AgentNode(..., resident=True)` (`"resident": true` in a graph file) stays for one
+  activation until it says it has finished. It sends each output when it is ready (`send_<port>`, even with
+  one output), waits for messages (`wait`, holding no worker, and told when nothing more can come), keeps a
+  task board (a line per output, items it adds with `plan` and ticks off with `done`, its last `note`), and
+  ends with `finish`, which asks once when an output was never sent. Its progress is saved before each wait
+  and with each note; taken up again it goes on with its conversation and its board.
+- Plain functions as an agent's tools: `AgentNode(tools=[function, ...])` or `Tool.of(function)`. The name,
+  description and JSON schema of the arguments come from the function; a `ctx` parameter gets the agent's
+  context. The agent calls it itself: no node, no edge. Graph files name one with `{"function": "module.name"}`
+  under `allow`. `time_left` tells an agent how long it has before its time limit (`ctx.time_left()`).
+- Example: `resident_team.py`, a lead and two resident members.
 
 ## 0.14.0
 

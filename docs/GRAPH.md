@@ -72,7 +72,7 @@ run(Chain(clean, Fan(words, letters), report), {"in": " the cat "}).last("out")
 |---|---|
 | `FunctionNode` | 一个 Python 函数（`FunctionNode.of(f)`、`as_node(f)`、`@node` 从函数本身读出端口） |
 | `FolderNode` | 一个文件夹里的整个应用，见下面“整个文件夹作为一个节点”。写在 JSON 图里是 `"kind": "folder"` |
-| `AgentNode` | 一个模型。工具是调用口；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`interlacing.models` 里有现成的。`memory` 可以是一个函数，见下 |
+| `AgentNode` | 一个模型。工具是调用口，也可以直接是普通函数（见下）；有多个输出口时由模型用 `send_<口名>` 选择。模型是任何带 `chat` 方法的对象，`interlacing.models` 里有现成的。`memory` 可以是一个函数，见下。`resident=True` 时是常驻 agent，见“常驻 agent” |
 | `ProcessNode` | 一个外部程序，输入写到标准输入，标准输出作为输出 |
 | `IsolatedNode` | 一个 Python 函数，在单独的进程里运行：超过运行的时间上限、自己的 `timeout`，或者运行被停止时，进程被杀掉；它崩溃只让这个节点失败。函数必须是可导入模块顶层的函数（或它的带点名字），输入和返回值以 JSON 在两个进程之间传递，拿不到 `ctx`。它不是沙箱。写在 JSON 图里是 `"kind": "isolated"`，需要目录允许启动进程 |
 | `WorkerNode` | 在给定工作区里自由操作的 agent：自带文件工具和运行命令的工具，输入输出照旧。见下面“工作区、worker 和工具池”。写在 JSON 图里是 `"kind": "worker"` |
@@ -88,6 +88,8 @@ run(Chain(clean, Fan(words, letters), report), {"in": " the cat "}).last("out")
 
 - `memory=函数`：每次请求模型之前，`memory(messages)` 的返回值成为新的对话。压缩、摘要、只留最近几轮，都写在这个函数里，内核不规定做法。
 - 图片：到达的内容里只要有 `{"mime": "image/png", "data": <base64>}`，就作为图片交给模型，文字里留一个 `[image 1]` 的位置。
+
+- 普通函数当工具：`AgentNode(..., tools=[check, time_left])`。函数名就是工具名，文档字符串是说明，参数和类型标注生成参数的 JSON schema，没有默认值的参数是必填的。名为 `ctx` 的参数不由模型填，而是交给这个节点的上下文。这样的工具由 agent 自己调用，图里不需要节点和边。`Tool.of(函数, 名字=None, 说明=None)` 是显式写法；图文件里写 `{"function": "模块.名字"}`，受 `allow` 约束。自带的 `time_left` 告诉 agent 离时间上限还有多少秒。定时提醒、验证程序这类东西写成几行函数交给 agent 就行，不必每个程序都做成图里的节点。
 
 系统提示词默认是空的，包不替你写提示词。要限定一个智能体读写哪些文件、遵守什么目录结构，写在它的 `system` 里；需要硬性限制时，把读写文件做成一个工具节点，由那个节点检查路径。
 
@@ -295,6 +297,25 @@ def run(self, ctx, inputs):
         ctx.emit("out", work_on(self.todo.pop(0)))
         ctx.commit()                         # self.todo 在 snapshot 里
 ```
+
+### 常驻 agent
+
+`AgentNode(..., resident=True)`（图文件里写 `"resident": true`）的 agent 不是“来一条消息、答一轮就结束”，而是一直在，直到它自己说做完了。整个过程是一次激活。它比普通 agent 多这些工具：
+
+| 工具 | 作用 |
+|---|---|
+| `send_<输出>` | 只有一个输出时也有。哪部分做好了就先发哪部分，不用等全部做完 |
+| `wait(seconds?)` | 等别人发来的消息（`ctx.receive`），等的时候不占工作名额。返回收到的内容和任务栏；如果不会再有消息来了（别人都做完了或者也在等），会明说 |
+| `plan(items)` / `done(item)` | 往任务栏里加事项、勾掉事项（按编号或原文） |
+| `note(text)` | 记下自己做到哪里了，同时存档（`ctx.commit`） |
+| `finish(summary?)` | 宣布做完。还有输出一次都没发过时，第一次调用会先提醒，再调用一次才结束 |
+
+- **任务栏：** 开始时每个输出各占一行（“还没发”/“发了几次”），下面是 agent 自己用 `plan` 加的事项，最后是它的最后一条笔记。每次 `wait` 的结果里都会附上，它也是节点状态的一部分，会存档。
+- **存档：** 每次 `wait` 之前和每次 `note` 都会存档。进程断了以后 `resume`，agent 带着原来的对话和任务栏接着做，模型会先看到一句“运行被中断后又接上了”和它的任务栏。
+- **不调工具时：** 模型只回了文字、没调任何工具，会被提醒去等、去发或者结束，不会就此停下。`max_steps` 限的是两次收到消息之间调用模型的次数。
+- **开关：** 和别的节点一样可以暂停、停止、重启；上级可以用 `ctx.control` 拨它。
+
+[examples/graphs/resident_team.py](../examples/graphs/resident_team.py) 是一个主控带两个常驻组员：主控分活、等两份报告、用一个普通函数工具核对、交结果；组员各自做完先发报告，再等，得知不会再有消息后结束。
 
 ## 方法
 
@@ -618,7 +639,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十四个可以直接运行的示例：只用普通函数写的图、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十五个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 
