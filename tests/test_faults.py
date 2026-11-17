@@ -197,6 +197,8 @@ def test_the_clock_is_watched_however_the_threads_fall():
         for attempt in range(150):
             release = threading.Event()
             quick = [FunctionNode(f'q{i}', lambda x: x, inputs=[Port('x')], outputs=[Port('y')]) for i in range(20)]
+            for node in quick:      # a busy machine may hold a quick one up for longer than the slow one's limit
+                node.time_limit = 5.0
             slow = FunctionNode('slow', lambda x: release.wait(0.3), inputs=[Port('x')], outputs=[Port('y')])
             with pytest.raises(RunError, match='node slow ran longer than 0.05 seconds'):
                 Engine(Chain(*quick, slow).build(DEFAULT), DEFAULT, time_limit=0.05).run({'in': attempt})
