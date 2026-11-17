@@ -23,3 +23,4 @@ class Envelope:
     body: Any                       # small data inline, anything large as a Ref
     digest: str                     # hash of the body
     cause: tuple[str, ...] = ()     # the envelopes the sending activation had received: where this came from
+    replaces: str = ""              # the id of an envelope already read that this one corrects

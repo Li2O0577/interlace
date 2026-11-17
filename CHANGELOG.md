@@ -27,7 +27,18 @@ with a new major version.
   description and JSON schema of the arguments come from the function; a `ctx` parameter gets the agent's
   context. The agent calls it itself: no node, no edge. Graph files name one with `{"function": "module.name"}`
   under `allow`. `time_left` tells an agent how long it has before its time limit (`ctx.time_left()`).
-- Example: `resident_team.py`, a lead and two resident members.
+- Corrections: `ctx.emit` returns the message's id (`"out#3"`), and `ctx.correct(id, payload)` puts `payload`
+  in its place. Not yet read, the message is replaced. Read, each receiver does what its `on_correction`
+  says: `rerun` (the default) runs the activation that read it again with the corrected value, and what that
+  sends corrects what it sent the first time, so corrections go on downstream; `tell` (an `AgentNode`'s
+  default) delivers it as a new message, for which `ctx.replaces(port)` gives the id it corrects; `ignore`.
+  A graph output it reached is changed in place. Corrections are checked like any message, count against
+  an edge's `max_rounds`, are journaled and kept when a run is taken up; the last one counts. Envelopes have
+  `replaces`; graph files may give a node `on_correction`. Observers are told `corrected`.
+- Resident agents: `send_<port>` answers with the id of what was sent, a `correct(id, content)` tool corrects
+  it, the task board counts corrections, and a message that corrects one read before says so.
+- Examples: `resident_team.py`, a lead and two resident members; `corrected_estimate.py`, a quick estimate
+  corrected once those who read it are done.
 
 ## 0.14.0
 

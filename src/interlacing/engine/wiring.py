@@ -7,7 +7,7 @@ scheduler's business, and it works on what is built here.
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any
 
 from ..base import Delivery, Edge, Firing, Graph, Node, Protocols
@@ -15,6 +15,7 @@ from .result import RunError
 
 INPUT = "input:"   # prefix of the pseudo edge id of a graph input
 ACTIVE, PAUSED, STOPPED = "active", "paused", "stopped"     # what a node's switch is set to
+KEPT = 1024        # how many of its messages a node can still correct, and how many it read it can still redo
 
 
 class Feed:
@@ -34,6 +35,37 @@ class Feed:
         self.sent = 0
         self.guard: Any = None            # the receiving port's schema, when what arrives must be checked against it
         self.gone = False                 # the edge was taken out of the graph while the run went on
+
+
+class Sent:
+    """One message a node sent (``emit``), as far as it can still be corrected: where each copy of it went."""
+
+    __slots__ = ("port", "envelopes", "outputs")
+
+    def __init__(self, port: str, envelopes: list, outputs: list):
+        self.port = port
+        self.envelopes = envelopes        # [feed id, envelope id] for each edge it left on: the newest version
+        self.outputs = outputs            # [graph output name, index] for each graph output it reached
+
+
+class Reading:
+    """One activation, as it would have to be run again when something it read is corrected: what it read
+    and what it sent (the names of the messages, so that running again corrects them)."""
+
+    __slots__ = ("inputs", "at", "emits", "queued")
+
+    def __init__(self, inputs: dict, at: dict):
+        self.inputs = inputs              # what it read, port -> value (a list on a port that takes many)
+        self.at = at                      # envelope id -> (port, index in the list or None)
+        self.emits: dict[str, list] = {}  # output port -> the names of the messages it sent there, in order
+        self.queued = False               # it is waiting to run again
+
+
+def bounded(log: OrderedDict, key, value) -> None:
+    log[key] = value
+    log.move_to_end(key)
+    if len(log) > KEPT:
+        log.popitem(last=False)
 
 
 class InPort:
@@ -56,7 +88,8 @@ class State:
 
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
                  "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
-                 "inner", "status", "halt", "holding", "paused_at", "waiting", "late", "resuming", "resumed", "opening")
+                 "inner", "status", "halt", "holding", "paused_at", "waiting", "late", "resuming", "resumed", "opening",
+                 "emitted", "sent_log", "read_log", "redo", "reading", "redoing", "replaced")
 
     def __init__(self, node: Node):
         self.node = node
@@ -86,6 +119,13 @@ class State:
         self.resuming = False                     # an activation that saved its progress is to go on from there
         self.resumed = False                      # the running activation goes on from saved progress
         self.opening: list = []                   # this activation: (feed, envelope) it started with
+        self.emitted: dict[str, int] = {}         # output port -> how many messages it has sent there
+        self.sent_log: OrderedDict = OrderedDict()   # message name -> Sent: what it can still correct
+        self.read_log: OrderedDict = OrderedDict()   # envelope id -> the Reading that took it, or None (told)
+        self.redo: deque = deque()                # Readings to run again: something they read was corrected
+        self.reading: Reading | None = None       # this activation, as it would be run again
+        self.redoing: dict[str, deque] | None = None     # it runs one again: port -> the names it corrects
+        self.replaced: dict[str, str] = {}        # this activation: port -> the id the message it took corrects
 
     def begin(self) -> None:
         """A new activation starts: forget what the last one did."""
@@ -96,6 +136,10 @@ class State:
         self.delivered = False
         self.halt = False
         self.resumed = False
+        self.reading = None
+        self.redoing = None
+        if self.replaced:
+            self.replaced = {}
         if self.late:
             self.late.clear()
         if self.inner:

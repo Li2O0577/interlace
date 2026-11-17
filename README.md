@@ -148,6 +148,8 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 **Agents that stay.** `AgentNode(..., resident=True)` is one activation from start to finish, ended when the agent says it has finished. It sends each output when it is ready, waits for the others' messages (`wait`, which holds no worker and says so when nothing more can come), keeps a task board (`plan`, `done`, `note`) and saves its progress, so a run taken up again goes on where it stood. Underneath are two things any node can use: `ctx.receive()`, to take the next message in the middle of an activation, and `ctx.commit()`, to save progress. Plain functions are tools too: `AgentNode(tools=[check, time_left])`, called by the agent itself, with no node or edge.
 
+**Taking something back.** `ctx.emit` returns the message's id (`"out#3"`), and `ctx.correct(id, new)` puts something else in its place. Where the message has not been read yet, it is simply replaced. Where it has, each receiver does what its `on_correction` says: a program runs again with the corrected value and corrects what it sent in turn (`rerun`, the default), an agent is told and decides (`tell`, an agent's default), or nothing happens (`ignore`). A graph output is put right in place. Resident agents get a `correct` tool.
+
 ```python
 graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # in lead: ctx.control("a", "pause")
 engine.control(["a", "b"], "restart")                                  # from outside: a and b start their work again
@@ -229,7 +231,7 @@ The kernel carries information and looks after the run. How a model thinks, how 
 
 Each layer uses only the layers below it. The engine knows no particular node, protocol or method; a test in `tests/test_engine.py` holds it to that. Inside, the engine is a few small parts, each with one job: the mailboxes a graph becomes (`wiring`), when a node may run (`scheduler`), what is checked and what follows a problem (`checks`), the budget (`ledger`), the journal (`recorder`), time limits (`clock`).
 
-The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Fourteen examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
+The full description is [docs/GRAPH.md](https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md) (in Chinese). Sixteen examples that run as they stand are in [examples/graphs/](https://github.com/Li2O0577/interlacing/tree/main/examples/graphs), and graphs written as JSON in [examples/data/](https://github.com/Li2O0577/interlacing/tree/main/examples/data).
 
 ## Tests
 

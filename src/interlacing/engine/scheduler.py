@@ -12,7 +12,7 @@ from collections import deque
 from typing import Any, Callable
 
 from ..base import Envelope, Ref, digest
-from .wiring import ACTIVE, Feed, State, refresh
+from .wiring import ACTIVE, Feed, Reading, State, bounded, refresh
 
 # how one envelope taken from a feed is turned into what the node sees: (feed, envelope body) -> value
 Read = Callable[[Feed, Any], Any]
@@ -32,6 +32,8 @@ class Scheduler:
             return
         if state.resuming:
             can = True                       # it goes on from the progress it saved, with or without new messages
+        elif state.redo:
+            can = True                       # something an earlier activation read was corrected: it runs again
         elif state.any:
             arrivals = state.arrivals
             while arrivals and not arrivals[0].box:   # a latest feed that was overwritten and already read
@@ -47,7 +49,7 @@ class Scheduler:
 
     refresh = staticmethod(refresh)
 
-    def envelope(self, feed: Feed, body: Any, round: int, cause: tuple) -> Envelope:
+    def envelope(self, feed: Feed, body: Any, round: int, cause: tuple, replaces: str = "") -> Envelope:
         """The next envelope on ``feed``."""
         feed.sent += 1
         if isinstance(body, Ref):
@@ -58,7 +60,7 @@ class Scheduler:
             except (TypeError, ValueError):
                 body_digest = ""    # not plain data: it can travel inside the process, but it has no content hash
         self.envelopes += 1
-        return Envelope(f"{feed.id}#{feed.sent}", feed.id, feed.sent, round, body, body_digest, cause)
+        return Envelope(f"{feed.id}#{feed.sent}", feed.id, feed.sent, round, body, body_digest, cause, replaces)
 
     def place(self, feed: Feed, envelope: Envelope) -> None:
         """Put an envelope in its feed's mailbox and see whether the receiving node can now run."""
@@ -132,6 +134,14 @@ class Scheduler:
             state.resuming, state.resumed = False, True
             state.opening = []
             return inputs, (), ()
+        if state.redo:                       # an earlier activation runs again with what was corrected
+            reading = state.reading = state.redo.popleft()
+            reading.queued = False
+            state.redoing = {port: deque(names) for port, names in reading.emits.items()}
+            state.opening = []
+            ids = tuple(reading.at)          # among them the corrections, which nothing else takes
+            return ({port: list(value) if isinstance(value, list) else value for port, value in reading.inputs.items()},
+                    ids, ids)
 
         def pop(feed):
             envelope = self.pop(feed)
@@ -157,6 +167,19 @@ class Scheduler:
                 inputs[name] = values if port.port.many else values[0]
         took = tuple(cause)
         state.opening = list(holding)
+        if holding:                         # how to run it again should something it read be corrected
+            at: dict[str, tuple] = {}
+            counts: dict[str, int] = {}
+            for feed, envelope in holding:
+                port = feed.port.port
+                n = counts[port.name] = counts.get(port.name, -1) + 1
+                at[envelope.id] = (port.name, n if port.many else None)
+                if envelope.replaces:
+                    state.replaced[port.name] = envelope.replaces
+            reading = state.reading = Reading({k: list(v) if isinstance(v, list) else v for k, v in inputs.items()},
+                                              at)
+            for id in at:
+                bounded(state.read_log, id, reading)
         for port in state.passive:      # the newest value of each edge that does not trigger: read, and left there
             values = []
             for feed in port.passive:

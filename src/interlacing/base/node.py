@@ -52,10 +52,22 @@ class Context(ABC):
                     # an interruption: give it to an outside service so that it does not do the same thing twice
 
     @abstractmethod
-    def emit(self, port: str, payload: Any) -> None:
+    def emit(self, port: str, payload: Any) -> Any:
         """Send ``payload`` out of an output port now (a node may emit many times during one activation).
         Raises ``Invalid`` when the payload does not pass the port's checks; a node that can put it right
-        catches that, reads ``problem`` and, when ``again`` is true, sends a corrected payload."""
+        catches that, reads ``problem`` and, when ``again`` is true, sends a corrected payload. Returns what
+        names this message (``"out#3"``) for ``correct``, where the context can correct."""
+
+    def correct(self, sent: str, payload: Any) -> str:
+        """Correct a message this node sent earlier (``sent`` is what ``emit`` returned): ``payload`` takes
+        its place. Where it has not been read yet, it is replaced; where it has, each receiver deals with it
+        as its ``on_correction`` says. A graph output it reached is corrected too. It is checked like any
+        message, journaled, and may be corrected again: the last one counts."""
+        raise NotImplementedError("this context cannot correct what was sent")
+
+    def replaces(self, port: str) -> str | None:
+        """When the last message this activation took on ``port`` corrects one read earlier: that one's id."""
+        return None
 
     @abstractmethod
     def call(self, port: str, payload: Any) -> Any:
@@ -179,6 +191,11 @@ class Node(ABC):
     firing: Firing = Firing.ALL
     repairs: int = 0                         # how often an output may be corrected, for ports that do not say
     time_limit: float | None = None          # the longest one activation may take, in seconds; None: the engine's
+    #: What the node does when a message it has already read is corrected by its sender: ``rerun`` the
+    #: activation that read it with the corrected value, and send what comes out as corrections of what it
+    #: sent then; ``tell``, give it the correction as a new message (``ctx.replaces`` says it is one); or
+    #: ``ignore`` it. A message not yet read is simply replaced, whatever this says.
+    on_correction: str = "rerun"
 
     def __init__(self, id: str, *, inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None):
@@ -198,10 +215,12 @@ class Node(ABC):
 
     def describe(self) -> dict:
         own = self.__dict__.get("time_limit")
+        rule = self.__dict__.get("on_correction")
         return {"id": self.id, "kind": type(self).kind, "firing": self.firing.value,
                 "inputs": [p.describe() for p in self.inputs.values()],
                 "outputs": [p.describe() for p in self.outputs.values()], "config": dict(self.config()),
-                **({"time_limit": own} if own is not None else {})}
+                **({"time_limit": own} if own is not None else {}),
+                **({"on_correction": rule} if rule is not None and rule != type(self).on_correction else {})}
 
     # ---- lifecycle: only run is required --------------------------------------------------------------
 

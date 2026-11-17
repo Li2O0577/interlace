@@ -120,9 +120,23 @@ _RESIDENT = {
                             "required": ["items"]}},
     "done": {"description": "Tick off an item of your task board, by its number or its text.",
              "parameters": {"type": "object", "properties": {"item": {"type": ["string", "integer"]}}, "required": ["item"]}},
+    "correct": {"description": "Correct a message you sent: give its id (what sending it answered) and the content "
+                               "that is to take its place. Whoever has not read it yet gets only the correction; "
+                               "whoever has, is told.",
+                "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "content": {}},
+                               "required": ["id", "content"]}},
     "finish": {"description": "Say that your work is done. Send everything first: what you have not sent is lost.",
                "parameters": {"type": "object", "properties": {"summary": {"type": "string"}}}},
 }
+
+
+_CORRECTS = ": this corrects what came here before"
+
+
+def _corrected(ctx, got: Mapping[str, Any]) -> set:
+    """The ports among ``got`` whose message corrects one read before."""
+    replaces = getattr(ctx, "replaces", None)
+    return {name for name in got if replaces(name)} if replaces is not None else set()
 
 
 def _step(ctx) -> bool:
@@ -196,6 +210,7 @@ class AgentNode(Node):
 
     kind = "agent"
     repairs = 2
+    on_correction = "tell"           # a model reads the correction and decides what to do about it
 
     def __init__(self, id: str, model: Any, *, system: str = "", tools: Iterable[Tool] = (),
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
@@ -264,7 +279,7 @@ class AgentNode(Node):
             self.board = {**self._fresh_board(), **copy.deepcopy(dict(state["board"]))}
 
     def _fresh_board(self) -> dict:
-        return {"sent": {name: 0 for name in self._sends}, "items": [], "notes": [], "warned": False}
+        return {"sent": {name: 0 for name in self._sends}, "fixed": {}, "items": [], "notes": [], "warned": False}
 
     # ---- one turn --------------------------------------------------------------------------------------
 
@@ -273,10 +288,10 @@ class AgentNode(Node):
             return self._stay(ctx, inputs)
         pictures: list = []
         inputs = {name: self._pictures(value, pictures) for name, value in inputs.items()}
-        if len(inputs) == 1 and len(self.inputs) == 1:
+        if len(inputs) == 1 and len(self.inputs) == 1 and not _corrected(ctx, inputs):
             arrived = _text(next(iter(inputs.values())))
         else:
-            arrived = "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in inputs.items())
+            arrived = self._heard(inputs, ctx)
         # the conversation is taken up on a copy and kept only when the turn ends well: a turn that fails or is
         # stopped half way leaves nothing behind, so running it again starts from where the last good turn ended
         messages = list(self.messages) if self.memory else []
@@ -345,7 +360,7 @@ class AgentNode(Node):
                                                         "Here is where you stood:\n" + self._shown_board()})
         else:
             self.board = self._fresh_board()
-            messages.append(self._arrival(inputs) if inputs else
+            messages.append(self._arrival(inputs, ctx) if inputs else
                             {"role": "user", "content": "You have started. " + self._shown_board()})
         steps = 0
         while True:
@@ -386,7 +401,7 @@ class AgentNode(Node):
                     got = ctx.receive(timeout=args.get("seconds"))
                     if got is not None:
                         steps = 0
-                        answer = self._heard(got) + "\n\n" + self._shown_board()
+                        answer = self._heard(got, ctx) + "\n\n" + self._shown_board()
                     elif ctx.stopping():
                         answer = "The run is ending."
                     elif args.get("seconds") is not None:
@@ -406,6 +421,8 @@ class AgentNode(Node):
                     answer = self._shown_board()
                 elif name == "done":
                     answer = self._tick(args.get("item"))
+                elif name == "correct":
+                    answer = self._fix(ctx, args)
                 else:
                     answer = self._use(ctx, name, args)
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": answer})
@@ -429,22 +446,50 @@ class AgentNode(Node):
         messages.append(message)
         return message, calls
 
-    def _arrival(self, inputs: Mapping[str, Any]) -> dict:
+    def _arrival(self, inputs: Mapping[str, Any], ctx=None) -> dict:
         pictures: list = []
         inputs = {name: self._pictures(value, pictures) for name, value in inputs.items()}
-        if len(inputs) == 1 and len(self.inputs) == 1:
+        if len(inputs) == 1 and len(self.inputs) == 1 and not _corrected(ctx, inputs):
             arrived = _text(next(iter(inputs.values())))
         else:
-            arrived = "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in inputs.items())
+            arrived = self._heard(inputs, ctx)
         return {"role": "user", "content": arrived, **({"image_data": pictures} if pictures else {})}
 
-    def _heard(self, got: Mapping[str, Any]) -> str:
-        return "\n\n".join(f"[{name}]\n{_text(value)}" for name, value in got.items())
+    def _heard(self, got: Mapping[str, Any], ctx=None) -> str:
+        return "\n\n".join(f"[{name}{_CORRECTS if name in _corrected(ctx, got) else ''}]\n{_text(value)}"
+                             for name, value in got.items())
+
+    def _fix(self, ctx, args: Mapping) -> str:
+        """The ``correct`` tool: put new content in the place of a message the agent sent."""
+        sent, port = str(args.get("id", "")), str(args.get("id", "")).rpartition("#")[0]
+        if "content" not in args:
+            return "error: content is missing"
+        if port not in self._sends:
+            return f"error: {sent!r} is not the id of a message you sent"
+        try:
+            if self.area is not None and port in self._paths:
+                problem = self.area.sends(args["content"])
+                if problem:
+                    return f"not accepted: {problem}. Put that right and correct it again."
+            ctx.correct(sent, args["content"])
+        except Invalid as exc:
+            if not exc.again:
+                raise
+            return f"not accepted: {exc.problem}. Put that right and correct it again."
+        except Exception as exc:   # noqa: BLE001 - whatever went wrong is the model's to read
+            if ctx.stopping():
+                raise
+            return f"error: {exc}"
+        fixed = self.board.setdefault("fixed", {})
+        fixed[port] = fixed.get(port, 0) + 1
+        return f"corrected {sent}"
 
     def _shown_board(self) -> str:
         board = self.board
         lines = ["Your task board:"]
+        fixed = board.get("fixed", {})
         lines += [f"- output {port}: " + (f"sent {count} time{'s' if count > 1 else ''}" if count else "not sent yet")
+                  + (f", {fixed[port]} correction{'s' if fixed[port] > 1 else ''}" if fixed.get(port) else "")
                   for port, count in board["sent"].items()]
         lines += [f"{i}. [{'x' if done else ' '}] {text}" for i, (text, done) in enumerate(board["items"], 1)]
         if board["notes"]:
@@ -489,12 +534,12 @@ class AgentNode(Node):
         except ValueError as exc:
             raise NodeError(f"the model's answer is not JSON: {exc}") from None
 
-    def _send(self, ctx, port: str, payload: Any) -> None:
+    def _send(self, ctx, port: str, payload: Any) -> Any:
         if self.area is not None and port in self._paths:
             problem = self.area.sends(payload)
             if problem:
                 raise Invalid(port, problem, again=True)
-        ctx.emit(port, payload)
+        return ctx.emit(port, payload)
 
     def _use(self, ctx, name: str, args: Mapping) -> str:
         """Answer one tool call; a failure becomes the answer, for the model to read."""
@@ -502,9 +547,11 @@ class AgentNode(Node):
             if self._choose and name.startswith("send_") and name[5:] in self._sends:
                 if "content" not in args:
                     return "error: content is missing"
-                self._send(ctx, name[5:], args["content"])
+                sent = self._send(ctx, name[5:], args["content"])
                 if self.resident:
                     self.board["sent"][name[5:]] = self.board["sent"].get(name[5:], 0) + 1
+                    if isinstance(sent, str):
+                        return f"sent, as {sent}"
                 return "sent"
             if name in self._own:
                 return _text(self._own[name].run(dict(args), ctx))      # type: ignore[misc]

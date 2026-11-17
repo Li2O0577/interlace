@@ -15,13 +15,14 @@ from .journal import Journal, pack, pack_body, unpack_body
 from .ledger import Ledger
 from .result import Result
 from .scheduler import Scheduler
-from .wiring import ACTIVE, PAUSED, STOPPED, Wiring
+from .wiring import ACTIVE, PAUSED, STOPPED, Sent, Wiring, bounded
 
 
 class Act:
     """What one activation did, for the journal."""
 
-    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems", "changes")
+    __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems", "changes", "emits",
+                 "fixed_box", "fixed_out")
 
     def __init__(self, node: str, round: int, took: tuple) -> None:
         self.node, self.round, self.took = node, round, took
@@ -32,6 +33,9 @@ class Act:
         self.snaps: dict[str, Any] = {}
         self.problems: list[dict] = []
         self.changes: list = []           # the changes to the graph it made, as plain data
+        self.emits: list = []             # [name, port, [[feed, envelope id]...], [[output, index]...]] per message
+        self.fixed_box: list[str] = []    # envelopes not yet read that a correction took the place of
+        self.fixed_out: list[tuple] = []  # (graph output, index, payload) a correction changed
 
 
 def discard(journal: Path) -> None:
@@ -65,6 +69,10 @@ class Recorder:
                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps,
                             **({"problems": act.problems} if act.problems else {}),
                             **({"changes": act.changes} if act.changes else {}),
+                            **({"emits": act.emits} if act.emits else {}),
+                            **({"fixed": act.fixed_box} if act.fixed_box else {}),
+                            **({"fixed_out": [[name, index, pack_body(payload)] for name, index, payload in act.fixed_out]}
+                               if act.fixed_out else {}),
                             **({"open": True} if open else {})})
 
     def use(self, node: str, round: int, amounts: Mapping[str, float]) -> None:
@@ -116,6 +124,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
     run_id: str | None = None
     sent: dict[str, dict[int, list]] = {}
     took: set[str] = set()
+    fixed: set[str] = set()         # envelopes a correction took the place of before they were read
     snaps: dict[str, Any] = {}
     going: set[str] = set()         # nodes whose last activation saved its progress and had not ended
     for record in records:
@@ -138,9 +147,20 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
             for described in record.get("changes", ()):
                 change(described)
             took.update(record["took"])
+            fixed.update(record.get("fixed", ()))
             for name, body in record["out"]:
                 if name in result.outputs:
                     result.outputs[name].append(unpack_body(body))
+            for name, index, body in record.get("fixed_out", ()):
+                if name in result.outputs and index < len(result.outputs[name]):
+                    result.outputs[name][index] = unpack_body(body)
+            state = states.get(record["node"])
+            if state is not None:
+                for name, port, envelopes, outputs in record.get("emits", ()):
+                    if name not in state.sent_log:
+                        count = int(name.rsplit("#", 1)[1])
+                        state.emitted[port] = max(state.emitted.get(port, 0), count)
+                    bounded(state.sent_log, name, Sent(port, envelopes, outputs))
             for id in record["limited"]:
                 if id in wiring.feeds:
                     limited[id] = None
@@ -161,6 +181,11 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
         if kind in ("run", "act"):
             for packed in record["sent"]:
                 sent.setdefault(packed[0], {})[packed[1]] = packed
+    for id in took:                 # what was read: a correction of it is told (how to run it again is not kept)
+        feed = wiring.feeds.get(id.rsplit("#", 1)[0])
+        if feed is not None:
+            bounded(feed.port.state.read_log, id, None)
+    took |= fixed
     dropped = 0
     orphans = took - {f"{feed}#{seq}" for feed, by_seq in sent.items() for seq in by_seq}
     for id, by_seq in sent.items():
@@ -177,9 +202,9 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
         elif feed.latest:
             waiting = waiting[-1:] if waiting and waiting[-1] == seqs[-1] else []
         for seq in waiting:
-            _, _, round, body, cause = by_seq[seq]
+            _, _, round, body, cause, *replaces = by_seq[seq]
             body = unpack_body(body, feed.protocol, feed.port.port)
-            scheduler.place(feed, Envelope(f"{id}#{seq}", id, seq, round, body, "", tuple(cause)))
+            scheduler.place(feed, Envelope(f"{id}#{seq}", id, seq, round, body, "", tuple(cause), *replaces))
     for id, snapshot in snaps.items():
         if id in states:
             states[id].node.restore(snapshot)

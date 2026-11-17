@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere', 'corrected_estimate'):
         sys.modules.pop(name, None)
 
 
@@ -113,3 +113,10 @@ def test_served_elsewhere(capsys):
     import served_elsewhere
     result = served_elsewhere.main()
     assert result.last('out') == 'measured 20.5' and result.used == {'readings': 1}
+
+
+def test_corrected_estimate(capsys):
+    import corrected_estimate
+    result = corrected_estimate.main()
+    assert result.outputs['quote'] == [868.0]          # run again with the careful area, put right in place
+    assert result.outputs['note'] == ['First look: about 26.2 m².', 'Revised: the floor is 24.8 m², measured room by room.']
