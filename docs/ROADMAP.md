@@ -16,18 +16,11 @@
 
 - **常驻 agent 和任务栏。** 任何节点都能在激活中途收消息（`ctx.receive`，等的时候不占工作名额，互相等不会卡死）和存档进度（`ctx.commit`，中断后接着做）。在这之上，`AgentNode(resident=True)` 一直在，直到自己 `finish`：先发做好的部分、`wait` 等别人、任务栏（`plan`、`done`、`note`）。普通函数可以直接当 agent 的工具，自带 `time_left`。这是第 2 阶段。
 
+- **更正。** `ctx.emit` 返回消息编号，`ctx.correct` 用新内容顶替：没读的直接换掉；读过的按收方的 `on_correction` 处理（程序重跑并把更正往下游传，agent 被告知后自己决定，或者不管）；图的输出原地改对。常驻 agent 有 `correct` 工具。这是第 3 阶段。
+
 ## 未来计划
 
-以 agent 为中心的计划（[设计与分阶段计划](https://claude.ai/artifact/9NoHnubxG88ZNrSTFkqLbP)）接下来按顺序做第 3、4 阶段（详细计划：[第 2–4 阶段详细计划](https://claude.ai/artifact/7eZRKDhu5TMv1D116CGA6p)）。每个阶段开始前先在聊天里讲清楚做法，同意后再动手。
-
-### 3. 更正
-
-agent 发现自己之前发出的消息错了，可以发一条更正（`replaces`）。
-
-- 对方还没读的旧消息，直接在信箱里换掉。
-- 程序节点收到更正就自动重跑，并把更正继续往下游传。
-- agent 收到更正会被告知，自己决定怎么处理。
-- 每个节点都可以用 `on_correction`（rerun / tell / ignore）自己定。
+以 agent 为中心的计划（[设计与分阶段计划](https://claude.ai/artifact/9NoHnubxG88ZNrSTFkqLbP)）接下来做第 4 阶段（详细计划：[第 2–4 阶段详细计划](https://claude.ai/artifact/7eZRKDhu5TMv1D116CGA6p)）。每个阶段开始前先在聊天里讲清楚做法，同意后再动手。
 
 ### 4. 管辖和招人
 
@@ -47,4 +40,5 @@ agent 发现自己之前发出的消息错了，可以发一条更正（`replace
 - 模型接口改成异步 HTTP（标准库）。现在模型调用是同步的，在线程里跑。
 - 暂停中的等待改成纯事件唤醒，不再轮询（现在线程每 0.1 秒、协程每 0.05 秒看一次）。
 - Windows 上暂停外部程序本身。现在只有节点在等，程序继续跑。
+- 远端节点（`RemoteNode`）更正自己发出的消息；运行接上以后，读过的消息被更正时也能按 `rerun` 重跑（现在按 `tell`）。
 - 在真实模型服务上做更完整的测试，包括思考和图片输入；MCP 服务接一次桌面应用。

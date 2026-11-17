@@ -94,4 +94,5 @@ def unpack_body(packed: list, protocol=None, port=None) -> Any:
 
 
 def pack(envelope: Envelope) -> list:
-    return [envelope.edge, envelope.seq, envelope.round, pack_body(envelope.body), list(envelope.cause)]
+    packed = [envelope.edge, envelope.seq, envelope.round, pack_body(envelope.body), list(envelope.cause)]
+    return [*packed, envelope.replaces] if envelope.replaces else packed

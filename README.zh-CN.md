@@ -145,6 +145,8 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 **常驻的 agent。** `AgentNode(..., resident=True)` 从开始到结束是一次激活，什么时候结束由 agent 自己说了算。哪部分做好了就先发哪部分；可以等别人的消息（`wait`，等的时候不占工作名额，不会再有消息时会明说）；有任务栏（`plan`、`done`、`note`），进度会存档，运行中断后接上时从原处接着做。底下是任何节点都能用的两件事：`ctx.receive()` 在激活中途收下一条消息，`ctx.commit()` 存档进度。普通函数也能直接当工具：`AgentNode(tools=[check, time_left])`，由 agent 自己调用，不用节点和边。
 
+**更正。** `ctx.emit` 返回消息的编号（`"out#3"`），`ctx.correct(编号, 新内容)` 用新内容顶替它。对方还没读的，直接换掉；已经读了的，看对方的 `on_correction`：程序节点用更正后的值重跑，并把自己发出的也跟着更正（`rerun`，默认）；agent 被告知，自己决定（`tell`，agent 的默认）；或者不管（`ignore`）。图的输出原地改对。常驻 agent 有 `correct` 工具。
+
 ```python
 graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # lead 里：ctx.control("a", "pause")
 engine.control(["a", "b"], "restart")                                  # 从外面：a 和 b 重新开始手上的工作
@@ -226,7 +228,7 @@ interlacing resume --dir /tmp/run                                               
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十四个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十六个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 

@@ -116,7 +116,7 @@ from .scheduler import Scheduler
 from .stream import Stream
 from .transport import Transport
 from .recorder import SWITCHED
-from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, State, wire
+from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, Sent, State, bounded, wire
 
 __all__ = ["Engine", "OverBudget", "Result", "RunError"]
 
@@ -504,11 +504,16 @@ class Engine:
         except ValueError:
             pass
         state.holding.append((feed, envelope))
+        bounded(state.read_log, envelope.id, None)      # read in the middle: a correction of it is told
+        port = feed.port.port
+        if envelope.replaces:
+            state.replaced[port.name] = envelope.replaces
+        else:
+            state.replaced.pop(port.name, None)
         ctx._cause = (*ctx._cause, envelope.id)
         if ctx._act is not None:
             ctx._act.took = (*ctx._act.took, envelope.id)
         value = self._checks.arrived(state, feed, envelope.body)
-        port = feed.port.port
         return {port.name: [value] if port.many else value}
 
     def _hear(self, state: State, ctx: RunContext, ports: frozenset | None, until: float | None) -> tuple:
@@ -986,6 +991,9 @@ class Engine:
                     if halt == "restart" and ctx._saved:     # it starts again from what it first had
                         state.holding = [*state.opening, *state.holding]
                     sched.give_back(state)
+                    if state.redoing is not None and state.reading is not None and halt != "restart":
+                        state.reading.queued = True         # what it was running again, it runs again later
+                        state.redo.appendleft(state.reading)
                     if halt == "restart":
                         state.node.reset()
                     elif ctx._saved:
@@ -1079,13 +1087,62 @@ class Engine:
 
     # ---- what a node asks of the run through ctx ---------------------------------------------------------
 
-    def _emit(self, state: State, port: str, payload: Any, round: int, cause: tuple, act: Act | None = None) -> None:
+    def _emit(self, state: State, port: str, payload: Any, round: int, cause: tuple, act: Act | None = None) -> str:
+        if state.redoing and state.redoing.get(port):     # run again: it corrects what it sent the first time
+            name = state.redoing[port].popleft()
+            if name in state.sent_log:
+                return self._correct(state, name, payload, round, cause, act)
         try:
             feeds, names = state.outs[port]
         except KeyError:
             raise NodeError(f"{state.node.id} has no output port {port!r}") from None
         if port in state.calls:
             raise NodeError(f"{state.node.id}.{port} makes a call: use ctx.call, not emit")
+        bodies = self._bodies(state, port, payload, feeds, round, act)
+        if self._observe is not None:
+            self._tell("emitted", node=state.node.id, round=round, port=port, payload=payload)
+        sched = self._sched
+        with self._lock:
+            if self._over:
+                raise NodeError("the run has ended")
+            state.delivered = True
+            count = state.emitted[port] = state.emitted.get(port, 0) + 1
+            token = f"{port}#{count}"
+            outputs = []
+            for name in names:
+                outputs.append([name, len(self._result.outputs[name])])
+                self._result.outputs[name].append(payload)
+                if act is not None:
+                    act.out.append((name, payload))
+            envelopes = []
+            for (feed, _), body in zip(feeds, bodies):
+                if feed.gone:                           # the graph changed while this was being sent
+                    continue
+                if feed.stream and feed.id in state.streams:
+                    if state.streams[feed.id] is not None:
+                        state.streams[feed.id]._put(body)
+                    continue
+                if self._limited_on(feed, state, act):
+                    continue
+                if feed.stream:                          # the first chunk of this activation opens the stream
+                    stream = state.streams[feed.id] = Stream(feed.protocol, feed.port.port, keep=act is not None)
+                    stream._put(body)
+                    body = stream
+                envelope = sched.envelope(feed, body, round, cause)
+                if not feed.stream:
+                    envelopes.append([feed.id, envelope.id])
+                self._post(feed, envelope, act)
+            if not any(feed.stream for feed, _ in feeds):
+                bounded(state.sent_log, token, Sent(port, envelopes, outputs))
+                if act is not None:
+                    act.emits.append([token, port, envelopes, outputs])
+            if state.reading is not None:
+                state.reading.emits.setdefault(port, []).append(token)
+            self._wake()
+        return token
+
+    def _bodies(self, state: State, port: str, payload: Any, feeds, round: int, act: Act | None) -> list:
+        """What ``payload`` becomes on each of ``feeds``, once it has passed the checks."""
         try:
             bodies = Checks.outgoing(state, port, payload, feeds)
         except ValueError as exc:
@@ -1096,46 +1153,115 @@ class Engine:
         carry = self._carry
         if carry is not None:
             bodies = [body if feed.stream else carry(feed.id, body) for (feed, _), body in zip(feeds, bodies)]
+        return bodies
+
+    def _limited_on(self, feed: Feed, state: State, act: Act | None) -> bool:
+        """Whether ``feed`` has carried all it may (under the lock): then nothing more goes on it."""
+        if feed.limit is not None and feed.sent >= feed.limit:
+            self._limited[feed.id] = None
+            if act is not None and feed.id not in act.limited:
+                act.limited.append(feed.id)
+            if feed.stream:
+                state.streams[feed.id] = None
+            return True
+        return False
+
+    def _post(self, feed: Feed, envelope, act: Act | None) -> None:
+        if act is not None:
+            act.sent.append(envelope)
+        if envelope.id in self._orphans:         # its receiver dealt with it before the restart
+            self._orphans.discard(envelope.id)
+        else:
+            self._sched.place(feed, envelope)
+
+    def _wake(self) -> None:
+        if self._waiters:
+            self._lock.notify_all()             # one waiting for a message may have it now
+        elif self._sched.ready:
+            self._lock.notify()
+
+    def _correct(self, state: State, name: str, payload: Any, round: int, cause: tuple, act: Act | None) -> str:
+        """``ctx.correct``: ``payload`` takes the place of message ``name`` this node sent (see
+        ``Context.correct``). Where it waits unread it is replaced; where it was read, the receiver's
+        ``on_correction`` says what follows; a graph output it reached is changed."""
+        node = state.node
+        sent = state.sent_log.get(name)
+        if sent is None:
+            raise NodeError(f"{node.id} has sent no message {name!r} it can still correct")
+        port = sent.port
+        feeds = [(self._feeds[feed_id], node.outputs[port]) for feed_id, _ in sent.envelopes if feed_id in self._feeds]
+        bodies = self._bodies(state, port, payload, feeds, round, act)
         if self._observe is not None:
-            self._tell("emitted", node=state.node.id, round=round, port=port, payload=payload)
-        sched = self._sched
+            self._tell("corrected", node=node.id, round=round, port=port, message=name, payload=payload)
         with self._lock:
             if self._over:
                 raise NodeError("the run has ended")
             state.delivered = True
-            for name in names:
-                self._result.outputs[name].append(payload)
-                if act is not None:
-                    act.out.append((name, payload))
-            for (feed, _), body in zip(feeds, bodies):
-                if feed.gone:                           # the graph changed while this was being sent
+            for out, index in sent.outputs:
+                if out in self._result.outputs and index < len(self._result.outputs[out]):
+                    self._result.outputs[out][index] = payload
+                    if act is not None:
+                        act.fixed_out.append((out, index, payload))
+            bodies_by = {feed.id: body for (feed, _), body in zip(feeds, bodies)}
+            envelopes = []
+            for feed_id, old in sent.envelopes:
+                feed = self._feeds.get(feed_id)
+                if feed is None or feed.gone:
                     continue
-                if feed.stream and feed.id in state.streams:
-                    if state.streams[feed.id] is not None:
-                        state.streams[feed.id]._put(body)
-                    continue
-                if feed.limit is not None and feed.sent >= feed.limit:
-                    self._limited[feed.id] = None
-                    if act is not None and feed.id not in act.limited:
-                        act.limited.append(feed.id)
-                    if feed.stream:
-                        state.streams[feed.id] = None
-                    continue
-                if feed.stream:                          # the first chunk of this activation opens the stream
-                    stream = state.streams[feed.id] = Stream(feed.protocol, feed.port.port, keep=act is not None)
-                    stream._put(body)
-                    body = stream
-                envelope = sched.envelope(feed, body, round, cause)
-                if act is not None:
-                    act.sent.append(envelope)
-                if envelope.id in self._orphans:         # its receiver dealt with it before the restart
-                    self._orphans.discard(envelope.id)
-                else:
-                    sched.place(feed, envelope)
-            if self._waiters:
-                self._lock.notify_all()             # one waiting for a message may have it now
-            elif sched.ready:
-                self._lock.notify()
+                body = bodies_by[feed_id]
+                envelopes.append([feed_id, self._replace(feed, old, body, round, cause, act)])
+            sent.envelopes = envelopes
+            if act is not None:
+                act.emits.append([name, port, envelopes, sent.outputs])
+            self._wake()
+        return name
+
+    def _replace(self, feed: Feed, old: str, body: Any, round: int, cause: tuple, act: Act | None) -> str:
+        """Correct envelope ``old`` on ``feed`` with ``body``, under the lock. Returns the id of the envelope
+        that stands for the message now (``old`` itself when nothing could be sent)."""
+        box, sched = feed.box, self._sched
+        at = next((i for i, waiting in enumerate(box) if waiting.id == old), None)
+        receiver = feed.port.state
+        if at is None and old not in receiver.read_log:
+            return old                          # dropped (a newer value took its place), or read too long ago
+        if self._limited_on(feed, receiver, act):
+            return old
+        if at is not None:                       # not read yet: the correction takes its place
+            envelope = sched.envelope(feed, body, round, cause)
+            box[at] = envelope
+            if act is not None:
+                act.sent.append(envelope)
+                act.fixed_box.append(old)
+            return envelope.id
+        rule = receiver.node.on_correction
+        if rule == "ignore":
+            return old
+        reading = receiver.read_log[old]
+        if rule == "rerun" and reading is not None:
+            envelope = sched.envelope(feed, body, round, cause, old)
+            if act is not None:
+                act.sent.append(envelope)
+            try:
+                value = self._checks.arrived(receiver, feed, body)
+            except Exception as exc:   # noqa: BLE001 - a protocol's decode failed: the receiver fails, as it would
+                self._fail(receiver, exc)
+                return envelope.id
+            port, index = reading.at[old]
+            if index is None:
+                reading.inputs[port] = value
+            else:
+                reading.inputs[port][index] = value
+            reading.at = {envelope.id if id == old else id: where for id, where in reading.at.items()}
+            del receiver.read_log[old]
+            bounded(receiver.read_log, envelope.id, reading)
+            if not reading.queued:
+                reading.queued = True
+                receiver.redo.append(reading)
+                sched.consider(receiver)
+            return envelope.id
+        envelope = sched.envelope(feed, body, round, cause, old)     # told: it comes as a message of its own
+        self._post(feed, envelope, act)
+        return envelope.id
 
     def _call(self, state: State, port: str, payload: Any, act: Act | None = None) -> Any:
         """Run the node at the other end of a call edge now, in this thread, and return its answer."""

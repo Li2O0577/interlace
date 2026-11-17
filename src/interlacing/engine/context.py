@@ -22,8 +22,14 @@ class RunContext(Context):
         self.resumed = False    # it goes on from progress an earlier activation saved
         self._engine, self._state, self._cause, self._act = engine, state, cause, act
 
-    def emit(self, port: str, payload: Any) -> None:
-        self._engine._emit(self._state, port, payload, self.round, self._cause, self._act)
+    def emit(self, port: str, payload: Any) -> str:
+        return self._engine._emit(self._state, port, payload, self.round, self._cause, self._act)
+
+    def correct(self, sent: str, payload: Any) -> str:
+        return self._engine._correct(self._state, sent, payload, self.round, self._cause, self._act)
+
+    def replaces(self, port: str) -> str | None:
+        return self._state.replaced.get(port)
 
     def call(self, port: str, payload: Any) -> Any:
         return self._engine._call(self._state, port, payload, self._act)
