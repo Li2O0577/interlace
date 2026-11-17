@@ -4,6 +4,20 @@ Versions before 1.0 may change any interface; each change is listed here. From 1
 by `interlacing` and the formats of graph files, run directories and journals change incompatibly only
 with a new major version.
 
+## Unreleased
+
+- `ctx.receive(ports=None, timeout=None)` (and `await ctx.areceive(...)`): a running node waits for its next
+  message and takes it, in the order messages came. While it waits it holds none of the run's workers, so
+  `workers=0` or `1` cannot be blocked by it, and its time limit does not run. It gets None when the time is
+  up, when it is stopped or the run is ending, or when nothing more can come because every other activation
+  has ended or waits too: two nodes waiting for each other both get None and can finish. What it takes is
+  the activation's, journaled with it and put back if the activation is cut. Observers are told
+  `received`. A node told to end no longer sends what its `run` returns.
+- `ctx.commit()`: a long activation saves its progress (what it took, sent and holds) to the journal and goes
+  on. Taken up after the process ended, or switched on again after a stop, it is not run again from the start:
+  the node gets back its saved state and runs once more with `ctx.resumed` true and no inputs. A restart
+  starts it again from what it first had.
+
 ## 0.14.0
 
 - Shorter ways to write a graph. A plain function is a node: its name is the id, its parameters the inputs,

@@ -30,7 +30,9 @@ class Scheduler:
         """Queue the node if it can be activated now."""
         if state.running or state.queued or self.stopped or state.called or state.status != ACTIVE:
             return
-        if state.any:
+        if state.resuming:
+            can = True                       # it goes on from the progress it saved, with or without new messages
+        elif state.any:
             arrivals = state.arrivals
             while arrivals and not arrivals[0].box:   # a latest feed that was overwritten and already read
                 arrivals.popleft()
@@ -78,6 +80,8 @@ class Scheduler:
         state = port.state
         if state.any:
             state.arrivals.append(feed)
+        if state.running:
+            state.late.append(feed)            # for ctx.receive: what came while it ran, in order
         self.consider(state)
 
     def pop(self, feed: Feed) -> Envelope:
@@ -124,6 +128,10 @@ class Scheduler:
         inputs: dict[str, Any] = {}
         cause: list[str] = []
         holding = state.holding = []
+        if state.resuming:                   # it goes on from saved progress: what has come since, it receives
+            state.resuming, state.resumed = False, True
+            state.opening = []
+            return inputs, (), ()
 
         def pop(feed):
             envelope = self.pop(feed)
@@ -148,6 +156,7 @@ class Scheduler:
                     values = [pop(next(feed for feed in port.back if feed.box))]
                 inputs[name] = values if port.port.many else values[0]
         took = tuple(cause)
+        state.opening = list(holding)
         for port in state.passive:      # the newest value of each edge that does not trigger: read, and left there
             values = []
             for feed in port.passive:

@@ -57,13 +57,15 @@ class Recorder:
     def run(self, id: str, graph: str, sent: list[Envelope]) -> None:
         self.journal.write({"kind": "run", "id": id, "graph": graph, "sent": [pack(e) for e in sent]})
 
-    def act(self, act: Act) -> None:
+    def act(self, act: Act, open: bool = False) -> None:
+        """What an activation did. ``open``: it saved its progress and goes on (``ctx.commit``)."""
         self.journal.write({"kind": "act", "node": act.node, "round": act.round, "took": list(act.took),
                             "sent": [pack(e) for e in act.sent],
                             "out": [[name, pack_body(payload)] for name, payload in act.out],
                             "limited": act.limited, "calls": act.calls, "snaps": act.snaps,
                             **({"problems": act.problems} if act.problems else {}),
-                            **({"changes": act.changes} if act.changes else {})})
+                            **({"changes": act.changes} if act.changes else {}),
+                            **({"open": True} if open else {})})
 
     def use(self, node: str, round: int, amounts: Mapping[str, float]) -> None:
         self.journal.write({"kind": "use", "node": node, "round": round, "amounts": dict(amounts)})
@@ -115,6 +117,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
     sent: dict[str, dict[int, list]] = {}
     took: set[str] = set()
     snaps: dict[str, Any] = {}
+    going: set[str] = set()         # nodes whose last activation saved its progress and had not ended
     for record in records:
         kind = record["kind"]
         if kind == "run":
@@ -130,6 +133,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
                     state.status = SWITCHED[record["action"]]
                 if record["action"] == "restart":
                     snaps.pop(id, None)         # it started over: what it held before is gone
+                    going.discard(id)
         if kind == "act":
             for described in record.get("changes", ()):
                 change(described)
@@ -141,12 +145,17 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
                 if id in wiring.feeds:
                     limited[id] = None
             result.problems.extend(record.get("problems", ()))
-            for id in (record["node"], *record["calls"]):
+            node = record["node"]
+            for id in (node, *record["calls"]):
                 state = states.get(id)
-                if state is not None:
+                if state is not None and not (id == node and node in going):    # one activation, however often saved
                     state.round += 1
                     state.started = True
                     result.activations += 1
+            if record.get("open"):
+                going.add(node)
+            else:
+                going.discard(node)
             scheduler.envelopes += len(record["calls"])
             snaps.update(record["snaps"])
         if kind in ("run", "act"):
@@ -174,4 +183,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
     for id, snapshot in snaps.items():
         if id in states:
             states[id].node.restore(snapshot)
+    for id in going:
+        if id in states:
+            states[id].resuming = True      # it goes on from the progress it saved
     return run_id, orphans, dropped

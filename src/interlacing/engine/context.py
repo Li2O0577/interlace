@@ -12,11 +12,13 @@ if TYPE_CHECKING:
 
 
 class RunContext(Context):
-    __slots__ = ("node", "round", "problems", "_engine", "_state", "_cause", "_act", "_cut")
+    __slots__ = ("node", "round", "problems", "resumed", "_engine", "_state", "_cause", "_act", "_cut", "_saved")
 
     def __init__(self, engine: "Engine", state: "State", cause: tuple, act: "Act | None" = None):
         self.node, self.round, self.problems = state.node.id, state.round, []
         self._cut = False       # the node has been told the run is stopping: what it did may not be all of it
+        self._saved = False     # it has saved its progress at least once (ctx.commit)
+        self.resumed = False    # it goes on from progress an earlier activation saved
         self._engine, self._state, self._cause, self._act = engine, state, cause, act
 
     def emit(self, port: str, payload: Any) -> None:
@@ -37,6 +39,15 @@ class RunContext(Context):
     def paused(self) -> bool:
         state = self._state
         return state.status == "paused" and not state.halt
+
+    def commit(self) -> bool:
+        return self._engine._commit(self._state, self)
+
+    def receive(self, ports=None, timeout: float | None = None) -> dict | None:
+        return self._engine._receive(self._state, self, ports, timeout)
+
+    async def areceive(self, ports=None, timeout: float | None = None) -> dict | None:
+        return await self._engine._areceive(self._state, self, ports, timeout)
 
     def checkpoint(self) -> bool:
         return self._engine._checkpoint(self._state, self)

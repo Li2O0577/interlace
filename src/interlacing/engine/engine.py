@@ -158,6 +158,9 @@ class Engine:
         self._sched = Scheduler()
         self._active = 0
         self._parked = 0                  # activations waiting at a checkpoint because their node is paused
+        self._waiters: set[State] = set()  # activations waiting for a message (ctx.receive): they hold no worker
+        self._retire = 0                  # worker threads to let go, lent while an activation waited
+        self._threads: Threads | None = None
         self._error: RunError | None = None
         self._result = Result(outputs={name: [] for name in graph.outputs})
         self._checks = Checks(self._result.problems, observe is not None)
@@ -443,12 +446,154 @@ class Engine:
     def _idle(self) -> bool:
         """Every activation under way is paused, and nothing else can start: the run ends here, to be taken up
         once someone switches them on again. Called under the lock."""
-        if self._parked >= self._active and not self._sched.ready:
+        if (self._parked + len(self._waiters) >= self._active and not self._sched.ready
+                and not any(self._mail(state) for state in self._waiters)):
             for state in self._states.values():
                 if state.running and state.status == PAUSED and not state.halt:
                     state.halt = "park"
             return True
         return False
+
+    # ---- progress saved in the middle of an activation --------------------------------------------------
+
+    def _commit(self, state: State, ctx: RunContext) -> bool:
+        """``ctx.commit``: put what the activation has done so far on record (see ``Context.commit``)."""
+        act, node = ctx._act, state.node
+        with self._lock:
+            if not state.running or ctx._state is not state:
+                raise NodeError(f"{node.id} can save progress only in an activation of its own")
+            if ctx._cut or self._over:
+                return False
+            ctx._saved = True
+            if act is None or self._recorder is None:
+                state.holding = []
+                return False
+            self._snap(node, act)
+            try:
+                self._recorder.act(act, open=True)
+            except Exception as exc:   # noqa: BLE001 - something it sent or holds is not plain data
+                raise NodeError(f"its progress cannot be journaled: {exc}") from None
+            ctx._act = Act(node.id, act.round, ())
+            state.holding = []          # what it took so far is used up for good: a cut no longer gives it back
+        if self._observe is not None:
+            self._tell("saved", node=node.id, round=state.round)
+        return True
+
+    # ---- a message in the middle of an activation ------------------------------------------------------
+
+    @staticmethod
+    def _mail(state: State, ports: frozenset | None = None) -> Feed | None:
+        """The feed holding the next message for a running node, in the order they came; None when there is none."""
+        if state.status != ACTIVE:
+            return None                         # paused: it takes nothing until it is switched on again
+        for feed in state.late:
+            if feed.box and not feed.gone and (ports is None or feed.port.port.name in ports):
+                return feed
+        for name, port in state.ports.items():
+            if ports is None or name in ports:
+                for feed in (*port.forward, *port.back):
+                    if feed.box and not feed.gone:
+                        return feed
+        return None
+
+    def _taken(self, state: State, ctx: RunContext, feed: Feed) -> dict:
+        """Take the next message from ``feed`` for a running activation. Under the lock."""
+        envelope = self._sched.pop(feed)
+        try:
+            state.late.remove(feed)
+        except ValueError:
+            pass
+        state.holding.append((feed, envelope))
+        ctx._cause = (*ctx._cause, envelope.id)
+        if ctx._act is not None:
+            ctx._act.took = (*ctx._act.took, envelope.id)
+        value = self._checks.arrived(state, feed, envelope.body)
+        port = feed.port.port
+        return {port.name: [value] if port.many else value}
+
+    def _hear(self, state: State, ctx: RunContext, ports: frozenset | None, until: float | None) -> tuple:
+        """One look, under the lock: ("got", message), ("none", None) when nothing can come or the time is up
+        or the node is to end, or ("wait", seconds)."""
+        feed = self._mail(state, ports)
+        if feed is not None:
+            return "got", self._taken(state, ctx, feed)
+        if state.halt or self._stopping() or self._over:
+            ctx._cut = ctx._cut or bool(state.halt) or self._stopping()
+            return "none", None
+        if self._idle():
+            if self._unfinished():          # nodes switched off still hold work: end here, to be taken up later
+                state.halt = state.halt or "park"
+                ctx._cut = True
+            return "none", None
+        left = None if until is None else until - time.monotonic()
+        if left is not None and left <= 0:
+            return "none", None
+        return "wait", 0.1 if left is None else min(left, 0.1)
+
+    def _receive(self, state: State, ctx: RunContext, ports, timeout: float | None) -> dict | None:
+        """``ctx.receive``: wait for the next message to this running activation (see ``Context.receive``)."""
+        ports = self._ports(state, ports)
+        until = None if timeout is None else time.monotonic() + timeout
+        lock = self._lock
+        with lock:
+            self._own(state, ctx)
+            what, got = self._hear(state, ctx, ports, until)
+            if what == "wait":
+                began = time.monotonic()
+                self._lend(state)
+                lock.notify_all()
+                try:
+                    while what == "wait":
+                        lock.wait(got)
+                        what, got = self._hear(state, ctx, ports, until)
+                finally:
+                    self._take_back(state)
+                    state.since += time.monotonic() - began       # waiting does not count against its time limit
+        return self._heard(state, got)
+
+    async def _areceive(self, state: State, ctx: RunContext, ports, timeout: float | None) -> dict | None:
+        """``_receive``, awaited: the coroutine waits without holding the loop."""
+        ports = self._ports(state, ports)
+        until = None if timeout is None else time.monotonic() + timeout
+        lock = self._lock
+        with lock:
+            self._own(state, ctx)
+            what, got = self._hear(state, ctx, ports, until)
+            if what == "wait":
+                began = time.monotonic()
+                self._lend(state)
+                lock.notify_all()
+        if what == "wait":
+            try:
+                while what == "wait":
+                    await asyncio.sleep(min(got, 0.05))
+                    with lock:
+                        what, got = self._hear(state, ctx, ports, until)
+            finally:
+                with lock:
+                    self._take_back(state)
+                    state.since += time.monotonic() - began
+        return self._heard(state, got)
+
+    @staticmethod
+    def _own(state: State, ctx: RunContext) -> None:
+        if not state.running or ctx._state is not state or state.waiting:
+            raise NodeError(f"{state.node.id} can receive only in an activation of its own, one message at a time")
+
+    def _heard(self, state: State, got: dict | None) -> dict | None:
+        if got is not None and self._observe is not None:
+            self._tell("received", node=state.node.id, round=state.round, ports=list(got))
+        return got
+
+    @staticmethod
+    def _ports(state: State, ports) -> frozenset | None:
+        if ports is None:
+            return None
+        names = frozenset([ports] if isinstance(ports, str) else ports)
+        unknown = names - set(state.ports)
+        if unknown:
+            raise NodeError(f"{state.node.id} has no input port {', '.join(sorted(unknown))}")
+        return names
 
     def _unfinished(self) -> dict[str, str]:
         """Nodes whose switch is off and that still have something waiting for them."""
@@ -471,14 +616,15 @@ class Engine:
                 pass
             elif self._timed:
                 self._watch()
-            elif self.workers:
-                threads = [threading.Thread(target=self._work, name=f"engine-{i}", daemon=True) for i in range(self.workers)]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join()
             else:
-                self._work()
+                self._alive = self.workers or 1
+                for i in range(self.workers):
+                    threading.Thread(target=self._worker, name=f"engine-{i}", daemon=True).start()
+                if not self.workers:
+                    self._worker()            # one at a time, in this thread
+                with self._lock:
+                    while self._alive:        # the workers, and any lent while an activation waited
+                        self._lock.wait()
         finally:
             with self._lock:
                 self._over = True
@@ -542,16 +688,7 @@ class Engine:
         """Run the workers in threads of their own and watch the clock for them. The order of activations is
         the same as without a limit: with no workers asked for, one thread does everything."""
         lock = self._lock
-
-        def work():
-            try:
-                self._work()
-            finally:
-                with lock:
-                    self._alive -= 1
-                    lock.notify_all()
-
-        threads = [threading.Thread(target=work, name=f"engine-{i}", daemon=True) for i in range(self.workers or 1)]
+        threads = [threading.Thread(target=self._worker, name=f"engine-{i}", daemon=True) for i in range(self.workers or 1)]
         self._alive = len(threads)
         for thread in threads:
             thread.start()
@@ -568,6 +705,39 @@ class Engine:
                     return
                 lock.wait(wait)
 
+    def _worker(self) -> None:
+        try:
+            self._work()
+        finally:
+            with self._lock:
+                self._alive -= 1
+                self._lock.notify_all()
+
+    def _lend(self, state: State) -> None:
+        """An activation starts to wait for a message: what it holds of the workers goes to another. Called
+        under the lock."""
+        self._waiters.add(state)
+        state.waiting = True
+        if state.node.asynchronous:
+            return                          # a coroutine waits on the loop and holds no thread
+        if self._threads is not None:
+            self._threads.size += 1         # on the event loop: one more thread for the nodes that are not coroutines
+        elif self._alive:
+            self._alive += 1
+            threading.Thread(target=self._worker, name="engine-lent", daemon=True).start()
+
+    def _take_back(self, state: State) -> None:
+        """The waiting is over: one worker too many now, which leaves when it is next free. Under the lock."""
+        self._waiters.discard(state)
+        state.waiting = False
+        if state.node.asynchronous:
+            return
+        if self._threads is not None:
+            self._threads.size -= 1
+        elif self._alive:
+            self._retire += 1
+        self._lock.notify_all()
+
     def _late(self, late: State) -> None:
         """An activation overran its time: the run fails, naming it. Called under the lock."""
         if self._error is None:
@@ -581,10 +751,15 @@ class Engine:
         lock, sched = self._lock, self._sched
         while True:
             with lock:
+                if self._retire:
+                    self._retire -= 1           # a worker lent to a waiting activation goes
+                    return
                 if self._outer is not None and not sched.stopped and self._outer():
                     sched.stopped = True
-                while not sched.ready and self._active and not sched.stopped:
+                while not sched.ready and self._active and not sched.stopped and not self._retire:
                     lock.wait()
+                if self._retire:
+                    continue
                 if sched.stopped or not sched.ready:
                     lock.notify_all()
                     return
@@ -610,7 +785,7 @@ class Engine:
                 loop.call_soon_threadsafe(wake.set)
             except RuntimeError:
                 pass                     # the loop has closed
-        threads = Threads(self.workers or 1, loop)
+        threads = self._threads = Threads(self.workers or 1, loop)
         running: dict[asyncio.Task, State] = {}
         limit = self.workers or 1
 
@@ -624,7 +799,7 @@ class Engine:
                 with lock:
                     if self._outer is not None and not sched.stopped and self._outer():
                         sched.stopped = True
-                    while sched.ready and not sched.stopped and len(running) < limit:
+                    while sched.ready and not sched.stopped and len(running) - len(self._waiters) < limit:
                         picked = self._pick()
                         if picked is not None:
                             task = loop.create_task(self._one(picked, threads))
@@ -654,6 +829,7 @@ class Engine:
         finally:
             lock.hook = None
             threads.close()
+            self._threads = None
 
     async def _cancel(self, running: dict) -> None:
         """The run is over early: activations that are coroutines are cancelled, after a moment to see
@@ -714,6 +890,7 @@ class Engine:
     def _started(self, state: State, cause: tuple, took: tuple) -> tuple[RunContext, Act | None]:
         act = Act(state.node.id, state.round, took) if self._recorder is not None else None
         ctx = RunContext(self, state, cause, act)
+        ctx.resumed = state.resumed
         if self._observe is not None:
             self._flush()
             self._tell("started", node=state.node.id, round=state.round, took=list(took))
@@ -730,14 +907,15 @@ class Engine:
                 if returned is not None:
                     if type(returned) is not dict:
                         returned = waited(returned)      # a coroutine, when the node was not known to be one
-                    self._returned(state, returned, cause, act)
+                    if not ctx._cut:                     # told to end: what it returns is not its answer
+                        self._returned(state, returned, ctx._cause, ctx._act)
                 break
             except Invalid as exc:
                 if not self._again(exc, state, taken):
                     raise
                 ctx.problems.append(str(exc))
         if act is not None:
-            self._snap(node, act)
+            self._snap(node, ctx._act)
 
     async def _aactivate(self, state: State, ctx: RunContext, act: Act | None, taken: dict, cause: tuple) -> None:
         node = state.node
@@ -751,13 +929,14 @@ class Engine:
                 returned = node.run(ctx, taken)
                 if inspect.isawaitable(returned):
                     returned = await returned
-                self._returned(state, returned, cause, act)
+                if not ctx._cut:
+                    self._returned(state, returned, ctx._cause, ctx._act)
                 break
             except Invalid as exc:
                 if not self._again(exc, state, taken):
                     raise
                 ctx.problems.append(str(exc))
-        self._snap(node, act)
+        self._snap(node, ctx._act)
 
     def _returned(self, state: State, returned: Any, cause: tuple, act: Act | None) -> None:
         """Send on what ``run`` returned."""
@@ -783,6 +962,7 @@ class Engine:
         """An activation is over: record it, or what went wrong, and queue what can run next. Returns False
         when the engine has already returned and what the activation did is thrown away."""
         lock, sched, node = self._lock, self._sched, state.node
+        act = ctx._act                  # the record it is writing now: a new one after each commit
         if failure is not None:
             with lock:
                 if self._over:
@@ -803,9 +983,13 @@ class Engine:
                 halt, state.halt = state.halt, False
                 if halt and not sched.stopped:
                     # only this node was stopped or restarted: what it took goes back, the run goes on
+                    if halt == "restart" and ctx._saved:     # it starts again from what it first had
+                        state.holding = [*state.opening, *state.holding]
                     sched.give_back(state)
                     if halt == "restart":
                         state.node.reset()
+                    elif ctx._saved:
+                        state.resuming = True       # switched on again, it goes on from what it saved
                     sched.consider(state)
                 else:
                     sched.stopped = True
@@ -948,7 +1132,9 @@ class Engine:
                     self._orphans.discard(envelope.id)
                 else:
                     sched.place(feed, envelope)
-            if sched.ready:
+            if self._waiters:
+                self._lock.notify_all()             # one waiting for a message may have it now
+            elif sched.ready:
                 self._lock.notify()
 
     def _call(self, state: State, port: str, payload: Any, act: Act | None = None) -> Any:

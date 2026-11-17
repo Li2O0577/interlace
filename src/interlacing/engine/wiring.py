@@ -56,7 +56,7 @@ class State:
 
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
                  "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
-                 "inner", "status", "halt", "holding", "paused_at")
+                 "inner", "status", "halt", "holding", "paused_at", "waiting", "late", "resuming", "resumed", "opening")
 
     def __init__(self, node: Node):
         self.node = node
@@ -81,6 +81,11 @@ class State:
         self.halt: str | bool = False             # this activation is to end at its next step: "stop" or "restart"
         self.holding: list = []                   # this activation: (feed, envelope) it took, to give back if it is cut
         self.paused_at = 0.0                      # when it was paused: that time does not count against its limit
+        self.waiting = False                      # the running activation is waiting for a message (ctx.receive)
+        self.late: deque = deque()                # feeds that received while it ran, in the order they did
+        self.resuming = False                     # an activation that saved its progress is to go on from there
+        self.resumed = False                      # the running activation goes on from saved progress
+        self.opening: list = []                   # this activation: (feed, envelope) it started with
 
     def begin(self) -> None:
         """A new activation starts: forget what the last one did."""
@@ -90,6 +95,9 @@ class State:
             self.rejected = {}
         self.delivered = False
         self.halt = False
+        self.resumed = False
+        if self.late:
+            self.late.clear()
         if self.inner:
             self.inner = []
 
