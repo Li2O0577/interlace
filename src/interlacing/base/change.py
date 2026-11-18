@@ -12,15 +12,41 @@ from typing import Callable, Iterable
 from .edge import Edge, EdgeError, Endpoint
 from .graph import GraphBuilder, GraphError
 from .node import Node
+from .port import Port
+from .schema import ANY
 
 
 class Change:
     """What to do to the graph, in order. Each method returns the change, so calls can be chained."""
 
-    __slots__ = ("ops",)
+    __slots__ = ("ops", "grown")
 
     def __init__(self):
         self.ops: list[tuple] = []
+        self.grown: list[tuple] = []      # (node, port names) given while this change was applied
+
+    def ports(self, node: str, inputs: Iterable = (), outputs: Iterable = ()) -> "Change":
+        """Give an existing node more ports: names, or Ports that take any value (an input given by name is
+        optional). The node learns of them through ``Node.add_ports``."""
+        def plain(port, required: bool) -> Port:
+            port = port if isinstance(port, Port) else Port(str(port), required=required)
+            if port.schema is not ANY or port.check or port.call:
+                raise GraphError(f"{node}.{port.name}: a port added while the run goes on takes any value, unchecked")
+            return port
+        self.ops.append(("ports", str(node), tuple(plain(p, False) for p in inputs),
+                         tuple(plain(p, True) for p in outputs)))
+        return self
+
+    def manage(self, manager: str, *members: str) -> "Change":
+        """``manager`` manages ``members`` from now on (see ``GraphBuilder.manage``)."""
+        self.ops.append(("manage", str(manager), tuple(str(member) for member in members)))
+        return self
+
+    def undo(self) -> None:
+        """Take back the ports this change gave, when the graph it made was refused."""
+        for node, names in reversed(self.grown):
+            node.drop_ports(names)
+        self.grown = []
 
     def add(self, *nodes: Node) -> "Change":
         for node in nodes:
@@ -81,6 +107,17 @@ class Change:
                                 max_rounds=edge.max_rounds, challenges=edge.challenges)
             elif kind == "disconnect":
                 builder.disconnect(op[1])
+            elif kind == "ports":
+                node = builder._nodes.get(op[1])
+                if node is None:
+                    raise GraphError(f"no node {op[1]!r} to give ports to")
+                taken = [p.name for p in (*op[2], *op[3]) if p.name in node.inputs or p.name in node.outputs]
+                if taken:
+                    raise GraphError(f"{op[1]} already has the ports {', '.join(taken)}")
+                node.add_ports(op[2], op[3])
+                self.grown.append((node, [p.name for p in (*op[2], *op[3])]))
+            elif kind == "manage":
+                builder.manage(op[1], *op[2])
             else:
                 builder.output(op[1], op[2])
         return builder
@@ -96,6 +133,11 @@ class Change:
                 out.append(["connect", op[1].describe()])
             elif kind == "output":
                 out.append(["output", op[1], str(op[2])])
+            elif kind == "ports":
+                out.append(["ports", op[1], *([{"name": p.name, "required": p.required, "many": p.many} for p in ports]
+                                              for ports in op[2:])])
+            elif kind == "manage":
+                out.append(["manage", op[1], list(op[2])])
             else:
                 out.append([kind, op[1]])
         return out
@@ -121,6 +163,12 @@ class Change:
                 change.remove(op[1])
             elif kind == "disconnect":
                 change.disconnect(op[1])
+            elif kind == "ports":
+                made = [[Port(p["name"], required=p.get("required", True), many=p.get("many", False)) for p in ports]
+                        for ports in op[2:4]]
+                change.ports(op[1], *made)
+            elif kind == "manage":
+                change.manage(op[1], *op[2])
             else:
                 raise GraphError(f"unknown change: {kind!r}")
         return change

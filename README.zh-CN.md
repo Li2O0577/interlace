@@ -149,6 +149,8 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 **质疑。** 边可以接受驳回：`connect(a, b, challenges=2)`。收的一方判断收到的是否符合预期，只答是或否；不符合就调用 `ctx.reject(端口, 理由)`，等上游解释（原值不变）或者更正（更正就是答复）。这条边一共能接受这么多次驳回。在这种边上收消息的 agent 会先看到一句默认提示（可以换），让它先判断，并有 `reject` 工具；消息被驳回的 agent 用 `explain` 或 `correct` 答复，已经结束的会被叫回来。程序节点默认回答“结果不变”，需要别的行为就写 `challenged`。
 
+**自己组队的 agent。** 默认关闭：`AgentNode(..., resident=True, hire=3, templates={"researcher": make})` 整次运行最多招 3 个，只能从模板里招。每个下属成为它管的一个节点，有一条线派活（`send_to_<name>`）、一条线回话（`from_<name>`）；它还有 `dismiss`、`control`、`team`、`connect`（只限自己团队）。能招人的下属，名额不超过上级；目录放在上级目录下面。底下是 `ctx.change` 加的两个新操作 `ports` 和 `manage`；节点内部那张图里的节点用路径名拨（`"box/inner"`）。
+
 ```python
 graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # lead 里：ctx.control("a", "pause")
 engine.control(["a", "b"], "restart")                                  # 从外面：a 和 b 重新开始手上的工作
@@ -230,7 +232,7 @@ interlacing resume --dir /tmp/run                                               
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十七个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十八个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 

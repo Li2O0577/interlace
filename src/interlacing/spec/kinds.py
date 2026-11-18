@@ -76,7 +76,26 @@ def _agent(d, catalog, area) -> dict:
                 inputs=ports(d, "inputs", catalog), outputs=[p for p in outputs if not p.call] if outputs is not None else None,
                 firing=d.get("firing"), memory=catalog.function(memory) if isinstance(memory, str) else memory, json=c.get("json", False),
                 max_steps=c.get("max_steps", 50), max_tokens=c.get("max_tokens", 4096), files=catalog.workspace,
-                repairs=c.get("repairs"), resident=c.get("resident", False), doubt=c.get("doubt"))
+                repairs=c.get("repairs"), resident=c.get("resident", False), doubt=c.get("doubt"),
+                **_hiring(c, catalog))
+
+
+def _hiring(c, catalog) -> dict:
+    """What an agent that may hire is given: how many, from which templates, and how to make them."""
+    if not c.get("hire"):
+        return {}
+    from .catalog import SpecError
+    from .load import load_node
+    named = c.get("templates") or []
+    if isinstance(named, Mapping):
+        templates = {str(name): dict(described) for name, described in named.items()}
+    else:
+        missing = [name for name in named if name not in catalog.templates]
+        if missing:
+            raise SpecError(f"no template {', '.join(map(repr, missing))} in this catalog")
+        templates = {name: catalog.templates[name] for name in named}
+    return dict(hire=c["hire"], templates=templates, hire_rounds=c.get("hire_rounds", 10),
+                builder=lambda described: load_node(described, catalog))
 
 
 def agent(d, catalog, graphs):

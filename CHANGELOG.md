@@ -51,9 +51,20 @@ with a new major version.
   answers with `explain` or `correct`; a resident one sees it in `wait`, one that has finished is called back.
 - A served node (`RemoteNode`) corrects what it sent: its `ctx.emit` returns its own name for the message,
   which its `ctx.correct` takes.
+- Hiring: a resident agent may build its own team when it is allowed to, `AgentNode(hire=N, templates={...},
+  hire_rounds=10)` (`"hire"`, `"templates"` in a graph file, naming `Catalog(templates=...)` or giving
+  descriptions). N is how many in the whole run; without it there are no hiring tools. Tools: `hire`
+  (a member from a template, managed by the agent, with `to_<name>` and `from_<name>` lines), `dismiss`,
+  `control`, `team`, `connect` (within its team). A member that may hire gets no more than its hirer; one
+  made from a description works in a directory inside its hirer's (`layer`).
+- `Change.ports(node, inputs, outputs)` gives an existing node more ports while the run goes on
+  (`Node.add_ports`, taken back if the change is refused), and `Change.manage(manager, *members)` gives
+  nodes added while it runs a manager. `ctx.team()` says how the nodes a node manages stand.
+- Nodes of a graph a node runs inside itself are switched by path, `engine.control("box/x", ...)`, by
+  whoever may switch the node.
 - Examples: `resident_team.py`, a lead and two resident members; `corrected_estimate.py`, a quick estimate
   corrected once those who read it are done; `rejected_answer.py`, a reviewer rejects a plan and the planner
-  is called back to correct it.
+  is called back to correct it; `hired_team.py`, a lead hires two members, gives them work and dismisses them.
 
 ## 0.14.0
 

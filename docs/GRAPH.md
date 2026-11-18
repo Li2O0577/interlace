@@ -253,7 +253,8 @@ new = GraphBuilder.of(graph).remove("review").add(check).connect("draft.y", "che
 谁能拨开关：
 
 - 操作者：`engine.control(节点, 动作, team=False)`；运行目录用 `Run.control(...)` 或命令行 `interlacing control 动作 节点... --dir RUN`；MCP 服务用工具 `control`。运行正在进行时立刻生效；运行在别的进程里进行时（比如另开一个终端跑的 `interlacing run`），变化先放进运行目录的 `controls/`，那个进程片刻之内就会接手；没在进行时写进日志，下次 `resume` 时生效。返回的 `changed` 只列真正变了的节点。只用 `Engine`、不给它日志时，因全部暂停而先结束的运行没法接着跑：要接着跑就用运行目录，或者给 `Engine` 传 `journal`。
-- 节点自己的上级：图里用 `GraphBuilder.manage("lead", "a", "b")` 写明谁管谁（图文件里是 `"manages": {"lead": ["a", "b"]}`）。这是一棵树：一个节点最多一个上级，不能绕一圈管到自己。节点在运行中用 `ctx.control(节点, 动作, team=False)` 只能拨它下面的节点（多层也算），拨别的会被拒绝。`team=True` 时连同对方管着的节点一起拨。
+- 节点自己的上级：图里用 `GraphBuilder.manage("lead", "a", "b")` 写明谁管谁（图文件里是 `"manages": {"lead": ["a", "b"]}`）。这是一棵树：一个节点最多一个上级，不能绕一圈管到自己。节点在运行中用 `ctx.control(节点, 动作, team=False)` 只能拨它下面的节点（多层也算），拨别的会被拒绝。`team=True` 时连同对方管着的节点一起拨。`ctx.team()` 列出它下面的节点和各自的状态（开关、是否在干活或在等、上级、跑了几轮）。运行中加进来的节点也可以指定上级：`Change().manage("lead", "新节点")`。
+- 节点内部跑的一张图（`GraphNode`、块）里的节点，用路径名拨：`engine.control("box/slow", "stop")`，再往里就是 `box/inner/x`。能拨 `box` 的人（操作者，或者管着 `box` 的节点）就能拨它里面的节点。只有 `box` 正在跑它那张图的时候才拨得到。
 
 开关的每次变化都写进日志，恢复后保持原样，观察函数会收到 `control` 事件。暂停的时间不计入激活的时间上限。正被暂停的节点不能被调用（`call`）。
 
@@ -310,6 +311,7 @@ def run(self, ctx, inputs):
 | `note(text)` | 记下自己做到哪里了，同时存档（`ctx.commit`） |
 | `correct(id, content)` | 更正自己发过的一条消息。`id` 是 `send_<输出>` 回给它的编号（如 `say#2`）；做法见下面的“更正” |
 | `explain(id, text)` | 自己发的东西被驳回、但它是对的：说明理由。见下面的“质疑” |
+| `hire` / `dismiss` / `control` / `team` / `connect` | 只有打开招人（`hire=N`）时才有，见下面的“招人” |
 | `finish(summary?)` | 宣布做完。还有输出一次都没发过时，第一次调用会先提醒，再调用一次才结束 |
 
 - **任务栏：** 开始时每个输出各占一行（“还没发”/“发了几次”，更正过的还写着更正了几次），下面是 agent 自己用 `plan` 加的事项，最后是它的最后一条笔记。每次 `wait` 的结果里都会附上，它也是节点状态的一部分，会存档。
@@ -373,6 +375,32 @@ builder.connect("planner.plan", "reviewer.plan", challenges=2)    # 这条边最
 - **日志：** 每次驳回记在下游那次激活名下，运行接上以后，边上用掉的次数不会重新算。
 
 [examples/graphs/rejected_answer.py](../examples/graphs/rejected_answer.py)：审阅的 agent 驳回了少一步的计划；做计划的 agent 已经结束，被叫回来更正；审阅拿到更正后的计划，通过。
+
+### 招人：agent 组建自己的团队
+
+常驻 agent 可以在运行中招下属，一层管一层。默认关闭，要打开并给上限：
+
+```python
+lead = AgentNode("lead", model, resident=True, hire=3, templates={"researcher": make_researcher})
+```
+
+- **开关和上限：** `hire=3` 表示整次运行里最多招 3 个；不写或写 0 就是关，连工具都没有。解雇不会空出名额。只有常驻 agent 能招，因为它要留下来听下属回话。
+- **只从模板招：** `templates` 是名字到模板的映射。模板可以是一个“给 id 造节点”的函数，也可以是一段节点描述。图文件里写 `"hire": 3, "templates": ["researcher"]`，名字指向 `Catalog(templates={...})` 里登记的描述；也可以直接写描述 `{"researcher": {...}}`。下属如果也能招，它的 `hire` 不会超过上级的。
+- **工具：**
+
+| 工具 | 作用 |
+|---|---|
+| `hire(template, name, task?)` | 按模板招一个下属，id 是 `<自己>-<name>`。它归自己管；自己多出一个输出 `to_<name>`（用 `send_to_<name>` 派活）和一个输入 `from_<name>`（下属的第一个输出接回来，是一条回边，最多 `hire_rounds` 轮，默认 10）。给了 `task` 就马上派出去 |
+| `dismiss(name)` | 停掉这个下属和它下面的所有人，再从图里拿掉 |
+| `control(name, action)` | 暂停、恢复、停止、重启下属（连同它下面的人）；`name` 可以带路径，拨到下属内部的图 |
+| `team()` | 列出团队：每个人的开关、在干活还是在等、跑了几轮、归谁管，还能再招几个 |
+| `connect(source, target, back?)` | 在自己（`me`）和下属之间接线，写成 `名字.端口`；闭合成环的线要写 `back=true`。碰不到团队以外的节点 |
+
+- **各自的目录：** 有工作区时，用描述写的下属，目录放在上级的目录下面（`lead/lead-r1/`），它只能写自己的目录和共享目录，上级能读到。
+- **底下是什么：** 这些都是 `ctx.change`：先检查，再生效，写进日志，接上运行时重做（运行目录会自动给出 `rebuild`）。新加的 `Change` 操作有两个：`ports(节点, inputs=, outputs=)`，在运行中给已有节点加端口（加的端口不做类型检查，节点通过 `Node.add_ports` 得知）；`manage(上级, 下属...)`。整个变化被拒绝时，加上的端口也会退掉。
+- **还是只走连好的线：** 招人只是多了节点和线，没有“按名字给谁发消息”。
+
+[examples/graphs/hired_team.py](../examples/graphs/hired_team.py)：图里只有一个主控。它招两个数词的下属、各派一半、等两份结果、看一眼团队、解雇两人、交出总数；第三次招人会被拒绝。
 
 ## 方法
 
@@ -457,7 +485,7 @@ def plan(ctx, task):
     ctx.emit("y", task)
 ```
 
-- 操作有 `add(节点...)`、`remove(节点 id...)`、`connect(来处, 去处, 协议="value", back=, max_rounds=)`、`disconnect(边 id...)`、`output(名字, 来处)`，按顺序套到当前的图上。删节点时，它身上的边和图输出一起删掉。
+- 操作有 `add(节点...)`、`remove(节点 id...)`、`connect(来处, 去处, 协议="value", back=, max_rounds=, challenges=)`、`disconnect(边 id...)`、`output(名字, 来处)`、`ports(节点, inputs=, outputs=)`、`manage(上级, 下属...)`，按顺序套到当前的图上。删节点时，它身上的边和图输出一起删掉。
 - 套上之后按建图的全部规则检查。不通过时 `ctx.change` 抛出 `GraphError`，图一点都不变，节点可以接住它换一种做法；通过了就立刻生效：新节点开始按自己的触发方式运行，新边开始投递，删掉的边上还在等的信封被丢弃，数目报给观察函数。
 - 不能删自己，也不能删正在运行的节点。`Engine(max_nodes=N)` 给图能长到多大设上限。
 - 观察函数收到 `changed`（`node`、`round`、`added`、`removed`、`dropped`、`graph` 新摘要）；`Engine.graph` 是当前的图，`Result` 里有新节点的轮次和新的图输出。
@@ -696,7 +724,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十七个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、先发粗估再更正、审阅驳回计划、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十八个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、主控在运行中招人组队、先发粗估再更正、审阅驳回计划、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 

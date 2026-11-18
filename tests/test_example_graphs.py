@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere', 'corrected_estimate', 'rejected_answer'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere', 'corrected_estimate', 'rejected_answer', 'hired_team'):
         sys.modules.pop(name, None)
 
 
@@ -126,3 +126,9 @@ def test_rejected_answer(capsys):
     import rejected_answer
     result = rejected_answer.main()
     assert result.last('verdict') == 'approved: 1. measure 2. cut 3. check the fit 4. glue'
+
+
+def test_hired_team(capsys):
+    import hired_team
+    result, engine, lead = hired_team.main()
+    assert result.last('words') == '9' and [node.id for node in engine.graph.nodes] == ['lead'] and lead.hires == 2

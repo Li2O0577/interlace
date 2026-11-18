@@ -83,6 +83,9 @@ class RunContext(Context):
     async def acheckpoint(self) -> bool:
         return await self._engine._acheckpoint(self._state, self)
 
+    def team(self) -> dict:
+        return self._engine._team(self.node)
+
     def control(self, nodes, action: str, *, team: bool = False) -> list:
         return self._engine._control(nodes, action, team, self.node)
 
