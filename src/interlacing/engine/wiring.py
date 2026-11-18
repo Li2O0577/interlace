@@ -210,6 +210,15 @@ class Wiring:
         state.missing = sum(1 for p in state.ports.values() if p.port.required)
         return state
 
+    def add_ports(self, state: State, names) -> None:
+        """Input ports given to a node while the run goes on (outputs are found by ``settle``)."""
+        for name in names:
+            port = state.node.inputs.get(name)
+            if port is not None and name not in state.ports:
+                state.ports[name] = InPort(port, state)
+                if port.required:
+                    state.missing += 1
+
     def add_edge(self, edge: Edge) -> Feed:
         protocol = self.protocols.get(edge.protocol)
         if protocol is None:

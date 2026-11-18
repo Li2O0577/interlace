@@ -154,6 +154,7 @@ class Engine:
         self._carry = transport.carry if transport is not None else None
         self._recorder = Recorder(journal) if journal is not None else None
         self._orphans: set[str] = set()   # after a resume: envelopes already dealt with whose sender must run again
+        self._inside: dict[str, "Engine"] = {}   # node id -> the engine of the graph it runs inside itself now
         self._lock = Signal()
         self._sched = Scheduler()
         self._active = 0
@@ -335,14 +336,22 @@ class Engine:
         * ``restart``: what it is doing is dropped as for ``stop``, what it holds is forgotten (``Node.reset``),
           and it starts again.
 
-        ``team=True`` takes in every node the named ones manage, all the way down. Returns the nodes whose
-        switch changed. Every change is in the journal, and a resumed run keeps it."""
+        ``team=True`` takes in every node the named ones manage, all the way down. A node of a graph that a
+        node runs inside itself is named by path, ``"<node>/<id>"`` (and so on further in); whoever may switch
+        that node may switch what is inside it. Returns the nodes whose switch changed. Every change is in the
+        journal, and a resumed run keeps it."""
         return self._control(nodes, action, team, None)
 
     def _control(self, nodes: str | Iterable[str], action: str, team: bool, by: str | None) -> list[str]:
         if action not in SWITCHED:
             raise ValueError(f"no action {action!r}: one of {', '.join(SWITCHED)}")
         ids = [nodes] if isinstance(nodes, str) else list(nodes)
+        inside = [id for id in ids if "/" in id]
+        if inside:
+            ids = [id for id in ids if "/" not in id]
+            changed = self._control(ids, action, team, by) if ids else []
+            return changed + [f"{head}/{done}" for head, inner, rest in self._insides(inside, by)
+                              for done in inner._control(rest, action, team, None)]
         lock = self._lock
         with lock:
             if not self._used or self._over:
@@ -366,6 +375,31 @@ class Engine:
         if changed and self._observe is not None:
             self._tell("control", nodes=changed, action=action, **({"by": by} if by else {}))
         return changed
+
+    def _insides(self, paths: list[str], by: str | None) -> list[tuple]:
+        """(node, the engine running inside it, the rest of the path) for each path, once ``by`` is found to
+        manage the node (or is the operator)."""
+        out = []
+        with self._lock:
+            for path in paths:
+                head, rest = path.split("/", 1)
+                if head not in self._states:
+                    raise RunError(f"no node {head!r}")
+                if by is not None and head not in self.graph.team(by):
+                    raise NodeError(f"{by} does not manage {head}")
+                inner = self._inside.get(head)
+                if inner is None or inner._over or not inner._used:
+                    raise RunError(f"{head} is not running a graph of its own now")
+                out.append((head, inner, rest))
+        return out
+
+    def _team(self, by: str) -> dict:
+        """The nodes ``by`` manages, all the way down, and how each stands: for ``ctx.team``."""
+        with self._lock:
+            graph = self.graph
+            return {id: {"status": state.status, "running": state.running, "waiting": state.waiting,
+                         "manager": graph.managers.get(id), "rounds": state.round}
+                    for id in graph.team(by) for state in (self._states[id],)}
 
     def _switch(self, state: State, action: str) -> bool:
         """Set one node's switch. Called under the lock. Returns whether anything changed."""
@@ -1579,6 +1613,8 @@ class Engine:
         inner._parent = (self, state, ctx._act)
         inner._within = (*self._within, (state.node.id, ctx.round))
         inner._id = ctx.key
+        with self._lock:
+            self._inside[state.node.id] = inner     # its nodes can be reached as "<node>/<id>"
         return inner
 
     def _use(self, state: State, round: int, used: Mapping[str, float]) -> None:
@@ -1664,14 +1700,19 @@ class Engine:
         old, wiring, sched = self.graph, self._wiring, self._sched
         if caller is not None and caller in change.removed:
             raise GraphError(f"{caller} cannot take itself out of the graph")
-        new = change.apply(GraphBuilder.of(old)).compile(self.protocols)
-        if self._max_nodes is not None and len(new.nodes) > self._max_nodes:
-            raise GraphError(f"the graph would have {len(new.nodes)} nodes, and at most {self._max_nodes} may run here")
-        known = {node.id for node in new.nodes}
-        gone = [id for id in self._states if id not in known]
-        for id in gone:
-            if self._states[id].running:
-                raise GraphError(f"{id} is running and cannot be taken out now")
+        try:
+            new = change.apply(GraphBuilder.of(old)).compile(self.protocols)
+            if self._max_nodes is not None and len(new.nodes) > self._max_nodes:
+                raise GraphError(f"the graph would have {len(new.nodes)} nodes, and at most {self._max_nodes} may "
+                                 f"run here")
+            known = {node.id for node in new.nodes}
+            gone = [id for id in self._states if id not in known]
+            for id in gone:
+                if self._states[id].running:
+                    raise GraphError(f"{id} is running and cannot be taken out now")
+        except Exception:
+            change.undo()                       # ports it gave to a node stay with the graph that was refused
+            raise
         edges = {edge.id: edge for edge in new.edges}
         dropped = sum(wiring.remove_edge(edge.id) for edge in old.edges if edge.id not in edges)
         for name in [name for name in old.inputs if name not in new.inputs]:
@@ -1683,6 +1724,8 @@ class Engine:
                 sched.ready.remove(state)
             wiring.remove_node(id)
         added = [wiring.add_node(node) for node in new.nodes if node.id not in wiring.states]
+        for node, names in change.grown:            # new input ports of a node already in the run
+            wiring.add_ports(wiring.states[node.id], names)
         set_limits(added, self._limit, self._firm)
         before = {edge.id for edge in old.edges}
         for edge in new.edges:

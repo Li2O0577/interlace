@@ -16,7 +16,9 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
-from ..base import Firing, Invalid, Node, NodeError, Port, canonical
+import re
+
+from ..base import Change, Firing, GraphError, Invalid, Node, NodeError, Port, canonical
 from .function import _hints, named
 
 _NO_PARAMETERS = {"type": "object", "properties": {}}
@@ -149,6 +151,31 @@ _ANSWER = [{"name": "explain", "description": "It is right as it is: say why.",
             "parameters": {"type": "object", "properties": {"content": {}}, "required": ["content"]}}]
 
 
+_HIRING = {
+    "hire": {"description": "Hire a member for your team from one of your templates. You send it work with "
+                            "send_to_<name>, and what it sends back comes to you on from_<name>. You manage it.",
+             "parameters": {"type": "object", "properties": {
+                 "template": {"type": "string"}, "name": {"type": "string", "description": "letters, digits, _"},
+                 "task": {"description": "work to send it at once (optional)"}}, "required": ["template", "name"]}},
+    "dismiss": {"description": "Dismiss a member of your team, and those it manages. It is stopped and taken out.",
+                "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    "control": {"description": "Pause, resume, stop or restart a member of your team (and those it manages).",
+                "parameters": {"type": "object", "properties": {
+                    "name": {"type": "string"},
+                    "action": {"type": "string", "enum": ["pause", "resume", "stop", "restart"]}},
+                    "required": ["name", "action"]}},
+    "team": {"description": "Who is in your team, and how each stands.",
+             "parameters": {"type": "object", "properties": {}}},
+    "connect": {"description": "Connect an output of one member of your team to an input of another, so that what "
+                               "the first sends goes to the second. Write each end as name.port; you are 'me'. "
+                               "Say back=true for a connection that closes a loop.",
+                "parameters": {"type": "object", "properties": {
+                    "source": {"type": "string"}, "target": {"type": "string"}, "back": {"type": "boolean"}},
+                    "required": ["source", "target"]}},
+}
+_NAME = re.compile(r"[A-Za-z0-9_]{1,32}")
+
+
 def _doubtful(ctx, ports) -> list:
     """The input ports whose last message this activation may still reject."""
     challengeable = getattr(ctx, "challengeable", None)
@@ -253,7 +280,8 @@ class AgentNode(Node):
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None, memory: bool | Callable[[list], list] = True, json: bool = False, max_steps: int = 50,
                  max_tokens: int = 4096, files=None, repairs: int | None = None, area=None, resident: bool = False,
-                 doubt: str | None = None):
+                 doubt: str | None = None, hire: int = 0, templates: Mapping[str, Any] | None = None,
+                 hire_rounds: int = 10, builder: Callable[[Mapping], Node] | None = None):
         if not callable(getattr(model, "chat", None)):
             raise NodeError(f"{id}: a model needs a chat method")
         if type(max_steps) is not int or max_steps < 1:
@@ -271,6 +299,20 @@ class AgentNode(Node):
         self.memory, self.json, self.max_steps, self.max_tokens = bool(memory), bool(json), max_steps, max_tokens
         self.files, self.area = files, area
         self.doubt = doubt                  # what it is told about a message it may reject; None: DOUBT
+        if isinstance(hire, bool) or type(hire) is not int or hire < 0:
+            raise NodeError(f"{id}: hire is how many it may hire, a whole number (0: none)")
+        if type(hire_rounds) is not int or hire_rounds < 1:
+            raise NodeError(f"{id}: hire_rounds must be at least 1")
+        self.hire, self.hire_rounds = hire, hire_rounds
+        self.templates = dict(templates or {})
+        self._builder = builder
+        if hire and not resident:
+            raise NodeError(f"{id}: only a resident agent may hire (it stays to hear back from its team)")
+        if hire and not self.templates:
+            raise NodeError(f"{id}: an agent that may hire needs templates to hire from")
+        self.hires = 0                      # how many it has hired in this run: hire is the most
+        self.hired: dict[str, str] = {}     # the members it has now: name -> node id
+        self._extra: set[str] = set()       # output ports given to it while the run went on (one per member)
         if any(tool.name in ("reject", "explain") for tool in tools):
             raise NodeError(f"{id}: the tools reject and explain are the agent's own")
         self._own = {tool.name: tool for tool in tools if tool.run is not None}
@@ -291,6 +333,11 @@ class AgentNode(Node):
             if taken:
                 raise NodeError(f"{id}: the tools {', '.join(sorted(taken))} are a resident agent's own")
             self._specs += [{"name": name, **spec} for name, spec in _RESIDENT.items()]
+        if self.hire:
+            taken = {tool.name for tool in tools} & set(_HIRING)
+            if taken:
+                raise NodeError(f"{id}: the tools {', '.join(sorted(taken))} are those of an agent that hires")
+            self._specs += [{"name": name, **spec} for name, spec in _HIRING.items()]
         if self._choose:
             if any(tool.name.startswith("send_") for tool in tools):
                 raise NodeError(f"{id}: tool names beginning with send_ are taken by the node's outputs")
@@ -304,6 +351,9 @@ class AgentNode(Node):
                 "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs,
                 **({"resident": True} if self.resident else {}),
                 **({"doubt": self.doubt} if self.doubt is not None else {}),
+                **({"hire": self.hire, "hire_rounds": self.hire_rounds,
+                    "templates": {name: t if isinstance(t, Mapping) else named(t) for name, t in self.templates.items()}}
+                   if self.hire else {}),
                 **(self.area.given if self.area is not None else {})}
 
     def reset(self) -> None:
@@ -311,14 +361,151 @@ class AgentNode(Node):
         self.board = self._fresh_board()
 
     def snapshot(self) -> Mapping:
-        kept = {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
+        kept: dict[str, Any] = {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
+        if self.hire:
+            kept = {**kept, "hires": self.hires, "hired": dict(self.hired)}
         return {**kept, "board": self.board} if self.resident else kept
 
     def restore(self, state: Mapping) -> None:
         self.messages = list(state.get("messages", []))
         self.usage = dict(state.get("usage", self.usage))
+        self.hires, self.hired = int(state.get("hires", self.hires)), dict(state.get("hired", self.hired))
         if "board" in state:
             self.board = {**self._fresh_board(), **copy.deepcopy(dict(state["board"]))}
+
+    def add_ports(self, inputs: Iterable[Port] = (), outputs: Iterable[Port] = ()) -> None:
+        """Ports it was given while the run went on: each new output is one more thing it can send."""
+        outputs = list(outputs)
+        super().add_ports(inputs, outputs)
+        for port in outputs:
+            self._sends.append(port.name)
+            self._extra.add(port.name)
+            self.board["sent"].setdefault(port.name, 0)
+            self._specs.append({"name": f"send_{port.name}", "description": f"Send content out of the output "
+                                f"'{port.name}'.", "parameters": {"type": "object", "properties": {"content": {}},
+                                                                  "required": ["content"]}})
+
+    def drop_ports(self, names: Iterable[str]) -> None:
+        names = set(names)
+        super().drop_ports(names)
+        self._sends = [name for name in self._sends if name not in names]
+        self._extra -= names
+        self._specs = [spec for spec in self._specs if spec["name"] not in {f"send_{name}" for name in names}]
+
+    # ---- a team of its own ------------------------------------------------------------------------------
+
+    def _member(self, template: Any, id: str) -> Node:
+        if callable(template) and not isinstance(template, Mapping):
+            return template(id)
+        described = {**template, "id": id}
+        if self.area is not None and "layer" not in described:
+            described["layer"] = self.area.node.split("/")       # its directory is inside the one of who hired it
+        if self._builder is None:
+            raise NodeError("a template written as a description needs builder= (a graph file gives it one); "
+                            "or give a function of the id that makes the node")
+        return self._builder(described)
+
+    def _hire(self, ctx, args: Mapping) -> str:
+        name, template = str(args.get("name", "")), str(args.get("template", ""))
+        if self.hires >= self.hire:
+            return f"error: you have hired all you may ({self.hire})"
+        if template not in self.templates:
+            return f"error: no template {template!r}; you have {', '.join(sorted(self.templates))}"
+        if not _NAME.fullmatch(name) or name in self.hired or f"to_{name}" in self.outputs:
+            return f"error: {name!r} is taken or is not a name (letters, digits, _)"
+        id = f"{self.id}-{name}"
+        try:
+            member = self._member(self.templates[template], id)
+        except Exception as exc:   # noqa: BLE001 - the model's to read
+            return f"error: the template {template} cannot be made: {exc}"
+        if isinstance(member, AgentNode) and member.hire > self.hire:
+            member.hire = self.hire                  # it may hire no more than who hired it
+        takes = [p for p in member.inputs.values() if p.required] or list(member.inputs.values())
+        gives = [p for p in member.outputs.values() if not p.call]
+        if not takes:
+            return f"error: a {template} takes nothing, so it cannot be given work"
+        change = (Change().add(member).ports(self.id, inputs=[f"from_{name}"] if gives else [], outputs=[f"to_{name}"])
+                  .connect(f"{self.id}.to_{name}", f"{id}.{takes[0].name}").manage(self.id, id))
+        if gives:
+            change.connect(f"{id}.{gives[0].name}", f"{self.id}.from_{name}", back=True, max_rounds=self.hire_rounds)
+        try:
+            ctx.change(change)
+        except (GraphError, NodeError) as exc:
+            return f"error: {exc}"
+        self.hires += 1
+        self.hired[name] = id
+        told = f"hired {name}: send it work with send_to_{name}" + (f"; what it sends comes to you on from_{name}"
+                                                                    if gives else "")
+        if args.get("task") is not None:
+            told += "; " + self._use(ctx, f"send_to_{name}", {"content": args["task"]})
+        return told + f". You may hire {self.hire - self.hires} more."
+
+    def _dismiss(self, ctx, args: Mapping) -> str:
+        name = str(args.get("name", ""))
+        id = self.hired.get(name)
+        if id is None:
+            return f"error: {name!r} is not in your team"
+        team = ctx.team()
+        below = [member for member in team if self._under(team, member, id)]
+        try:
+            ctx.control([id], "stop", team=True)
+            ctx.change(Change().remove(*reversed(below), id))
+        except (GraphError, NodeError) as exc:
+            return f"it is being stopped and could not be taken out yet ({exc}); dismiss it again in a while"
+        del self.hired[name]
+        return f"dismissed {name}" + (f" and {len(below)} under it" if below else "")
+
+    @staticmethod
+    def _under(team: Mapping, member: str, top: str) -> bool:
+        above = team.get(member, {}).get("manager")
+        while above is not None:
+            if above == top:
+                return True
+            above = team.get(above, {}).get("manager")
+        return False
+
+    def _whose(self, name: str) -> str | None:
+        head, slash, rest = name.partition("/")
+        id = self.hired.get(head, head if head.startswith(f"{self.id}-") else None)
+        return None if id is None else id + slash + rest
+
+    def _control_member(self, ctx, args: Mapping) -> str:
+        id = self._whose(str(args.get("name", "")))
+        if id is None:
+            return f"error: {args.get('name')!r} is not in your team"
+        try:
+            changed = ctx.control([id], str(args.get("action", "")), team=True)
+        except Exception as exc:   # noqa: BLE001
+            return f"error: {exc}"
+        return f"{args.get('action')}: {', '.join(changed)}" if changed else "nothing changed"
+
+    def _team(self, ctx) -> str:
+        team = ctx.team()
+        if not team:
+            return "You have no team." + (f" You may hire {self.hire - self.hires}." if self.hire else "")
+        names = {id: name for name, id in self.hired.items()}
+        lines = [f"- {names.get(id, id)}: {about['status']}"
+                 + (", waiting" if about["waiting"] else ", working" if about["running"] else "")
+                 + f", {about['rounds']} round{'s' if about['rounds'] != 1 else ''}"
+                 + ("" if about["manager"] == self.id else f", under {names.get(about['manager'], about['manager'])}")
+                 for id, about in team.items()]
+        return "\n".join(["Your team:", *lines, f"You may hire {self.hire - self.hires} more."])
+
+    def _connect(self, ctx, args: Mapping) -> str:
+        ends = []
+        team = set(ctx.team()) | {self.id}
+        for end in (str(args.get("source", "")), str(args.get("target", ""))):
+            who, dot, port = end.partition(".")
+            id = self.id if who == "me" else self.hired.get(who, who)
+            if not dot or id not in team:
+                return f"error: {end!r} is not name.port of you ('me') or a member of your team"
+            ends.append(f"{id}.{port}")
+        back = bool(args.get("back"))
+        try:
+            ctx.change(Change().connect(*ends, back=back, max_rounds=self.hire_rounds if back else None))
+        except (GraphError, NodeError) as exc:
+            return f"error: {exc}"
+        return f"connected {args.get('source')} to {args.get('target')}"
 
     def _fresh_board(self) -> dict:
         return {"sent": {name: 0 for name in self._sends}, "fixed": {}, "items": [], "notes": [], "warned": False}
@@ -457,7 +644,8 @@ class AgentNode(Node):
                     return None
                 name, args = call["name"], call["args"]
                 if name == "finish":
-                    unsent = [port for port, count in self.board["sent"].items() if not count]
+                    unsent = [port for port, count in self.board["sent"].items()
+                              if not count and port not in self._extra]
                     if unsent and not self.board["warned"]:
                         self.board["warned"] = True
                         answer = (f"Nothing has been sent out of {', '.join(unsent)}. Send it, or call finish "
@@ -496,6 +684,9 @@ class AgentNode(Node):
                     answer = self._tick(args.get("item"))
                 elif name == "correct":
                     answer = self._fix(ctx, args)
+                elif name in _HIRING and self.hire:
+                    answer = {"hire": self._hire, "dismiss": self._dismiss, "control": self._control_member,
+                              "team": lambda ctx, args: self._team(ctx), "connect": self._connect}[name](ctx, args)
                 elif name == "explain":
                     try:
                         ctx.explain(str(args.get("id", "")), str(args.get("text", "")))

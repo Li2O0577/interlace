@@ -165,6 +165,11 @@ class Context(ABC):
         those they manage. Returns the nodes whose switch changed."""
         raise NotImplementedError("this context cannot control other nodes")
 
+    def team(self) -> dict:
+        """The nodes this node manages, all the way down: for each, ``status`` (active, paused or stopped),
+        whether it is ``running`` and ``waiting``, its ``manager`` and how many ``rounds`` it has run."""
+        return {}
+
     def once(self, name: str, do: Any) -> Any:
         """Do something outside the graph once for this activation, however often the activation runs.
 
@@ -262,6 +267,18 @@ class Node(ABC):
 
     def close(self, ctx: Context) -> Any:
         """Release what ``open`` acquired. May be ``async def``."""
+
+    def add_ports(self, inputs: Iterable[Port] = (), outputs: Iterable[Port] = ()) -> None:
+        """Give the node more ports while a run goes on (``Change.ports``). A node that keeps something per
+        port (an agent's tools) extends this to learn of them."""
+        self.inputs = _ports([*self.inputs.values(), *inputs], ())
+        self.outputs = _ports([*self.outputs.values(), *outputs], ())
+
+    def drop_ports(self, names: Iterable[str]) -> None:
+        """Take back ports ``add_ports`` gave, when the change that gave them was refused."""
+        names = set(names)
+        self.inputs = _ports([p for p in self.inputs.values() if p.name not in names], ())
+        self.outputs = _ports([p for p in self.outputs.values() if p.name not in names], ())
 
     def challenged(self, ctx: Context, rejection: Mapping) -> Any:
         """Something this node sent was rejected (``rejection`` says what, as ``Context.rejections`` does) and

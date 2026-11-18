@@ -40,12 +40,15 @@ class Catalog:
     ``max_workers`` the most threads a block written in a description may ask for (``None``: as many as it asks)
     ``defaults``    settings for every node of a kind, ``{"agent": {"model": "...", "max_steps": 20}}``; a
                     description's own ``defaults`` come on top of these, and a node's own settings on top of both
+    ``templates``   descriptions of nodes an agent may hire, by name (``{"researcher": {"kind": "agent", ...}}``);
+                    an agent's ``"templates": ["researcher"]`` names them
     """
 
     def __init__(self, *, allow: Iterable[str] = (), processes: bool = False,
                  models: Callable[[str], Any] | None = None, ask: Callable[[str, int, Any], Any] | None = None,
                  protocols: Protocols = DEFAULT, files=None, defaults: Mapping[str, Mapping] | None = None,
-                 workspace=None, max_workers: int | None = None, tools=None, apps=None, remotes: Iterable[str] = ()):
+                 workspace=None, max_workers: int | None = None, tools=None, apps=None, remotes: Iterable[str] = (),
+                 templates: Mapping[str, Mapping] | None = None):
         self.allow, self.processes, self.max_workers = tuple(allow), bool(processes), max_workers
         self.files = Path(files).resolve() if files is not None else None
         self.defaults = {kind: dict(settings) for kind, settings in (defaults or {}).items()}
@@ -56,6 +59,7 @@ class Catalog:
         self.pool = ToolPool(tools) if tools is not None else None
         self.apps = Path(apps).resolve() if apps is not None else None
         self.remotes = tuple(remotes)
+        self.templates = {name: dict(described) for name, described in (templates or {}).items()}
         self.layer: tuple = ()      # the blocks the nodes being built are inside, outermost first
         self._kinds: dict[str, Callable[[Mapping, "Catalog", Mapping], Node]] = {}
         from .kinds import BUILT_IN
@@ -136,7 +140,9 @@ class Catalog:
     def area(self, node: str, config: Mapping) -> Area | None:
         """The part of the workspace that is the node's: where the catalog's layer puts it, with the bounds
         its description gives (``reads``, ``writes``) or else the usual ones. None without a workspace."""
-        reads, writes = config.get("reads"), config.get("writes")
+        reads, writes, layer = config.get("reads"), config.get("writes"), config.get("layer")
+        if layer is not None and (not isinstance(layer, list) or not all(isinstance(name, str) for name in layer)):
+            raise SpecError("layer is a list of directory names")
         if self.space is None:
             if reads is not None or writes is not None:
                 raise SpecError("reads and writes are bounds in a workspace, and this catalog has none")
@@ -145,7 +151,10 @@ class Catalog:
             if names is not None and (not isinstance(names, list) or not all(isinstance(name, str) for name in names)):
                 raise SpecError("reads and writes are lists of paths relative to the top of the workspace")
         try:
-            return self.space.area(node, layer=self.layer, reads=reads, writes=writes)
+            area = self.space.area(node, layer=self.layer if layer is None else layer, reads=reads, writes=writes)
+            if layer is not None:
+                area.given["layer"] = list(layer)
+            return area
         except NodeError as exc:
             raise SpecError(str(exc)) from None
 
