@@ -60,6 +60,26 @@ def test_emits_and_what_is_used_come_back():
             Engine(Chain(RemoteNode("several", server.address)).build(), budget={"dollars": 1}).run({"in": 1})
 
 
+def test_a_served_node_corrects_what_it_sent():
+    def guess(ctx, x):
+        first = ctx.emit("y", x)
+        second = ctx.emit("y", x + 1)
+        ctx.correct(first, x * 10)
+        assert first != second
+
+    node = FunctionNode("guess", guess, inputs=[Port("x")], outputs=[Port("y")], context=True)
+    with serve_node(node) as server:
+        far = RemoteNode("guess", server.address)
+        result = Engine(Chain(far).build()).run({"in": 3})
+        assert result.outputs["out"] == [30, 4]
+
+        def wrong(ctx, x):
+            ctx.correct("nothing.1", 0)
+        with serve_node(FunctionNode("w", wrong, inputs=[Port("x")], outputs=[Port("y")], context=True)) as other:
+            with pytest.raises(RunError, match="has not sent"):
+                Engine(Chain(RemoteNode("w", other.address)).build()).run({"in": 1})
+
+
 def test_a_failure_on_the_far_side_fails_the_activation():
     def broken(x):
         raise ValueError("bad input")

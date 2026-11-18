@@ -309,6 +309,7 @@ def run(self, ctx, inputs):
 | `plan(items)` / `done(item)` | 往任务栏里加事项、勾掉事项（按编号或原文） |
 | `note(text)` | 记下自己做到哪里了，同时存档（`ctx.commit`） |
 | `correct(id, content)` | 更正自己发过的一条消息。`id` 是 `send_<输出>` 回给它的编号（如 `say#2`）；做法见下面的“更正” |
+| `explain(id, text)` | 自己发的东西被驳回、但它是对的：说明理由。见下面的“质疑” |
 | `finish(summary?)` | 宣布做完。还有输出一次都没发过时，第一次调用会先提醒，再调用一次才结束 |
 
 - **任务栏：** 开始时每个输出各占一行（“还没发”/“发了几次”，更正过的还写着更正了几次），下面是 agent 自己用 `plan` 加的事项，最后是它的最后一条笔记。每次 `wait` 的结果里都会附上，它也是节点状态的一部分，会存档。
@@ -345,9 +346,33 @@ def survey(ctx, site):
 - 更正写进日志。运行接上以后，还没读的更正照样在信箱里；已经读过的消息再被更正，按 `tell` 送（重跑一次激活要的输入不进日志）。
 - 图文件里写 `"on_correction": "tell"`；只有和这类节点的默认不同时才写进描述。
 - 常驻 agent 用 `correct(id, content)` 工具更正；`send_<输出>` 会回它 `sent, as say#2` 这样的编号。
-- 流和调用边上的消息不能更正。远端节点（`RemoteNode`）收到更正照常处理，但还不能更正自己发的消息。
+- 流和调用边上的消息不能更正。远端节点（`RemoteNode`）也能更正自己发的消息：远端的 `ctx.emit` 返回远端自己的编号，`ctx.correct` 用它，本地把它对到运行里的编号上。
 
 [examples/graphs/corrected_estimate.py](../examples/graphs/corrected_estimate.py)：先发一个粗估，读过的人用完后再更正；算价格的程序自动重算，报价原地改对；写说明的 agent 被告知，重写了一份。
+
+### 质疑：下游驳回，上游答复
+
+下游不一定照单全收。一条边打开质疑以后，收的一方可以说“这不是我预期的”，驳回它，上游必须解释或者更正：
+
+```python
+builder.connect("planner.plan", "reviewer.plan", challenges=2)    # 这条边最多接受 2 次驳回
+```
+
+- **开关在边上：** 不写 `challenges` 就是关，和以前一样。写了就是打开，数字是这条边一共能接受几次驳回。流、调用和不触发的边不能打开。
+- **下游只回是或否：** 不需要给出数字。符合预期就照常用；不符合就调用 `ctx.reject(端口, 理由)`，驳回这次激活在这个端口上最后取到的消息，然后停下来等（不占工作名额）。返回值是三种之一：
+  - `{"answer": "explained", "text": ...}`：上游解释了，原值不变。
+  - `{"answer": "corrected", "value": ...}`：上游更正了，这是新值。这条更正就是给它的答复，不再按 `on_correction` 另外处理；其他读过这条消息的节点照常按各自的 `on_correction` 处理。
+  - `{"answer": "refused", "why": ...}`：这条边的次数用完了（同时记进问题列表）、上游已停止或不在了、运行要结束了，或者再也不会有人回答。这时下游只能用手上的值继续。
+  - `ctx.challengeable(端口)` 说现在还能不能驳回。
+- **上游怎么答复：**
+  - 正在运行并且在 `ctx.receive` 里等着：被叫醒，`receive` 返回一个空映射，再用 `ctx.rejections()` 取到驳回（`id`、`port`、`message`、`content`、`reason`、`by`）。答复用 `ctx.explain(驳回 id, 说明)` 或 `ctx.correct(message, 新值)`。
+  - 已经结束、或者这次激活没有答复：引擎为它单独起一次激活，调用 `Node.challenged(ctx, 驳回)`。它可以更正，也可以返回一段说明。程序节点默认回答“这是程序根据输入算出来的，不变”；需要别的行为就自己写 `challenged`。
+- **agent：**
+  - 作为下游：收到可以驳回的消息时，会附一句默认提示，让它先判断是否符合预期、不符合就驳回，同时多一个 `reject(port, reason)` 工具。提示可以换成自己的话：`AgentNode(..., doubt="...")`，用 `{ports}` 代表端口名。
+  - 作为上游：被驳回时，模型看到一条 `[rejected]` 消息，写着谁驳回的、理由、对方收到的内容。它用 `explain` 或 `correct` 答复。常驻 agent 在 `wait` 里收到，有 `explain(id, text)` 和 `correct(id, content)` 两个工具；普通 agent 会被叫回来，带着原来的对话答复。
+- **日志：** 每次驳回记在下游那次激活名下，运行接上以后，边上用掉的次数不会重新算。
+
+[examples/graphs/rejected_answer.py](../examples/graphs/rejected_answer.py)：审阅的 agent 驳回了少一步的计划；做计划的 agent 已经结束，被叫回来更正；审阅拿到更正后的计划，通过。
 
 ## 方法
 
@@ -491,7 +516,7 @@ graph = Chain(planner, grow).build(DEFAULT)
 
 `time_limit` 是一次激活最长可以用的秒数，节点自己的 `time_limit` 属性优先（`HumanNode` 默认不限时）。线程无法被强行终止，所以超时的处理是：运行以失败结束并指出是哪个节点，其他节点看到 `ctx.stopping()`，引擎不再等卡住的那个节点，它之后做的事全部作废。超时的激活没有写进日志，`resume()` 会重新跑它。
 
-`observe` 是一个函数，引擎把正在发生的事逐件告诉它：`started`、`emitted`、`corrected`、`received`、`saved`、`finished`、`failed`、`stopped`、`used`（都带 `node` 和 `round`），最后是 `ended`。界面或日志要实时跟随一次运行就挂在这里，不必去读日志文件。它在运行节点的线程里被调用，不应当抛出异常；抛出了，运行会失败并说明原因。
+`observe` 是一个函数，引擎把正在发生的事逐件告诉它：`started`、`emitted`、`corrected`、`answered`（驳回有了答复）、`received`、`saved`、`finished`、`failed`、`stopped`、`used`（都带 `node` 和 `round`），最后是 `ended`。界面或日志要实时跟随一次运行就挂在这里，不必去读日志文件。它在运行节点的线程里被调用，不应当抛出异常；抛出了，运行会失败并说明原因。
 
 运行被停下时（有节点失败、超时、超预算，或者外面要求停止），正在运行的节点从 `ctx.stopping()` 得知。问过并得到“是”的那次激活可能只做了一半，所以引擎不把它记成已完成：它的输入留在原处，`resume()` 时重跑，观察函数收到的是 `stopped` 而不是 `finished`。没有问过 `ctx.stopping()` 就正常返回的激活照常记为完成。块和 `SpawnNode` 里面的图因此不会在被打断后留下一个“做完了但没有输出”的记录。
 
@@ -671,7 +696,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十六个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、先发粗估再更正、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十七个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、先发粗估再更正、审阅驳回计划、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 

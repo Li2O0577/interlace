@@ -11,7 +11,8 @@ The connection carries one JSON object per line, in UTF-8:
     -> {"op": "hello", "token": ..., "version": 1}
     <- {"ok": true, "node": {"id": ..., "inputs": [{"name", "required", "many"}...], "outputs": [...]}}
     -> {"op": "run", "id": 1, "round": 3, "key": "run/arm#3", "inputs": {...}}
-    <- {"id": 1, "emit": "out", "payload": ...}           any number, as the node emits
+    <- {"id": 1, "emit": "out", "payload": ..., "ref": "1.2"}   any number, as the node emits; ``ref`` names it
+    <- {"id": 1, "correct": "1.2", "payload": ...}         put this in the place of a message sent earlier
     <- {"id": 1, "use": {"seconds": 2.5}}                  what the node reports using
     <- {"id": 1, "done": true, "returned": {...} | null}   or {"id": 1, "error": "..."}
     -> {"op": "stop", "id": 1}                             the run is being stopped, or this node stopped
@@ -19,7 +20,8 @@ The connection carries one JSON object per line, in UTF-8:
     -> {"op": "resume", "id": 1}                           go on from there
 
 What crosses is plain data. A served node runs one activation at a time, whoever asks. Its context has
-``emit``, ``use``, ``stopping``, ``checkpoint`` (which waits while the node is paused), ``key``, ``round``, and ``engine`` for a graph run inside it; ``once`` does
+``emit`` and ``correct``, ``use``,
+``stopping``, ``checkpoint`` (which waits while the node is paused), ``key``, ``round``, and ``engine`` for a graph run inside it; ``once`` does
 the thing every time, because the far side keeps no journal; ``call`` is refused, since the far side cannot
 reach back into the graph.
 
@@ -107,6 +109,7 @@ class RemoteNode(Node):
         self._stream: _Lines | None = None
         self._lock = threading.Lock()
         self._next = 0
+        self._refs: dict[str, str] = {}        # what the far side calls a message it sent -> its name in the run
         if inputs is None or outputs is None:
             far = self._connect()
             inputs = inputs if inputs is not None else [_port_of(p) for p in far.get("inputs", [])]
@@ -187,7 +190,17 @@ class RemoteNode(Node):
                 if message.get("id") != id:
                     continue                    # the end of an earlier activation that was abandoned
                 if "emit" in message:
-                    ctx.emit(message["emit"], message.get("payload"))
+                    sent = ctx.emit(message["emit"], message.get("payload"))
+                    if message.get("ref") is not None and isinstance(sent, str):
+                        self._refs[str(message["ref"])] = sent
+                        while len(self._refs) > 1024:
+                            del self._refs[next(iter(self._refs))]
+                elif "correct" in message:
+                    ref = str(message["correct"])
+                    if ref not in self._refs:
+                        raise NodeError(f"{self.address} corrected a message it has not sent, or sent too long "
+                                        f"ago: {ref}")
+                    ctx.correct(self._refs[ref], message.get("payload"))
                 elif "use" in message:
                     ctx.use(**message["use"])
                 elif "error" in message:
@@ -209,8 +222,9 @@ def _tell(stream, op: str, id: int) -> None:
 class _FarContext(Context):
     """What a served node is given for one activation."""
 
-    def __init__(self, node: Node, round: int, key: str, send: Callable[[dict], None]):
+    def __init__(self, node: Node, round: int, key: str, send: Callable[[dict], None], activation: Any = 0):
         self.node, self.round, self.key = node.id, round, key
+        self._activation, self._sent = activation, 0
         self.problems: list = []
         self.within: tuple = ()
         self._send = send
@@ -218,8 +232,15 @@ class _FarContext(Context):
         self.going = threading.Event()      # cleared while the node is paused
         self.going.set()
 
-    def emit(self, port: str, payload: Any) -> None:
-        self._send({"emit": port, "payload": payload})
+    def emit(self, port: str, payload: Any) -> str:
+        self._sent += 1
+        ref = f"{self._activation}.{self._sent}"
+        self._send({"emit": port, "payload": payload, "ref": ref})
+        return ref
+
+    def correct(self, sent: str, payload: Any) -> str:
+        self._send({"correct": str(sent), "payload": payload})
+        return sent
 
     def call(self, port: str, payload: Any) -> Any:
         raise NodeError("a served node cannot make calls into the graph it serves")
@@ -345,7 +366,7 @@ class NodeServer:
                 elif message.get("op") == "run":
                     id = message.get("id")
                     ctx = running[id] = _FarContext(self.node, int(message.get("round", 0)), str(message.get("key", "")),
-                                                    _tagged(send, id))
+                                                    _tagged(send, id), message.get("key") or id)
                     threading.Thread(target=self._run, args=(id, ctx, message.get("inputs") or {}, send, running),
                                      daemon=True).start()
         except (OSError, ValueError):

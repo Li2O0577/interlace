@@ -173,12 +173,12 @@ class GraphBuilder:
         return self
 
     def connect(self, source, target, protocol: str = "value", *, id: str | None = None, back: bool = False,
-                max_rounds: int | None = None) -> "GraphBuilder":
+                max_rounds: int | None = None, challenges: int | None = None) -> "GraphBuilder":
         """Join ``"node.port"`` to ``"node.port"`` under the protocol named (``value`` when none is). The id
-        defaults to ``"a.out>b.in"``."""
+        defaults to ``"a.out>b.in"``. ``challenges``: the receiver may reject what comes this many times."""
         try:
             source, target = Endpoint.of(source), Endpoint.of(target)
-            edge = Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds)
+            edge = Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds, challenges)
         except EdgeError as exc:
             raise GraphError(str(exc)) from None
         if edge.id in self._edges:
