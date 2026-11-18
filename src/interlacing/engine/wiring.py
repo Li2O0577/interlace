@@ -22,7 +22,7 @@ class Feed:
     """One edge (or one graph input) as the run sees it: its mailbox and how it delivers."""
 
     __slots__ = ("id", "port", "back", "latest", "stream", "passive", "reply", "protocol", "box", "sent", "limit", "guard",
-                 "gone")
+                 "gone", "source", "out", "challenges", "rejected")
 
     def __init__(self, id, port, back, protocol, limit):
         self.id, self.port, self.back, self.protocol, self.limit = id, port, back, protocol, limit
@@ -35,6 +35,10 @@ class Feed:
         self.sent = 0
         self.guard: Any = None            # the receiving port's schema, when what arrives must be checked against it
         self.gone = False                 # the edge was taken out of the graph while the run went on
+        self.source: State | None = None  # the node that sends on it (None for a graph input)
+        self.out = ""                     # and the output port it sends from
+        self.challenges: int | None = None    # how often its receiver may reject what came on it; None: never
+        self.rejected = 0                 # how often it has
 
 
 class Sent:
@@ -46,6 +50,37 @@ class Sent:
         self.port = port
         self.envelopes = envelopes        # [feed id, envelope id] for each edge it left on: the newest version
         self.outputs = outputs            # [graph output name, index] for each graph output it reached
+
+
+class Rejection:
+    """A receiver says that what came on an edge is not what it expected: its sender is to explain, or correct."""
+
+    __slots__ = ("id", "feed", "envelope", "port", "message", "content", "reason", "by", "answer", "text", "value")
+
+    def __init__(self, id: str, feed: "Feed", envelope: str, port: str, message: str | None, content: Any, reason: str,
+                 by: str):
+        self.id, self.feed, self.envelope, self.port, self.message = id, feed, envelope, port, message
+        self.content, self.reason, self.by = content, reason, by
+        self.answer: str | None = None    # "explained", "corrected" or "refused", once there is one
+        self.text = ""                    # the explanation, or why there is no answer
+        self.value: Any = None            # the corrected value
+
+    def settle(self, answer: str, text: str = "", value: Any = None) -> bool:
+        if self.answer is not None:
+            return False
+        self.answer, self.text, self.value = answer, text, value
+        return True
+
+    def verdict(self) -> dict:
+        """What the receiver gets back."""
+        if self.answer == "corrected":
+            return {"answer": "corrected", "value": self.value}
+        return {"answer": self.answer, ("text" if self.answer == "explained" else "why"): self.text}
+
+    def shown(self) -> dict:
+        """What the sender is shown."""
+        return {"id": self.id, "port": self.port, "message": self.message, "content": self.content,
+                "reason": self.reason, "by": self.by}
 
 
 class Reading:
@@ -89,7 +124,8 @@ class State:
     __slots__ = ("node", "ports", "any", "missing", "optional_ready", "arrivals", "running", "queued", "started",
                  "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
                  "inner", "status", "halt", "holding", "paused_at", "waiting", "late", "resuming", "resumed", "opening",
-                 "emitted", "sent_log", "read_log", "redo", "reading", "redoing", "replaced")
+                 "emitted", "sent_log", "read_log", "redo", "reading", "redoing", "replaced",
+                 "challenged", "shown", "open", "answering", "took_on", "awaiting")
 
     def __init__(self, node: Node):
         self.node = node
@@ -126,6 +162,12 @@ class State:
         self.reading: Reading | None = None       # this activation, as it would be run again
         self.redoing: dict[str, deque] | None = None     # it runs one again: port -> the names it corrects
         self.replaced: dict[str, str] = {}        # this activation: port -> the id the message it took corrects
+        self.challenged: deque = deque()          # rejections of what it sent, not yet taken up
+        self.shown = 0                            # how many of those its running activation has been woken for
+        self.open: dict[str, Rejection] = {}      # rejections taken up and not yet answered
+        self.answering: Rejection | None = None   # this activation answers a rejection (Node.challenged)
+        self.took_on: dict[str, tuple] = {}       # this activation: port -> (feed, envelope, value) it took last
+        self.awaiting: Rejection | None = None    # the rejection this activation waits on
 
     def begin(self) -> None:
         """A new activation starts: forget what the last one did."""
@@ -138,6 +180,10 @@ class State:
         self.resumed = False
         self.reading = None
         self.redoing = None
+        self.answering = None
+        self.shown = 0
+        if self.took_on:
+            self.took_on = {}
         if self.replaced:
             self.replaced = {}
         if self.late:
@@ -171,6 +217,11 @@ class Wiring:
         target = self.states[edge.target.node]
         port = target.ports[edge.target.port]
         feed = self.feeds[edge.id] = Feed(edge.id, port, edge.back, protocol, edge.max_rounds)
+        feed.source, feed.out, feed.challenges = self.states[edge.source.node], edge.source.port, edge.challenges
+        if edge.challenges is not None and (protocol.delivery in (Delivery.STREAM, Delivery.CALL)
+                                            or not protocol.triggers):
+            raise RunError(f"edge {edge.id}: what comes as a stream, a call or a value that does not trigger cannot be "
+                           f"rejected")
         source = self.states[edge.source.node].node.outputs[edge.source.port]
         if not feed.stream and protocol.guarded(source, port.port):
             feed.guard = port.port.schema

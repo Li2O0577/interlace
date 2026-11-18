@@ -42,6 +42,8 @@ class Edge:
     protocol: str
     back: bool = False
     max_rounds: int | None = None
+    #: The receiver may reject what comes on this edge (``ctx.reject``) this many times in all; None: never.
+    challenges: int | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "source", Endpoint.of(self.source))
@@ -55,7 +57,10 @@ class Edge:
                 raise EdgeError(f"edge {self.id}: a back edge needs max_rounds of at least 1")
         elif self.max_rounds is not None:
             raise EdgeError(f"edge {self.id}: only a back edge has max_rounds")
+        if self.challenges is not None and (type(self.challenges) is not int or self.challenges < 1):
+            raise EdgeError(f"edge {self.id}: challenges is how many rejections it takes, a whole number of at least 1")
 
     def describe(self) -> dict:
         return {"id": self.id, "from": str(self.source), "to": str(self.target), "protocol": self.protocol,
-                "back": self.back, "max_rounds": self.max_rounds}
+                "back": self.back, "max_rounds": self.max_rounds,
+                **({"challenges": self.challenges} if self.challenges is not None else {})}

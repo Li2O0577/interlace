@@ -69,6 +69,29 @@ class Context(ABC):
         """When the last message this activation took on ``port`` corrects one read earlier: that one's id."""
         return None
 
+    def challengeable(self, port: str) -> bool:
+        """Whether what this activation took last on ``port`` may still be rejected (see ``reject``)."""
+        return False
+
+    def reject(self, port: str, reason: str) -> dict:
+        """Say that what this activation took last on ``port`` is not what was expected, where its edge takes
+        rejections (``challenges``), and wait until the sender answers. Returns ``{"answer": "explained",
+        "text": ...}`` (the value stands), ``{"answer": "corrected", "value": ...}`` (the sender corrected it:
+        this is the new value) or ``{"answer": "refused", "why": ...}`` (the edge has taken all the rejections
+        it may, the sender cannot answer, or nothing more can happen)."""
+        raise NotImplementedError("this context cannot reject what came")
+
+    def rejections(self) -> list:
+        """Rejections of what this node sent, not yet answered: each says ``id``, ``port``, ``message`` (the
+        name ``emit`` gave), ``content``, ``reason`` and ``by``. Answer each with ``explain`` or ``correct``;
+        one left unanswered when the activation ends is answered by ``Node.challenged``. ``receive`` returns an
+        empty mapping when one comes while it waits."""
+        return []
+
+    def explain(self, rejection: str, text: str) -> None:
+        """Answer rejection ``rejection`` (its id): what was sent stands, for this reason."""
+        raise NotImplementedError("this context cannot answer rejections")
+
     @abstractmethod
     def call(self, port: str, payload: Any) -> Any:
         """Send ``payload`` out of an output port whose edge is a call, wait, and return the other node's answer."""
@@ -239,6 +262,12 @@ class Node(ABC):
 
     def close(self, ctx: Context) -> Any:
         """Release what ``open`` acquired. May be ``async def``."""
+
+    def challenged(self, ctx: Context, rejection: Mapping) -> Any:
+        """Something this node sent was rejected (``rejection`` says what, as ``Context.rejections`` does) and
+        no activation of its own took it up: answer it, by ``ctx.correct`` or by returning an explanation.
+        A node that does neither lets what it sent stand; this one says so."""
+        return "it was worked out by a program from what it was given, and stands as it is"
 
     def reset(self) -> None:
         """Forget what the node holds from earlier activations: it is being restarted."""

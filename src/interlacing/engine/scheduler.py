@@ -32,6 +32,8 @@ class Scheduler:
             return
         if state.resuming:
             can = True                       # it goes on from the progress it saved, with or without new messages
+        elif state.challenged:
+            can = True                       # what it sent was rejected: it is to answer
         elif state.redo:
             can = True                       # something an earlier activation read was corrected: it runs again
         elif state.any:
@@ -134,6 +136,10 @@ class Scheduler:
             state.resuming, state.resumed = False, True
             state.opening = []
             return inputs, (), ()
+        if state.challenged:                 # it answers a rejection of what it sent (Node.challenged)
+            state.answering = state.challenged.popleft()
+            state.opening = []
+            return inputs, (), ()
         if state.redo:                       # an earlier activation runs again with what was corrected
             reading = state.reading = state.redo.popleft()
             reading.queued = False
@@ -172,6 +178,7 @@ class Scheduler:
             counts: dict[str, int] = {}
             for feed, envelope in holding:
                 port = feed.port.port
+                state.took_on[port.name] = (feed, envelope)
                 n = counts[port.name] = counts.get(port.name, -1) + 1
                 at[envelope.id] = (port.name, n if port.many else None)
                 if envelope.replaces:

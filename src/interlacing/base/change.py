@@ -35,10 +35,11 @@ class Change:
         return self
 
     def connect(self, source, target, protocol: str = "value", *, id: str | None = None, back: bool = False,
-                max_rounds: int | None = None) -> "Change":
+                max_rounds: int | None = None, challenges: int | None = None) -> "Change":
         try:
             source, target = Endpoint.of(source), Endpoint.of(target)
-            self.ops.append(("connect", Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds)))
+            self.ops.append(("connect", Edge(id or f"{source}>{target}", source, target, protocol, back, max_rounds,
+                                             challenges)))
         except EdgeError as exc:
             raise GraphError(str(exc)) from None
         return self
@@ -77,7 +78,7 @@ class Change:
             elif kind == "connect":
                 edge = op[1]
                 builder.connect(edge.source, edge.target, edge.protocol, id=edge.id, back=edge.back,
-                                max_rounds=edge.max_rounds)
+                                max_rounds=edge.max_rounds, challenges=edge.challenges)
             elif kind == "disconnect":
                 builder.disconnect(op[1])
             else:
@@ -113,7 +114,7 @@ class Change:
             elif kind == "connect":
                 e = op[1]
                 change.connect(e["from"], e["to"], e["protocol"], id=e["id"], back=e.get("back", False),
-                               max_rounds=e.get("max_rounds"))
+                               max_rounds=e.get("max_rounds"), challenges=e.get("challenges"))
             elif kind == "output":
                 change.output(op[1], op[2])
             elif kind == "remove":

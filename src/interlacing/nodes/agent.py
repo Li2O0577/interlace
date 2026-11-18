@@ -125,12 +125,49 @@ _RESIDENT = {
                                "whoever has, is told.",
                 "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "content": {}},
                                "required": ["id", "content"]}},
+    "explain": {"description": "Answer a rejection of something you sent, when it is right as it is: give the "
+                               "rejection's id and why. (When it is wrong, correct it instead.)",
+                "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
+                               "required": ["id", "text"]}},
     "finish": {"description": "Say that your work is done. Send everything first: what you have not sent is lost.",
                "parameters": {"type": "object", "properties": {"summary": {"type": "string"}}}},
 }
 
 
 _CORRECTS = ": this corrects what came here before"
+
+#: What an agent is told about a message it may reject, unless it is given its own words (``doubt``).
+DOUBT = ("Before you use what came on {ports}, judge whether it is what you expected. If it is not, reject it with "
+         "the reject tool and say why: its sender will explain it or correct it.")
+_REJECT = {"name": "reject", "description": "Reject what came on one of your inputs because it is not what you "
+                                            "expected, and wait for its sender to explain or correct it.",
+           "parameters": {"type": "object", "properties": {"port": {"type": "string"}, "reason": {"type": "string"}},
+                          "required": ["port", "reason"]}}
+_ANSWER = [{"name": "explain", "description": "It is right as it is: say why.",
+            "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+           {"name": "correct", "description": "It is wrong: give what is to take its place.",
+            "parameters": {"type": "object", "properties": {"content": {}}, "required": ["content"]}}]
+
+
+def _doubtful(ctx, ports) -> list:
+    """The input ports whose last message this activation may still reject."""
+    challengeable = getattr(ctx, "challengeable", None)
+    return [port for port in ports if challengeable(port)] if challengeable is not None else []
+
+
+def _verdict(got: Mapping) -> str:
+    if got.get("answer") == "explained":
+        return f"Its sender explains, and it stands: {got.get('text', '')}"
+    if got.get("answer") == "corrected":
+        return f"Its sender corrected it. It is now:\n{_text(got.get('value'))}"
+    return f"Not answered: {got.get('why', '')}"
+
+
+def _rejected(rejections: list) -> str:
+    return "\n\n".join(
+        f"[rejected] What you sent as {r['message'] or 'a message'} on {r['port']} was rejected by {r['by']}: "
+        f"{r['reason']}\nWhat they got:\n{_text(r['content'])}\nAnswer with explain(id={r['id']!r}, text) if it is "
+        f"right, or correct(id={r['message']!r}, content) if it is not." for r in rejections)
 
 
 def _corrected(ctx, got: Mapping[str, Any]) -> set:
@@ -215,7 +252,8 @@ class AgentNode(Node):
     def __init__(self, id: str, model: Any, *, system: str = "", tools: Iterable[Tool] = (),
                  inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None, memory: bool | Callable[[list], list] = True, json: bool = False, max_steps: int = 50,
-                 max_tokens: int = 4096, files=None, repairs: int | None = None, area=None, resident: bool = False):
+                 max_tokens: int = 4096, files=None, repairs: int | None = None, area=None, resident: bool = False,
+                 doubt: str | None = None):
         if not callable(getattr(model, "chat", None)):
             raise NodeError(f"{id}: a model needs a chat method")
         if type(max_steps) is not int or max_steps < 1:
@@ -232,6 +270,9 @@ class AgentNode(Node):
         self.keep = memory if callable(memory) else None       # what is done to the conversation before each request
         self.memory, self.json, self.max_steps, self.max_tokens = bool(memory), bool(json), max_steps, max_tokens
         self.files, self.area = files, area
+        self.doubt = doubt                  # what it is told about a message it may reject; None: DOUBT
+        if any(tool.name in ("reject", "explain") for tool in tools):
+            raise NodeError(f"{id}: the tools reject and explain are the agent's own")
         self._own = {tool.name: tool for tool in tools if tool.run is not None}
         self._paths = {port.name for port in sends if isinstance(port.schema.describe(), Mapping) and "file" in port.schema.describe()}
         if repairs is not None:
@@ -262,6 +303,7 @@ class AgentNode(Node):
                 "tools": [tool.describe() if tool.run is not None else tool.spec() for tool in self.tools], "memory": named(self.keep) if self.keep is not None else self.memory, "json": self.json,
                 "max_steps": self.max_steps, "max_tokens": self.max_tokens, "repairs": self.repairs,
                 **({"resident": True} if self.resident else {}),
+                **({"doubt": self.doubt} if self.doubt is not None else {}),
                 **(self.area.given if self.area is not None else {})}
 
     def reset(self) -> None:
@@ -289,7 +331,7 @@ class AgentNode(Node):
         pictures: list = []
         inputs = {name: self._pictures(value, pictures) for name, value in inputs.items()}
         if len(inputs) == 1 and len(self.inputs) == 1 and not _corrected(ctx, inputs):
-            arrived = _text(next(iter(inputs.values())))
+            arrived = _text(next(iter(inputs.values()))) + self._doubting(ctx, inputs)
         else:
             arrived = self._heard(inputs, ctx)
         # the conversation is taken up on a copy and kept only when the turn ends well: a turn that fails or is
@@ -307,7 +349,7 @@ class AgentNode(Node):
                 if not isinstance(kept, list) or not kept:
                     raise NodeError("memory must return the conversation: a list of messages that is not empty")
                 messages[:] = kept
-            result = self.model.chat(self.system, messages, self._specs, self.max_tokens)
+            result = self.model.chat(self.system, messages, self._tools(ctx), self.max_tokens)
             spent_in, spent_out = getattr(result, "input_tokens", 0) or 0, getattr(result, "output_tokens", 0) or 0
             self.usage["calls"] += 1
             self.usage["input_tokens"] += spent_in
@@ -349,6 +391,35 @@ class AgentNode(Node):
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
                                  "content": self._use(ctx, call["name"], call["args"])})
         raise NodeError(f"the model was still calling tools after {self.max_steps} steps")
+
+    def challenged(self, ctx, rejection: Mapping) -> Any:
+        """Something it sent was rejected while it was not there to see it: the model is asked to explain or
+        correct, with its conversation (when it keeps one)."""
+        messages = list(self.messages) if self.memory else []
+        messages.append({"role": "user", "content": _rejected([dict(rejection)]).replace(
+            f"explain(id={rejection['id']!r}, text)", "explain(text)").replace(
+            f"correct(id={rejection['message']!r}, content)", "correct(content)")})
+        for _ in range(self.max_steps):
+            message, calls = self._ask(ctx, messages, _ANSWER)
+            if not calls:
+                self.messages = messages if self.memory else []
+                return message.get("content") or "no reason was given"
+            for call in message["tool_calls"]:
+                name, args = call["name"], call["args"]
+                if name == "explain":
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": "answered"})
+                    self.messages = messages if self.memory else []
+                    return str(args.get("text", ""))
+                if name == "correct" and rejection.get("message"):
+                    answer = self._fix(ctx, {"id": rejection["message"], "content": args.get("content")})
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": answer})
+                    if answer.startswith("corrected"):
+                        self.messages = messages if self.memory else []
+                        return None
+                else:
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
+                                     "content": "error: answer with explain or correct"})
+        raise NodeError(f"the model did not answer the rejection in {self.max_steps} steps")
 
     # ---- a resident agent -------------------------------------------------------------------------------
 
@@ -401,7 +472,9 @@ class AgentNode(Node):
                     got = ctx.receive(timeout=args.get("seconds"))
                     if got is not None:
                         steps = 0
-                        answer = self._heard(got, ctx) + "\n\n" + self._shown_board()
+                        rejections = ctx.rejections() if hasattr(ctx, "rejections") else []
+                        answer = "\n\n".join(part for part in (self._heard(got, ctx) if got else "",
+                                                                 _rejected(rejections), self._shown_board()) if part)
                     elif ctx.stopping():
                         answer = "The run is ending."
                     elif args.get("seconds") is not None:
@@ -423,13 +496,20 @@ class AgentNode(Node):
                     answer = self._tick(args.get("item"))
                 elif name == "correct":
                     answer = self._fix(ctx, args)
+                elif name == "explain":
+                    try:
+                        ctx.explain(str(args.get("id", "")), str(args.get("text", "")))
+                        answer = "answered"
+                    except Exception as exc:   # noqa: BLE001 - the model's to read
+                        answer = f"error: {exc}"
                 else:
                     answer = self._use(ctx, name, args)
                 messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": answer})
 
-    def _ask(self, ctx, messages: list) -> tuple[dict, list]:
+    def _ask(self, ctx, messages: list, specs: list | None = None) -> tuple[dict, list]:
         """One request to the model; its answer is added to ``messages``."""
-        result = self.model.chat(self.system, messages, self._specs, self.max_tokens)
+        result = self.model.chat(self.system, messages, specs if specs is not None else self._tools(ctx),
+                                 self.max_tokens)
         spent_in, spent_out = getattr(result, "input_tokens", 0) or 0, getattr(result, "output_tokens", 0) or 0
         self.usage["calls"] += 1
         self.usage["input_tokens"] += spent_in
@@ -450,14 +530,25 @@ class AgentNode(Node):
         pictures: list = []
         inputs = {name: self._pictures(value, pictures) for name, value in inputs.items()}
         if len(inputs) == 1 and len(self.inputs) == 1 and not _corrected(ctx, inputs):
-            arrived = _text(next(iter(inputs.values())))
+            arrived = _text(next(iter(inputs.values()))) + self._doubting(ctx, inputs)
         else:
             arrived = self._heard(inputs, ctx)
         return {"role": "user", "content": arrived, **({"image_data": pictures} if pictures else {})}
 
     def _heard(self, got: Mapping[str, Any], ctx=None) -> str:
-        return "\n\n".join(f"[{name}{_CORRECTS if name in _corrected(ctx, got) else ''}]\n{_text(value)}"
+        text = "\n\n".join(f"[{name}{_CORRECTS if name in _corrected(ctx, got) else ''}]\n{_text(value)}"
                              for name, value in got.items())
+        return text + self._doubting(ctx, got)
+
+    def _doubting(self, ctx, got: Mapping[str, Any]) -> str:
+        doubtful = _doubtful(ctx, got)
+        if not doubtful:
+            return ""
+        return "\n\n" + (self.doubt if self.doubt is not None else DOUBT).format(ports=", ".join(doubtful))
+
+    def _tools(self, ctx) -> list:
+        """The tools for one request: ``reject`` while something it took may still be rejected."""
+        return [*self._specs, _REJECT] if _doubtful(ctx, self.inputs) else self._specs
 
     def _fix(self, ctx, args: Mapping) -> str:
         """The ``correct`` tool: put new content in the place of a message the agent sent."""
@@ -553,6 +644,11 @@ class AgentNode(Node):
                     if isinstance(sent, str):
                         return f"sent, as {sent}"
                 return "sent"
+            if name == "reject":
+                port = str(args.get("port") or (next(iter(self.inputs)) if len(self.inputs) == 1 else ""))
+                if port not in _doubtful(ctx, self.inputs):
+                    return f"error: what came on {port!r} cannot be rejected (now, or any more)"
+                return _verdict(ctx.reject(port, str(args.get("reason", ""))))
             if name in self._own:
                 return _text(self._own[name].run(dict(args), ctx))      # type: ignore[misc]
             if name not in self.outputs or not self.outputs[name].call:

@@ -116,7 +116,7 @@ from .scheduler import Scheduler
 from .stream import Stream
 from .transport import Transport
 from .recorder import SWITCHED
-from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, Sent, State, bounded, wire
+from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, Rejection, Sent, State, bounded, wire
 
 __all__ = ["Engine", "OverBudget", "Result", "RunError"]
 
@@ -447,7 +447,7 @@ class Engine:
         """Every activation under way is paused, and nothing else can start: the run ends here, to be taken up
         once someone switches them on again. Called under the lock."""
         if (self._parked + len(self._waiters) >= self._active and not self._sched.ready
-                and not any(self._mail(state) for state in self._waiters)):
+                and not any(self._mail(state) or self._stirred(state) for state in self._waiters)):
             for state in self._states.values():
                 if state.running and state.status == PAUSED and not state.halt:
                     state.halt = "park"
@@ -506,6 +506,7 @@ class Engine:
         state.holding.append((feed, envelope))
         bounded(state.read_log, envelope.id, None)      # read in the middle: a correction of it is told
         port = feed.port.port
+        state.took_on[port.name] = (feed, envelope)
         if envelope.replaces:
             state.replaced[port.name] = envelope.replaces
         else:
@@ -519,6 +520,9 @@ class Engine:
     def _hear(self, state: State, ctx: RunContext, ports: frozenset | None, until: float | None) -> tuple:
         """One look, under the lock: ("got", message), ("none", None) when nothing can come or the time is up
         or the node is to end, or ("wait", seconds)."""
+        if len(state.challenged) > state.shown:      # something it sent was rejected: it is told at once
+            state.shown = len(state.challenged)
+            return "got", {}
         feed = self._mail(state, ports)
         if feed is not None:
             return "got", self._taken(state, ctx, feed)
@@ -599,6 +603,181 @@ class Engine:
         if unknown:
             raise NodeError(f"{state.node.id} has no input port {', '.join(sorted(unknown))}")
         return names
+
+    # ---- rejections: a receiver says what came is not what it expected --------------------------------
+
+    @staticmethod
+    def _stirred(state: State) -> bool:
+        """A waiting activation has something to wake for besides a message. Under the lock."""
+        awaiting = state.awaiting
+        return len(state.challenged) > state.shown or (awaiting is not None and awaiting.answer is not None)
+
+    def _challengeable(self, state: State, port: str) -> bool:
+        with self._lock:
+            got = state.took_on.get(port)
+            if got is None:
+                return False
+            feed = got[0]
+            return feed.challenges is not None and feed.rejected < feed.challenges and not feed.gone
+
+    def _rejection(self, state: State, ctx: RunContext, port: str, reason: str) -> Rejection | dict:
+        """Send a rejection to the sender of what was taken on ``port``. Under the lock. A mapping when it
+        cannot be sent: that is the answer."""
+        self._own(state, ctx)
+        got = state.took_on.get(port)
+        if got is None:
+            raise NodeError(f"{state.node.id} has taken nothing on {port!r} in this activation that it could reject")
+        feed, envelope = got
+        if feed.challenges is None:
+            raise NodeError(f"{state.node.id}.{port}: the edge {feed.id} takes no rejections (give it challenges)")
+        sender = feed.source
+        if feed.rejected >= feed.challenges:
+            why = f"the edge {feed.id} has taken all the rejections it may ({feed.challenges})"
+            self._checks.record(state, port, f"rejected: {reason}; {why}", "unanswered", ctx._act, state.round)
+            return {"answer": "refused", "why": why}
+        if feed.gone or sender is None or sender.status == STOPPED or self._states.get(sender.node.id) is not sender:
+            return {"answer": "refused", "why": "the sender is stopped or gone, and cannot answer"}
+        assert sender is not None
+        feed.rejected += 1
+        if ctx._act is not None:
+            ctx._act.rejects.append(feed.id)
+        message = next((name for name, sent in reversed(sender.sent_log.items())
+                        if any(id == envelope.id for _, id in sent.envelopes)), None)
+        content = self._checks.arrived(state, feed, envelope.body)
+        rejection = Rejection(f"{feed.id}!{feed.rejected}", feed, envelope.id, feed.out, message, content, str(reason),
+                              state.node.id)
+        sender.challenged.append(rejection)
+        state.awaiting = rejection
+        self._sched.consider(sender)
+        self._lock.notify_all()
+        return rejection
+
+    def _settled(self, state: State, ctx: RunContext, rejection: Rejection) -> dict | None:
+        """The answer to the rejection this activation waits on, once there is one. Under the lock."""
+        if rejection.answer is None:
+            if state.halt or self._stopping() or self._over:
+                ctx._cut = ctx._cut or bool(state.halt) or self._stopping()
+                self._withdraw(rejection, "the run is ending, or this node is to end")
+            elif self._idle():
+                if self._unfinished():
+                    state.halt = state.halt or "park"
+                    ctx._cut = True
+                self._withdraw(rejection, "no answer can come: the sender has ended or waits too")
+            else:
+                return None
+        state.awaiting = None
+        return rejection.verdict()
+
+    @staticmethod
+    def _withdraw(rejection: Rejection, why: str) -> None:
+        rejection.settle("refused", why)
+        sender = rejection.feed.source
+        if sender is not None:
+            try:
+                sender.challenged.remove(rejection)
+            except ValueError:
+                sender.open.pop(rejection.id, None)
+
+    def _reject(self, state: State, ctx: RunContext, port: str, reason: str) -> dict:
+        """``ctx.reject``: see ``Context.reject``."""
+        lock = self._lock
+        with lock:
+            rejection = self._rejection(state, ctx, port, reason)
+            if isinstance(rejection, dict):
+                return rejection
+            got = self._settled(state, ctx, rejection)
+            if got is None:
+                began = time.monotonic()
+                self._lend(state)
+                lock.notify_all()
+                try:
+                    while got is None:
+                        lock.wait(0.1)
+                        got = self._settled(state, ctx, rejection)
+                finally:
+                    self._take_back(state)
+                    state.since += time.monotonic() - began
+        return self._answered(state, port, rejection, got)
+
+    async def _areject(self, state: State, ctx: RunContext, port: str, reason: str) -> dict:
+        """``_reject``, awaited."""
+        lock = self._lock
+        with lock:
+            rejection = self._rejection(state, ctx, port, reason)
+            if isinstance(rejection, dict):
+                return rejection
+            got = self._settled(state, ctx, rejection)
+            if got is None:
+                began = time.monotonic()
+                self._lend(state)
+                lock.notify_all()
+        if got is None:
+            try:
+                while got is None:
+                    await asyncio.sleep(0.02)
+                    with lock:
+                        got = self._settled(state, ctx, rejection)
+            finally:
+                with lock:
+                    self._take_back(state)
+                    state.since += time.monotonic() - began
+        return self._answered(state, port, rejection, got)
+
+    def _answered(self, state: State, port: str, rejection: Rejection, got: dict) -> dict:
+        if self._observe is not None:
+            self._tell("answered", node=state.node.id, round=state.round, port=port, rejection=rejection.id,
+                       answer=got["answer"])
+        return got
+
+    def _rejections(self, state: State, ctx: RunContext) -> list:
+        """``ctx.rejections``: take up the rejections of what this node sent."""
+        with self._lock:
+            if not state.running or ctx._state is not state:
+                raise NodeError(f"{state.node.id} can take up rejections only in an activation of its own")
+            taken = [r for r in state.challenged if r.answer is None]
+            state.challenged.clear()
+            state.shown = 0
+            for rejection in taken:
+                state.open[rejection.id] = rejection
+            return [rejection.shown() for rejection in taken]
+
+    def _explain(self, state: State, id: str, text: str) -> None:
+        """``ctx.explain``: what was rejected stands, for this reason."""
+        with self._lock:
+            rejection = state.open.pop(str(id), None)
+            if rejection is None:
+                raise NodeError(f"{state.node.id} has no rejection {id!r} to answer")
+            rejection.settle("explained", str(text))
+            self._lock.notify_all()
+
+    def _answer(self, state: State, ctx: RunContext) -> None:
+        """An activation that answers a rejection no activation of the node took up: ``Node.challenged``."""
+        rejection = state.answering
+        assert rejection is not None
+        with self._lock:
+            if rejection.answer is not None:
+                return
+            state.open[rejection.id] = rejection
+        answer = waited(state.node.challenged(ctx, rejection.shown()))
+        self._unanswered(state, rejection, answer)
+
+    async def _aanswer(self, state: State, ctx: RunContext) -> None:
+        rejection = state.answering
+        assert rejection is not None
+        with self._lock:
+            if rejection.answer is not None:
+                return
+            state.open[rejection.id] = rejection
+        answer = state.node.challenged(ctx, rejection.shown())
+        if inspect.isawaitable(answer):
+            answer = await answer
+        self._unanswered(state, rejection, answer)
+
+    def _unanswered(self, state: State, rejection: Rejection, answer: Any) -> None:
+        with self._lock:
+            state.open.pop(rejection.id, None)
+            if rejection.settle("explained", str(answer) if answer is not None else "no reason was given"):
+                self._lock.notify_all()
 
     def _unfinished(self) -> dict[str, str]:
         """Nodes whose switch is off and that still have something waiting for them."""
@@ -906,6 +1085,11 @@ class Engine:
         if not state.opened:
             state.opened = True
             waited(node.open(ctx))
+        if state.answering is not None:
+            self._answer(state, ctx)
+            if act is not None:
+                self._snap(node, ctx._act)
+            return
         while True:
             try:
                 returned = node.run(ctx, taken)
@@ -929,6 +1113,10 @@ class Engine:
             opened = node.open(ctx)
             if inspect.isawaitable(opened):
                 await opened
+        if state.answering is not None:
+            await self._aanswer(state, ctx)
+            self._snap(node, ctx._act)
+            return
         while True:
             try:
                 returned = node.run(ctx, taken)
@@ -968,6 +1156,10 @@ class Engine:
         when the engine has already returned and what the activation did is thrown away."""
         lock, sched, node = self._lock, self._sched, state.node
         act = ctx._act                  # the record it is writing now: a new one after each commit
+        if state.open:                  # rejections it took up and did not answer: Node.challenged answers them
+            with lock:
+                state.challenged.extendleft(r for r in reversed(list(state.open.values())) if r.answer is None)
+                state.open.clear()
         if failure is not None:
             with lock:
                 if self._over:
@@ -1216,6 +1408,19 @@ class Engine:
             self._wake()
         return name
 
+    @staticmethod
+    def _reread(receiver: State, old: str, new: str, value: Any) -> None:
+        """What ``receiver`` read as ``old`` is now ``value``, which came as ``new``. Under the lock."""
+        reading = receiver.read_log.pop(old, None)
+        bounded(receiver.read_log, new, reading)
+        if reading is not None:
+            port, index = reading.at[old]
+            if index is None:
+                reading.inputs[port] = value
+            else:
+                reading.inputs[port][index] = value
+            reading.at = {new if id == old else id: where for id, where in reading.at.items()}
+
     def _replace(self, feed: Feed, old: str, body: Any, round: int, cause: tuple, act: Act | None) -> str:
         """Correct envelope ``old`` on ``feed`` with ``body``, under the lock. Returns the id of the envelope
         that stands for the message now (``old`` itself when nothing could be sent)."""
@@ -1233,6 +1438,25 @@ class Engine:
                 act.sent.append(envelope)
                 act.fixed_box.append(old)
             return envelope.id
+        awaiting = receiver.awaiting
+        if awaiting is not None and awaiting.envelope == old and awaiting.answer is None:
+            # the receiver rejected it and waits: the correction is its answer, and nothing else follows
+            envelope = sched.envelope(feed, body, round, cause, old)
+            if act is not None:
+                act.sent.append(envelope)
+                act.fixed_box.append(envelope.id)      # it is taken as the answer, not delivered again
+            try:
+                value = self._checks.arrived(receiver, feed, body)
+            except Exception as exc:   # noqa: BLE001
+                awaiting.settle("refused", f"the correction could not be read: {exc}")
+                return envelope.id
+            self._reread(receiver, old, envelope.id, value)
+            receiver.took_on[feed.port.port.name] = (feed, envelope)
+            awaiting.settle("corrected", value=value)
+            if awaiting.feed.source is not None:
+                awaiting.feed.source.open.pop(awaiting.id, None)
+            self._lock.notify_all()
+            return envelope.id
         rule = receiver.node.on_correction
         if rule == "ignore":
             return old
@@ -1246,14 +1470,7 @@ class Engine:
             except Exception as exc:   # noqa: BLE001 - a protocol's decode failed: the receiver fails, as it would
                 self._fail(receiver, exc)
                 return envelope.id
-            port, index = reading.at[old]
-            if index is None:
-                reading.inputs[port] = value
-            else:
-                reading.inputs[port][index] = value
-            reading.at = {envelope.id if id == old else id: where for id, where in reading.at.items()}
-            del receiver.read_log[old]
-            bounded(receiver.read_log, envelope.id, reading)
+            self._reread(receiver, old, envelope.id, value)
             if not reading.queued:
                 reading.queued = True
                 receiver.redo.append(reading)

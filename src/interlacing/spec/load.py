@@ -96,7 +96,8 @@ def load(description: Mapping, catalog: Catalog | None = None) -> Graph:
             builder.add(_node(node, catalog, graphs))
         for edge in description.get("edges", ()):
             builder.connect(edge["from"], edge["to"], edge.get("protocol", "value"), id=edge.get("id"),
-                            back=edge.get("back", False), max_rounds=edge.get("max_rounds"))
+                            back=edge.get("back", False), max_rounds=edge.get("max_rounds"),
+                            challenges=edge.get("challenges"))
         for name, end in description.get("inputs", {}).items():
             builder.input(name, end)
         for name, end in description.get("outputs", {}).items():

@@ -22,7 +22,7 @@ class Act:
     """What one activation did, for the journal."""
 
     __slots__ = ("node", "round", "took", "sent", "out", "limited", "calls", "snaps", "problems", "changes", "emits",
-                 "fixed_box", "fixed_out")
+                 "fixed_box", "fixed_out", "rejects")
 
     def __init__(self, node: str, round: int, took: tuple) -> None:
         self.node, self.round, self.took = node, round, took
@@ -36,6 +36,7 @@ class Act:
         self.emits: list = []             # [name, port, [[feed, envelope id]...], [[output, index]...]] per message
         self.fixed_box: list[str] = []    # envelopes not yet read that a correction took the place of
         self.fixed_out: list[tuple] = []  # (graph output, index, payload) a correction changed
+        self.rejects: list[str] = []      # the edges on which it rejected what came
 
 
 def discard(journal: Path) -> None:
@@ -71,6 +72,7 @@ class Recorder:
                             **({"changes": act.changes} if act.changes else {}),
                             **({"emits": act.emits} if act.emits else {}),
                             **({"fixed": act.fixed_box} if act.fixed_box else {}),
+                            **({"rejects": act.rejects} if act.rejects else {}),
                             **({"fixed_out": [[name, index, pack_body(payload)] for name, index, payload in act.fixed_out]}
                                if act.fixed_out else {}),
                             **({"open": True} if open else {})})
@@ -148,6 +150,9 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
                 change(described)
             took.update(record["took"])
             fixed.update(record.get("fixed", ()))
+            for id in record.get("rejects", ()):
+                if id in wiring.feeds:
+                    wiring.feeds[id].rejected += 1
             for name, body in record["out"]:
                 if name in result.outputs:
                     result.outputs[name].append(unpack_body(body))

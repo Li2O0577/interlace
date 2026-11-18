@@ -37,8 +37,23 @@ with a new major version.
   `replaces`; graph files may give a node `on_correction`. Observers are told `corrected`.
 - Resident agents: `send_<port>` answers with the id of what was sent, a `correct(id, content)` tool corrects
   it, the task board counts corrections, and a message that corrects one read before says so.
+- Rejections: an edge may take them, `connect(a, b, challenges=N)` (`"challenges"` in a graph file), N in all.
+  Its receiver calls `ctx.reject(port, reason)` (or `await ctx.areject(...)`) on what it took last there, and
+  waits, holding no worker, for the sender's answer: explained (the value stands), corrected (the new value;
+  the correction is the answer and nothing else follows for this receiver) or refused (none left, the sender
+  is stopped or gone, or no answer can come). A sender waiting in `ctx.receive` is woken with an empty mapping
+  and takes them up with `ctx.rejections()`, answering with `ctx.explain(id, text)` or `ctx.correct`; one
+  left unanswered is answered by `Node.challenged(ctx, rejection)` in an activation of its own, which for a
+  program says that its result stands. `ctx.challengeable(port)`. Rejections are journaled; observers are
+  told `answered`.
+- Agents and rejections: on an edge that takes them an agent is told to judge what came (a default prompt,
+  `DOUBT`, or its own, `doubt=`) and has a `reject` tool. An agent whose message is rejected is shown it and
+  answers with `explain` or `correct`; a resident one sees it in `wait`, one that has finished is called back.
+- A served node (`RemoteNode`) corrects what it sent: its `ctx.emit` returns its own name for the message,
+  which its `ctx.correct` takes.
 - Examples: `resident_team.py`, a lead and two resident members; `corrected_estimate.py`, a quick estimate
-  corrected once those who read it are done.
+  corrected once those who read it are done; `rejected_answer.py`, a reviewer rejects a plan and the planner
+  is called back to correct it.
 
 ## 0.14.0
 
