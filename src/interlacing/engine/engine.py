@@ -667,6 +667,7 @@ class Engine:
                                                                 if got[0].source is not None else None)), None)
 
     def _challengeable(self, state: State, port: str, which: str | None = None) -> bool:
+        self._ports(state, port)
         with self._lock:
             got = self._chosen(state, port, which)
             if got is None:
@@ -676,6 +677,7 @@ class Engine:
 
     def _taken_on(self, state: State, port: str) -> list:
         """``ctx.taken``: what this activation took on ``port``, in order: its id and who sent it."""
+        self._ports(state, port)
         with self._lock:
             return [{"id": envelope.id, "from": feed.source.node.id if feed.source is not None else None,
                      "edge": feed.id} for feed, envelope in state.took_on.get(port, ())]
@@ -685,6 +687,7 @@ class Engine:
         """Send a rejection to the sender of what was taken on ``port`` (the one ``which`` names). Under the
         lock. A mapping when it cannot be sent: that is the answer."""
         self._own(state, ctx)
+        self._ports(state, port)
         got = self._chosen(state, port, which)
         if got is None:
             if which is not None and state.took_on.get(port):

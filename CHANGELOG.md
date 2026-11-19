@@ -73,7 +73,9 @@ with a new major version.
   whoever may switch the node.
 - Examples: `resident_team.py`, a lead and two resident members; `corrected_estimate.py`, a quick estimate
   corrected once those who read it are done; `rejected_answer.py`, a reviewer rejects a plan and the planner
-  is called back to correct it; `hired_team.py`, a lead hires two members, gives them work and dismisses them.
+  is called back to correct it; `hired_team.py`, a lead hires two members, gives them work and dismisses them;
+  `directed_rejection.py`, a merge rejects one of two estimates by its sender, which corrects the note it sent
+  with it too.
 
 ## 0.14.0
 

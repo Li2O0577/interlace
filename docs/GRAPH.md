@@ -378,6 +378,8 @@ builder.connect("planner.plan", "reviewer.plan", challenges=2)    # 这条边最
 
 [examples/graphs/rejected_answer.py](../examples/graphs/rejected_answer.py)：审阅的 agent 驳回了少一步的计划；做计划的 agent 已经结束，被叫回来更正；审阅拿到更正后的计划，通过。
 
+[examples/graphs/directed_rejection.py](../examples/graphs/directed_rejection.py)：两个估计汇到一个端口，合并的程序点名驳回快的那个（`which="quick"`）；快的那个看到驳回里还列着它同时发出的说明，把估计和说明一起更正；已经读过说明的日志节点按新说明重跑。
+
 ### 招人：agent 组建自己的团队
 
 常驻 agent 可以在运行中招下属，一层管一层。默认关闭，要打开并给上限：
@@ -546,7 +548,7 @@ graph = Chain(planner, grow).build(DEFAULT)
 
 `time_limit` 是一次激活最长可以用的秒数，节点自己的 `time_limit` 属性优先（`HumanNode` 默认不限时）。线程无法被强行终止，所以超时的处理是：运行以失败结束并指出是哪个节点，其他节点看到 `ctx.stopping()`，引擎不再等卡住的那个节点，它之后做的事全部作废。超时的激活没有写进日志，`resume()` 会重新跑它。
 
-`observe` 是一个函数，引擎把正在发生的事逐件告诉它：`started`、`emitted`、`corrected`、`answered`（驳回有了答复）、`received`、`saved`、`finished`、`failed`、`stopped`、`used`（都带 `node` 和 `round`），最后是 `ended`。界面或日志要实时跟随一次运行就挂在这里，不必去读日志文件。它在运行节点的线程里被调用，不应当抛出异常；抛出了，运行会失败并说明原因。
+`observe` 是一个函数，引擎把正在发生的事逐件告诉它：`started`、`emitted`、`corrected`、`answered`（驳回有了答复）、`received`、`saved`、`finished`、`failed`、`stopped`、`used`、`changed`（图在运行中改了）（都带 `node` 和 `round`），`control`（开关被拨，带 `nodes`、`action`，由节点拨时还有 `by`），最后是 `ended`。界面或日志要实时跟随一次运行就挂在这里，不必去读日志文件。它在运行节点的线程里被调用，不应当抛出异常；抛出了，运行会失败并说明原因。
 
 运行被停下时（有节点失败、超时、超预算，或者外面要求停止），正在运行的节点从 `ctx.stopping()` 得知。问过并得到“是”的那次激活可能只做了一半，所以引擎不把它记成已完成：它的输入留在原处，`resume()` 时重跑，观察函数收到的是 `stopped` 而不是 `finished`。没有问过 `ctx.stopping()` 就正常返回的激活照常记为完成。块和 `SpawnNode` 里面的图因此不会在被打断后留下一个“做完了但没有输出”的记录。
 
@@ -726,7 +728,7 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
 
 
-[examples/graphs/](../examples/graphs/) 下有十八个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、主控在运行中招人组队、先发粗估再更正、审阅驳回计划、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
+[examples/graphs/](../examples/graphs/) 下有十九个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、主控在运行中招人组队、先发粗估再更正、审阅驳回计划、点名驳回几个估计中的一个并连带更正一起发出的说明、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 
 ## 限制
 
@@ -744,4 +746,6 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 - 块里面的运行进了日志之后，块里的边上也只能传普通数据。
 - `SpawnNode` 跑的图在那次激活结束后就不在了，不能在之后的轮次里接着给它发消息；需要长期存在的成员用 `Pool`。
 - 更正按 `rerun` 重跑的是节点的 `run`：节点自己存着的状态（比如累加的计数）不会先退回去，有这类状态的节点应当用 `tell` 或 `ignore`。
+- 任何节点失败都会让整次运行失败，招来的下属也一样：上级不会先收到“某某失败了”再自己决定。
+- 解雇一个还在干活的下属时，引擎最多等它 5 秒停下再拿出图；还没停下的，上级在下次调用模型前再拿一次。上级在那之前就结束的话，下属以“已停止”的状态留在图里，不再做任何事。
 - `max_nodes` 限制的是一张图的大小，不是花费；模型调用的总量要靠 `max_runs`、各方法的 `max_rounds` 和时间上限一起约束。
