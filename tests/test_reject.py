@@ -250,3 +250,122 @@ def test_a_sender_stopped_after_it_was_rejected_leaves_the_receiver_refused_at_o
     thread.join(5)
     assert not thread.is_alive()
     assert verdicts[0]['answer'] == 'refused' and 'stopped' in verdicts[0]['why']
+
+
+# ---- with a direction: which message, and what else went with it ----------------------------------------
+
+def join_graph(judge, workers=0):
+    a = FunctionNode('a', lambda x: 1, inputs=[Port('x')], outputs=[Port('out')])
+    b = FunctionNode('b', lambda x: 2, inputs=[Port('x')], outputs=[Port('out')])
+    a.challenged = lambda ctx, r: ctx.correct(r['message'], 10)
+    j = FunctionNode('j', judge, inputs=[Port('xs', many=True)], outputs=[Port('out')], context=True)
+    g = (GraphBuilder().add(a, b, j).connect('a.out', 'j.xs', challenges=1).connect('b.out', 'j.xs', challenges=1)
+         .input('in', 'a.x').input('go', 'b.x').output('sum', 'j.out').compile())
+    return Engine(g, workers=workers).run({'in': 0, 'go': 0})
+
+
+@pytest.mark.parametrize('workers', [0, 1, 4])
+def test_on_a_port_fed_by_several_the_receiver_says_which_it_rejects(workers):
+    seen = {}
+
+    def judge(ctx, xs):
+        seen['taken'] = [t['from'] for t in ctx.taken('xs')]
+        first = seen['taken'].index('a')
+        seen['verdict'] = ctx.reject('xs', 'too small', 'a')
+        xs[first] = seen['verdict']['value']
+        return sum(xs)
+    result = join_graph(judge, workers)
+    assert sorted(seen['taken']) == ['a', 'b'] and seen['verdict'] == {'answer': 'corrected', 'value': 10}
+    assert result.outputs['sum'] == [12]
+
+
+def test_a_rejection_that_names_nothing_taken_is_an_error():
+    def judge(ctx, xs):
+        assert not ctx.challengeable('xs', 'nobody') and ctx.challengeable('xs', 'b')
+        ctx.reject('xs', 'no', 'nobody')
+    with pytest.raises(Exception, match="that 'nobody' names"):
+        join_graph(judge)
+
+
+@pytest.mark.parametrize('workers', [0, 1, 4])
+def test_a_sender_is_told_what_else_it_sent_and_may_correct_that_too(workers):
+    asked, firsts = [], []
+
+    def split(x):
+        return {'one': x, 'two': x + 1}
+    sender = FunctionNode('s', split, inputs=[Port('x')], outputs=[Port('one'), Port('two')])
+
+    def challenged(ctx, rejection):
+        asked.append(rejection)
+        for name in rejection['sent']['one']:
+            ctx.correct(name, 100)
+        ctx.correct(rejection['message'], 101)
+    sender.challenged = challenged
+
+    def first(v):
+        firsts.append(v)
+        return v
+    one = FunctionNode('f', first, inputs=[Port('v')], outputs=[Port('out')])
+    two = doubter([])
+    g = (GraphBuilder().add(sender, one, two).connect('s.one', 'f.v').connect('s.two', 'd.v', challenges=1)
+         .input('in', 's.x').output('one', 'f.out').output('two', 'd.out').compile())
+    result = Engine(g, workers=workers).run({'in': 1})
+    assert asked[0]['message'] == 'two#1' and asked[0]['sent'] == {'one': ['one#1']}
+    assert result.outputs['two'] == [101] and result.outputs['one'] == [100] and firsts[-1] == 100
+
+
+def test_what_else_was_sent_is_known_again_when_the_run_is_taken_up(tmp_path):
+    from interlacing.engine.wiring import State
+    path = tmp_path / 'j.jsonl'
+    sender = FunctionNode('s', lambda x: {'one': x, 'two': x}, inputs=[Port('x')], outputs=[Port('one'), Port('two')])
+    g = lambda: (GraphBuilder().add(sender).input('in', 's.x').output('one', 's.one').output('two', 's.two')  # noqa: E731
+                 .compile())
+    Engine(g(), journal=Journal(path)).run({'in': 1})
+    again = Engine(g(), journal=Journal(path))
+    again.resume()
+    state: State = again._states['s']
+    assert {name: sent.round for name, sent in state.sent_log.items()} == {'one#1': 1, 'two#1': 1}
+
+
+def test_an_agent_on_a_port_fed_by_several_is_told_who_sent_what_and_rejects_one():
+    from interlacing import AgentNode
+    from interlacing.models import ChatResult, FakeProvider
+    seen = {}
+
+    def policy(system, messages, tools):
+        said = _last_tool(messages)
+        if not said:
+            seen['asked'] = messages[-1]['content']
+            return ChatResult(tool_calls=[_call('reject', port='xs', reason='too small', which='a')])
+        seen['answer'] = said
+        return ChatResult(text='ok')
+    a = FunctionNode('a', lambda x: 1, inputs=[Port('x')], outputs=[Port('out')])
+    b = FunctionNode('b', lambda x: 2, inputs=[Port('x')], outputs=[Port('out')])
+    a.challenged = lambda ctx, r: ctx.correct(r['message'], 10)
+    agent = AgentNode('j', FakeProvider(policy), inputs=[Port('xs', many=True)])
+    g = (GraphBuilder().add(a, b, agent).connect('a.out', 'j.xs', challenges=1).connect('b.out', 'j.xs', challenges=1)
+         .input('in', 'a.x').input('go', 'b.x').output('out', 'j.out').compile())
+    Engine(g).run({'in': 0, 'go': 0})
+    assert 'came from a, b' in seen['asked'] or 'came from b, a' in seen['asked']
+    assert seen['answer'] == 'Its sender corrected it. It is now:\n10'
+
+
+def test_an_agent_called_back_corrects_what_else_it_sent_as_well():
+    from interlacing import AgentNode
+    from interlacing.models import ChatResult, FakeProvider
+    shown = []
+
+    def policy(system, messages, tools):
+        if '[rejected]' in messages[-1]['content']:
+            shown.append(messages[-1]['content'])
+            return ChatResult(tool_calls=[_call('correct', id='one#1', content='ONE'),
+                                          _call('correct', content='TWO')])
+        if messages[-1]['role'] == 'tool':
+            return ChatResult(text='sent both')
+        return ChatResult(tool_calls=[_call('send_one', content='one'), _call('send_two', content='two')])
+    agent = AgentNode('s', FakeProvider(policy), inputs=[Port('x')], outputs=[Port('one'), Port('two')])
+    g = (GraphBuilder().add(agent, doubter([])).connect('s.two', 'd.v', challenges=1)
+         .input('in', 's.x').output('one', 's.one').output('out', 'd.out').compile())
+    result = Engine(g).run({'in': 'go'})
+    assert 'With it you also sent one#1 on one' in shown[0]
+    assert result.outputs['one'] == ['ONE'] and result.outputs['out'] == ['TWO']

@@ -47,9 +47,16 @@ with a new major version.
   with `ctx.explain(id, text)` or `ctx.correct`; one left unanswered is answered by `Node.challenged(ctx,
   rejection)` in an activation of its own, which for a program says that its result stands.
   `ctx.challengeable(port)`. Rejections are journaled; observers are told `answered`.
+- Rejections with a direction: on a port fed by several edges, `ctx.reject(port, reason, which)` names the
+  one it rejects (its sender, its edge or its envelope id; the last one taken when left out), and
+  `ctx.taken(port)` lists what the activation took there. A rejection says what else the same activation
+  sent (`sent`: output port -> names, up to 32), so the sender can correct those too; corrections go on
+  downstream as usual.
 - Agents and rejections: on an edge that takes them an agent is told to judge what came (a default prompt,
   `DOUBT`, or its own, `doubt=`) and has a `reject` tool. An agent whose message is rejected is shown it and
   answers with `explain` or `correct`; a resident one sees it in `wait`, one that has finished is called back.
+  It is shown what else it sent with it, and `correct` with an `id` corrects any of those; the `reject`
+  tool takes `which`, and an agent is told who sent each message on a port fed by several.
 - A served node (`RemoteNode`) corrects what it sent: its `ctx.emit` returns its own name for the message,
   which its `ctx.correct` takes.
 - Hiring: a resident agent may build its own team when it is allowed to, `AgentNode(hire=N, templates={...},

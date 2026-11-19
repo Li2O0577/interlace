@@ -366,12 +366,14 @@ builder.connect("planner.plan", "reviewer.plan", challenges=2)    # 这条边最
   - `{"answer": "corrected", "value": ...}`：上游更正了，这是新值。这条更正就是给它的答复，不再按 `on_correction` 另外处理；其他读过这条消息的节点照常按各自的 `on_correction` 处理。
   - `{"answer": "refused", "why": ...}`：这条边的次数用完了（同时记进问题列表）、上游已停止或不在了（质疑发出后上游才被停下或拿掉，哪怕正在回答，也立刻得到这个结果）、运行要结束了，或者再也不会有人回答。这时下游只能用手上的值继续。因为更正而重跑的那次激活，也可以质疑它读到的新值。
   - `ctx.challengeable(端口)` 说现在还能不能驳回。
+- **有方向地驳回：** 一个输入口接着好几条边时（`many=True`），`ctx.reject(端口, 理由, which)` 用 `which` 指明驳回哪一条：发它的节点 id、边的 id 或信封编号都行，不写就是最后取到的那一条。`ctx.taken(端口)` 列出这次激活在这个端口上取到的每一条（`id`、`from`、`edge`）。每条边的次数分开算。
 - **上游怎么答复：**
-  - 正在运行并且在 `ctx.receive` 里等着：被叫醒，`receive` 返回一个空映射，再用 `ctx.rejections()` 取到驳回（`id`、`port`、`message`、`content`、`reason`、`by`）。答复用 `ctx.explain(驳回 id, 说明)` 或 `ctx.correct(message, 新值)`。
+  - 正在运行并且在 `ctx.receive` 里等着：被叫醒，`receive` 返回一个空映射，再用 `ctx.rejections()` 取到驳回（`id`、`port`、`message`、`content`、`reason`、`by`、`sent`）。答复用 `ctx.explain(驳回 id, 说明)` 或 `ctx.correct(message, 新值)`。
   - 已经结束、或者这次激活没有答复：引擎为它单独起一次激活，调用 `Node.challenged(ctx, 驳回)`。它可以更正，也可以返回一段说明。程序节点默认回答“这是程序根据输入算出来的，不变”；需要别的行为就自己写 `challenged`。
+- **同一次激活发出的其他消息：** 驳回里的 `sent` 是“输出口 → 编号列表”，列出被驳回的那条消息所在的那次激活还发了什么（最多 32 条）。比如 a 有 1、2 两个出口，2 被驳回，a 能看到 1 上发的是 `one#1`，判断它是不是因为同样的原因也错了；错了就一起 `ctx.correct`。1 的下游照常按各自的 `on_correction` 重跑或被告知，再往下也跟着更正。
 - **agent：**
-  - 作为下游：收到可以驳回的消息时，会附一句默认提示，让它先判断是否符合预期、不符合就驳回，同时多一个 `reject(port, reason)` 工具。提示可以换成自己的话：`AgentNode(..., doubt="...")`，用 `{ports}` 代表端口名。
-  - 作为上游：被驳回时，模型看到一条 `[rejected]` 消息，写着谁驳回的、理由、对方收到的内容。它用 `explain` 或 `correct` 答复。常驻 agent 在 `wait` 里收到，有 `explain(id, text)` 和 `correct(id, content)` 两个工具；普通 agent 会被叫回来，带着原来的对话答复。
+  - 作为下游：收到可以驳回的消息时，会附一句默认提示，让它先判断是否符合预期、不符合就驳回，同时多一个 `reject(port, reason, which)` 工具；端口接着好几条边时，提示里会写明每条是谁发的，`which` 填发送方。提示可以换成自己的话：`AgentNode(..., doubt="...")`，用 `{ports}` 代表端口名。
+  - 作为上游：被驳回时，模型看到一条 `[rejected]` 消息，写着谁驳回的、理由、对方收到的内容。它用 `explain` 或 `correct` 答复。常驻 agent 在 `wait` 里收到，有 `explain(id, text)` 和 `correct(id, content)` 两个工具；普通 agent 会被叫回来，带着原来的对话答复。`[rejected]` 消息里也列出同一次发出的其他消息的编号，提示它看看要不要一起改；`correct` 带上 `id` 就能更正其中任何一条。
 - **日志：** 每次驳回记在下游那次激活名下，运行接上以后，边上用掉的次数不会重新算。
 
 [examples/graphs/rejected_answer.py](../examples/graphs/rejected_answer.py)：审阅的 agent 驳回了少一步的计划；做计划的 agent 已经结束，被叫回来更正；审阅拿到更正后的计划，通过。
