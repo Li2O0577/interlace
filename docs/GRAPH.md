@@ -364,7 +364,7 @@ builder.connect("planner.plan", "reviewer.plan", challenges=2)    # 这条边最
 - **下游只回是或否：** 不需要给出数字。符合预期就照常用；不符合就调用 `ctx.reject(端口, 理由)`，驳回这次激活在这个端口上最后取到的消息，然后停下来等（不占工作名额）。返回值是三种之一：
   - `{"answer": "explained", "text": ...}`：上游解释了，原值不变。
   - `{"answer": "corrected", "value": ...}`：上游更正了，这是新值。这条更正就是给它的答复，不再按 `on_correction` 另外处理；其他读过这条消息的节点照常按各自的 `on_correction` 处理。
-  - `{"answer": "refused", "why": ...}`：这条边的次数用完了（同时记进问题列表）、上游已停止或不在了、运行要结束了，或者再也不会有人回答。这时下游只能用手上的值继续。
+  - `{"answer": "refused", "why": ...}`：这条边的次数用完了（同时记进问题列表）、上游已停止或不在了（质疑发出后上游才被停下或拿掉，哪怕正在回答，也立刻得到这个结果）、运行要结束了，或者再也不会有人回答。这时下游只能用手上的值继续。因为更正而重跑的那次激活，也可以质疑它读到的新值。
   - `ctx.challengeable(端口)` 说现在还能不能驳回。
 - **上游怎么答复：**
   - 正在运行并且在 `ctx.receive` 里等着：被叫醒，`receive` 返回一个空映射，再用 `ctx.rejections()` 取到驳回（`id`、`port`、`message`、`content`、`reason`、`by`）。答复用 `ctx.explain(驳回 id, 说明)` 或 `ctx.correct(message, 新值)`。
@@ -391,7 +391,7 @@ lead = AgentNode("lead", model, resident=True, hire=3, templates={"researcher": 
 | 工具 | 作用 |
 |---|---|
 | `hire(template, name, task?)` | 按模板招一个下属，id 是 `<自己>-<name>`。它归自己管；自己多出一个输出 `to_<name>`（用 `send_to_<name>` 派活）和一个输入 `from_<name>`（下属的第一个输出接回来，是一条回边，最多 `hire_rounds` 轮，默认 10）。给了 `task` 就马上派出去 |
-| `dismiss(name)` | 停掉这个下属和它下面的所有人，再从图里拿掉 |
+| `dismiss(name)` | 停掉这个下属和它下面的所有人，再从图里拿掉；还在干活的，等它停下后再拿掉（下次调模型前），这之前名字不能再用 |
 | `control(name, action)` | 暂停、恢复、停止、重启下属（连同它下面的人）；`name` 可以带路径，拨到下属内部的图 |
 | `team()` | 列出团队：每个人的开关、在干活还是在等、跑了几轮、归谁管，还能再招几个 |
 | `connect(source, target, back?)` | 在自己（`me`）和下属之间接线，写成 `名字.端口`；闭合成环的线要写 `back=true`。碰不到团队以外的节点 |

@@ -145,6 +145,7 @@ class Scheduler:
             reading.queued = False
             state.redoing = {port: deque(names) for port, names in reading.emits.items()}
             state.opening = []
+            state.took_on = dict(reading.took)
             ids = tuple(reading.at)          # among them the corrections, which nothing else takes
             return ({port: list(value) if isinstance(value, list) else value for port, value in reading.inputs.items()},
                     ids, ids)
@@ -185,6 +186,7 @@ class Scheduler:
                     state.replaced[port.name] = envelope.replaces
             reading = state.reading = Reading({k: list(v) if isinstance(v, list) else v for k, v in inputs.items()},
                                               at)
+            reading.took = dict(state.took_on)
             for id in at:
                 bounded(state.read_log, id, reading)
         for port in state.passive:      # the newest value of each edge that does not trigger: read, and left there

@@ -41,11 +41,12 @@ with a new major version.
   Its receiver calls `ctx.reject(port, reason)` (or `await ctx.areject(...)`) on what it took last there, and
   waits, holding no worker, for the sender's answer: explained (the value stands), corrected (the new value;
   the correction is the answer and nothing else follows for this receiver) or refused (none left, the sender
-  is stopped or gone, or no answer can come). A sender waiting in `ctx.receive` is woken with an empty mapping
-  and takes them up with `ctx.rejections()`, answering with `ctx.explain(id, text)` or `ctx.correct`; one
-  left unanswered is answered by `Node.challenged(ctx, rejection)` in an activation of its own, which for a
-  program says that its result stands. `ctx.challengeable(port)`. Rejections are journaled; observers are
-  told `answered`.
+  is stopped or gone, or no answer can come; a sender stopped or taken out after it was rejected, even while
+  it answers, refuses at once). An activation run again after a correction may reject what it reads. A sender
+  waiting in `ctx.receive` is woken with an empty mapping and takes them up with `ctx.rejections()`, answering
+  with `ctx.explain(id, text)` or `ctx.correct`; one left unanswered is answered by `Node.challenged(ctx,
+  rejection)` in an activation of its own, which for a program says that its result stands.
+  `ctx.challengeable(port)`. Rejections are journaled; observers are told `answered`.
 - Agents and rejections: on an edge that takes them an agent is told to judge what came (a default prompt,
   `DOUBT`, or its own, `doubt=`) and has a `reject` tool. An agent whose message is rejected is shown it and
   answers with `explain` or `correct`; a resident one sees it in `wait`, one that has finished is called back.
@@ -54,7 +55,8 @@ with a new major version.
 - Hiring: a resident agent may build its own team when it is allowed to, `AgentNode(hire=N, templates={...},
   hire_rounds=10)` (`"hire"`, `"templates"` in a graph file, naming `Catalog(templates=...)` or giving
   descriptions). N is how many in the whole run; without it there are no hiring tools. Tools: `hire`
-  (a member from a template, managed by the agent, with `to_<name>` and `from_<name>` lines), `dismiss`,
+  (a member from a template, managed by the agent, with `to_<name>` and `from_<name>` lines), `dismiss` (a
+  member still working is stopped at once and taken out of the graph once it has ended; its name is free then),
   `control`, `team`, `connect` (within its team). A member that may hire gets no more than its hirer; one
   made from a description works in a directory inside its hirer's (`layer`).
 - `Change.ports(node, inputs, outputs)` gives an existing node more ports while the run goes on
