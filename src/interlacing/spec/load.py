@@ -47,7 +47,7 @@ from ..nodes import GraphNode
 from .catalog import Catalog, SpecError
 
 CORRECTIONS = ("rerun", "tell", "ignore")
-_NODE_KEYS = {"id", "kind", "firing", "inputs", "outputs", "config", "time_limit", "on_correction"}
+_NODE_KEYS = {"id", "kind", "firing", "inputs", "outputs", "config", "time_limit", "on_correction", "oversees"}
 
 
 def dump(graph: Graph) -> dict:
@@ -155,9 +155,12 @@ def _node(given: Mapping, catalog: Catalog, graphs: Mapping) -> Node:
               **{key: value for key, value in given.items() if key not in _NODE_KEYS}, **given.get("config", {})}
     time_limit = given.get("time_limit", config.pop("time_limit", None))
     on_correction = given.get("on_correction", config.pop("on_correction", None))
+    oversees = given.get("oversees", config.pop("oversees", None))
     try:
         if on_correction is not None and on_correction not in CORRECTIONS:
             raise SpecError(f"on_correction is one of {', '.join(CORRECTIONS)}")
+        if oversees is not None and not isinstance(oversees, bool):
+            raise SpecError("oversees is true or false")
         config = {key: catalog.text(value["file"]) if isinstance(value, Mapping) and value.keys() == {"file"} else value
                   for key, value in config.items()}
         node = catalog.loader(given["kind"])({**{k: given[k] for k in _NODE_KEYS & given.keys()}, "config": config}, catalog, graphs)
@@ -167,6 +170,8 @@ def _node(given: Mapping, catalog: Catalog, graphs: Mapping) -> Node:
             node.time_limit = time_limit
         if on_correction is not None:
             node.on_correction = on_correction
+        if oversees is not None:
+            node.oversees = oversees
         return node
     except KeyError as exc:
         raise SpecError(f"{given['id']}: a {given['kind']} node needs {exc.args[0]!r}") from None

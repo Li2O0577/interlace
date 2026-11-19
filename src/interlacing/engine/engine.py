@@ -565,6 +565,9 @@ class Engine:
         if len(state.challenged) > state.shown:      # something it sent was rejected: it is told at once
             state.shown = len(state.challenged)
             return "got", {}
+        if len(state.failures) > state.failures_shown:      # a node it manages failed: it is told at once
+            state.failures_shown = len(state.failures)
+            return "got", {}
         feed = self._mail(state, ports)
         if feed is not None:
             return "got", self._taken(state, ctx, feed)
@@ -652,7 +655,8 @@ class Engine:
     def _stirred(state: State) -> bool:
         """A waiting activation has something to wake for besides a message. Under the lock."""
         awaiting = state.awaiting
-        return len(state.challenged) > state.shown or (awaiting is not None and awaiting.answer is not None)
+        return (len(state.challenged) > state.shown or len(state.failures) > state.failures_shown
+                or (awaiting is not None and awaiting.answer is not None))
 
     @staticmethod
     def _chosen(state: State, port: str, which: str | None) -> tuple | None:
@@ -814,6 +818,38 @@ class Engine:
             self._tell("answered", node=state.node.id, round=state.round, port=port, rejection=rejection.id,
                        answer=got["answer"])
         return got
+
+    def _failures(self, state: State, ctx: RunContext) -> list:
+        """``ctx.failures``: take up the failures of nodes this one manages."""
+        with self._lock:
+            if not state.running or ctx._state is not state:
+                raise NodeError(f"{state.node.id} can take up failures only in an activation of its own")
+            taken, state.failures = state.failures, []
+            state.failures_shown = 0
+            return taken
+
+    def _reported(self, state: State, failure: BaseException) -> bool:
+        """``state``'s activation failed: when its manager oversees it and is running, the failure goes to the
+        manager and the run goes on, with ``state`` stopped. Under the lock."""
+        boss = self._states.get(self.graph.managers.get(state.node.id, ""))
+        if (boss is None or not boss.node.oversees or not boss.running or boss.status == STOPPED or boss.halt
+                or self._sched.stopped or self._error is not None):
+            return False
+        sched = self._sched
+        self._end_streams(state)
+        state.running = False
+        self._active -= 1
+        state.halt = False
+        sched.give_back(state)                  # what it took waits for it, should it be restarted
+        state.status = STOPPED
+        sched.withdraw(state)
+        self._unheard(state, "the sender failed, and cannot answer")
+        error = str(failure)
+        self._result.problems.append({"node": state.node.id, "round": state.round, "problem": error,
+                                      "handled": "reported", "to": boss.node.id})
+        boss.failures.append({"node": state.node.id, "round": state.round, "error": error})
+        self._lock.notify_all()
+        return True
 
     def _rejections(self, state: State, ctx: RunContext) -> list:
         """``ctx.rejections``: take up the rejections of what this node sent."""
@@ -1257,10 +1293,22 @@ class Engine:
             with lock:
                 if self._over:
                     return False
-                self._fail(state, failure)
+                reported = self._reported(state, failure)
+                if not reported:
+                    self._fail(state, failure)
             if self._observe is not None:
-                self._tell("failed", node=node.id, round=state.round, error=str(failure))
+                self._tell("failed", node=node.id, round=state.round, error=str(failure),
+                           **({"to": self.graph.managers[node.id]} if reported else {}))
             return True
+        if state.failures:              # failures of its members it never took up: the run fails as it would have
+            with lock:
+                first = state.failures[0]
+                state.failures = []
+                if self._error is None:
+                    self._error = RunError(f"node {first['node']} failed in round {first['round']}: {first['error']} "
+                                           f"(reported to {node.id}, which did not take it up)", first["node"])
+                sched.stopped = True
+                lock.notify_all()
         if ctx._cut:
             # it was told to stop and may have left its work half done: it is not on record as having run,
             # so it runs again when the run is taken up

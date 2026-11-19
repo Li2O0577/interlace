@@ -172,6 +172,9 @@ _HIRING = {
                     "required": ["name", "action"]}},
     "team": {"description": "Who is in your team, and how each stands.",
              "parameters": {"type": "object", "properties": {}}},
+    "fail": {"description": "End the whole run as failed, for this reason: when a member's failure, or anything "
+                            "else, means the work cannot be done.",
+             "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
     "connect": {"description": "Connect an output of one member of your team to an input of another, so that what "
                                "the first sends goes to the second. Write each end as name.port; you are 'me'. "
                                "Say back=true for a connection that closes a loop.",
@@ -320,6 +323,7 @@ class AgentNode(Node):
         if type(hire_rounds) is not int or hire_rounds < 1:
             raise NodeError(f"{id}: hire_rounds must be at least 1")
         self.hire, self.hire_rounds = hire, hire_rounds
+        self.oversees = bool(hire)          # a member it hired that fails is its to deal with, not the run's end
         self.templates = dict(templates or {})
         self._builder = builder
         if hire and not resident:
@@ -486,6 +490,13 @@ class AgentNode(Node):
                 continue                     # one is still running: tried again before the next model call
             del self.leaving[name]
         return list(self.leaving)
+
+    def _failed(self, failures: list) -> str:
+        names = {id: name for name, id in self.hired.items()}
+        return "\n\n".join(
+            f"[failed] {names.get(f['node'], f['node'])} failed in its round {f['round']}: {f['error']}\nIt is "
+            f"stopped. Restart it with control(name={names.get(f['node'], f['node'])!r}, action='restart'), dismiss "
+            f"it, or call fail(reason) if the work cannot be done without it." for f in failures)
 
     @staticmethod
     def _under(team: Mapping, member: str, top: str) -> bool:
@@ -698,8 +709,10 @@ class AgentNode(Node):
                     if got is not None:
                         steps = 0
                         rejections = ctx.rejections() if hasattr(ctx, "rejections") else []
+                        failed = ctx.failures() if self.oversees and hasattr(ctx, "failures") else []
                         answer = "\n\n".join(part for part in (self._heard(got, ctx) if got else "",
-                                                                 _rejected(rejections), self._shown_board()) if part)
+                                                                 _rejected(rejections), self._failed(failed),
+                                                                 self._shown_board()) if part)
                     elif ctx.stopping():
                         answer = "The run is ending."
                     elif args.get("seconds") is not None:
@@ -722,6 +735,8 @@ class AgentNode(Node):
                 elif name == "correct":
                     answer = self._fix(ctx, args)
                 elif name in _HIRING and self.hire:
+                    if name == "fail":
+                        raise NodeError(f"{self.id} gave up: {args.get('reason', '')}")
                     answer = {"hire": self._hire, "dismiss": self._dismiss, "control": self._control_member,
                               "team": lambda ctx, args: self._team(ctx), "connect": self._connect}[name](ctx, args)
                 elif name == "explain":

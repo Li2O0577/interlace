@@ -66,6 +66,11 @@ with a new major version.
   member still working is stopped at once and taken out of the graph once it has ended; its name is free then),
   `control`, `team`, `connect` (within its team). A member that may hire gets no more than its hirer; one
   made from a description works in a directory inside its hirer's (`layer`).
+- A manager may oversee (`Node.oversees`, `"oversees": true` in a graph file; an agent that may hire does):
+  when a node it manages fails while it runs, the run goes on, the member is stopped with its inputs kept,
+  and the failure comes to the manager (`ctx.failures()`, waking `ctx.receive`), which restarts it, takes it
+  out or fails. A failure it never takes up fails the run as before. Agents see `[failed]` in `wait` and
+  have a `fail(reason)` tool.
 - `Change.ports(node, inputs, outputs)` gives an existing node more ports while the run goes on
   (`Node.add_ports`, taken back if the change is refused), and `Change.manage(manager, *members)` gives
   nodes added while it runs a manager. `ctx.team()` says how the nodes a node manages stand.
