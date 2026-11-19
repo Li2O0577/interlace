@@ -46,6 +46,9 @@ class RunContext(Context):
     def rejections(self) -> list:
         return self._engine._rejections(self._state, self)
 
+    def failures(self) -> list:
+        return self._engine._failures(self._state, self)
+
     def explain(self, rejection: str, text: str) -> None:
         self._engine._explain(self._state, rejection, text)
 

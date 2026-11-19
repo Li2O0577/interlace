@@ -97,6 +97,14 @@ class Context(ABC):
         answered by ``Node.challenged``. ``receive`` returns an empty mapping when one comes while it waits."""
         return []
 
+    def failures(self) -> list:
+        """Failures of nodes it manages that came to it (its node ``oversees``), not yet taken up: each says
+        ``node``, ``round`` and ``error``. The node that failed is stopped; switch it (``restart``), take it
+        out, or fail the activation to fail the run. Taken up, they are this node's to deal with; one left
+        when the activation ends fails the run as it would have. ``receive`` returns an empty mapping when
+        one comes while it waits."""
+        return []
+
     def explain(self, rejection: str, text: str) -> None:
         """Answer rejection ``rejection`` (its id): what was sent stands, for this reason."""
         raise NotImplementedError("this context cannot answer rejections")
@@ -233,6 +241,9 @@ class Node(ABC):
     #: sent then; ``tell``, give it the correction as a new message (``ctx.replaces`` says it is one); or
     #: ``ignore`` it. A message not yet read is simply replaced, whatever this says.
     on_correction: str = "rerun"
+    #: When a node it manages fails while this node is running, the failure comes to it (``ctx.failures``)
+    #: instead of failing the run: the member is stopped and this node decides what follows.
+    oversees: bool = False
 
     def __init__(self, id: str, *, inputs: Iterable[Port] | None = None, outputs: Iterable[Port] | None = None,
                  firing: Firing | None = None):
@@ -253,11 +264,13 @@ class Node(ABC):
     def describe(self) -> dict:
         own = self.__dict__.get("time_limit")
         rule = self.__dict__.get("on_correction")
+        oversees = self.__dict__.get("oversees")
         return {"id": self.id, "kind": type(self).kind, "firing": self.firing.value,
                 "inputs": [p.describe() for p in self.inputs.values()],
                 "outputs": [p.describe() for p in self.outputs.values()], "config": dict(self.config()),
                 **({"time_limit": own} if own is not None else {}),
-                **({"on_correction": rule} if rule is not None and rule != type(self).on_correction else {})}
+                **({"on_correction": rule} if rule is not None and rule != type(self).on_correction else {}),
+                **({"oversees": oversees} if oversees is not None and oversees != type(self).oversees else {})}
 
     # ---- lifecycle: only run is required --------------------------------------------------------------
 

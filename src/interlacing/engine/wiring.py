@@ -129,7 +129,7 @@ class State:
                  "opened", "round", "outs", "calls", "passive", "streams", "called", "since", "time_limit", "rejected", "delivered",
                  "inner", "status", "halt", "holding", "paused_at", "waiting", "late", "resuming", "resumed", "opening",
                  "emitted", "sent_log", "read_log", "redo", "reading", "redoing", "replaced",
-                 "challenged", "shown", "open", "answering", "took_on", "awaiting")
+                 "challenged", "shown", "open", "answering", "took_on", "awaiting", "failures", "failures_shown")
 
     def __init__(self, node: Node):
         self.node = node
@@ -172,6 +172,8 @@ class State:
         self.answering: Rejection | None = None   # this activation answers a rejection (Node.challenged)
         self.took_on: dict[str, list] = {}        # this activation: port -> [(feed, envelope), ...] it took there
         self.awaiting: Rejection | None = None    # the rejection this activation waits on
+        self.failures: list = []                  # failures of nodes it manages, come to it and not taken up
+        self.failures_shown = 0                   # how many of those its running activation has been woken for
 
     def begin(self) -> None:
         """A new activation starts: forget what the last one did."""
@@ -186,6 +188,7 @@ class State:
         self.redoing = None
         self.answering = None
         self.shown = 0
+        self.failures_shown = 0
         if self.took_on:
             self.took_on = {}
         if self.replaced:

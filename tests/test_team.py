@@ -219,3 +219,48 @@ def test_a_member_that_is_still_working_when_dismissed_is_taken_out_once_it_has_
     assert any(a.startswith('error: ') and "'a'" in a for a in answers)     # its name is not free until it is out
     assert any(a.startswith('You have no team.') for a in answers) and lead.leaving == {} and lead.hires == 1
     assert {node.id for node in engine.graph.nodes} == {'lead'}
+
+
+@pytest.mark.parametrize('workers', [0, 1, 2])
+def test_a_member_that_fails_is_reported_to_its_hirer_which_restarts_it(workers):
+    tries = []
+
+    def shaky(id):
+        def run(task):
+            tries.append(task)
+            if len(tries) == 1:
+                raise ValueError('the disk was full')
+            return f'{task}: done'
+        return FunctionNode(id, run, inputs=[Port('task')], outputs=[Port('out')])
+    told = []
+
+    def policy(system, messages, tools):
+        said = next((m['content'] for m in reversed(messages) if m['role'] == 'tool'), '')
+        if not said:
+            return ChatResult(tool_calls=[call('hire', template='s', name='a', task='count'), call('wait')])
+        if '[failed]' in said:
+            told.append(said)
+            return ChatResult(tool_calls=[call('control', name='a', action='restart'), call('wait')])
+        if '[from_a]' in said:
+            return ChatResult(tool_calls=[call('send_out', content=said.split('\n')[1]), call('finish')])
+        return ChatResult(tool_calls=[call('wait')])
+    lead = AgentNode('lead', FakeProvider(policy), resident=True, hire=1, templates={'s': shaky})
+    graph = GraphBuilder().add(lead).input('in', 'lead.task').output('out', 'lead.out').compile()
+    result = Engine(graph, workers=workers).run({'in': 'go'})
+    assert result.last('out') == 'count: done' and result.complete and tries == ['count', 'count']
+    assert told[0].startswith('[failed] a failed in its round 1: the disk was full')
+    assert result.problems[0]['handled'] == 'reported'
+
+
+def test_a_hirer_may_give_up_when_a_member_fails():
+    def broken(id):
+        return FunctionNode(id, lambda task: 1 / 0, inputs=[Port('task')], outputs=[Port('out')])
+
+    def policy(system, messages, tools):
+        said = next((m['content'] for m in reversed(messages) if m['role'] == 'tool'), '')
+        if not said:
+            return ChatResult(tool_calls=[call('hire', template='b', name='a', task='x'), call('wait')])
+        return ChatResult(tool_calls=[call('fail', reason='a cannot divide')])
+    lead = AgentNode('lead', FakeProvider(policy), resident=True, hire=1, templates={'b': broken})
+    with pytest.raises(Exception, match='lead gave up: a cannot divide'):
+        Engine(GraphBuilder().add(lead).input('in', 'lead.task').compile(), workers=1).run({'in': 'go'})

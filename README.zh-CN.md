@@ -149,7 +149,7 @@ engine = Engine(graph, DEFAULT, workers=4,
 
 **质疑。** 边可以接受驳回：`connect(a, b, challenges=2)`。收的一方判断收到的是否符合预期，只答是或否；不符合就调用 `ctx.reject(端口, 理由)`，等上游解释（原值不变）或者更正（更正就是答复）。这条边一共能接受这么多次驳回。在这种边上收消息的 agent 会先看到一句默认提示（可以换），让它先判断，并有 `reject` 工具；消息被驳回的 agent 用 `explain` 或 `correct` 答复，已经结束的会被叫回来。程序节点默认回答“结果不变”，需要别的行为就写 `challenged`。一个端口接着几条边时，`ctx.reject(端口, 理由, which)` 用发送方点名驳回哪一条；驳回里列着同一次发出的其他消息，上游可以一起更正。
 
-**自己组队的 agent。** 默认关闭：`AgentNode(..., resident=True, hire=3, templates={"researcher": make})` 整次运行最多招 3 个，只能从模板里招。每个下属成为它管的一个节点，有一条线派活（`send_to_<name>`）、一条线回话（`from_<name>`）；它还有 `dismiss`、`control`、`team`、`connect`（只限自己团队）。能招人的下属，名额不超过上级；目录放在上级目录下面。底下是 `ctx.change` 加的两个新操作 `ports` 和 `manage`；节点内部那张图里的节点用路径名拨（`"box/inner"`）。
+**自己组队的 agent。** 默认关闭：`AgentNode(..., resident=True, hire=3, templates={"researcher": make})` 整次运行最多招 3 个，只能从模板里招。每个下属成为它管的一个节点，有一条线派活（`send_to_<name>`）、一条线回话（`from_<name>`）；它还有 `dismiss`、`control`、`team`、`connect`（只限自己团队）。能招人的下属，名额不超过上级；目录放在上级目录下面。下属失败不会让整次运行失败：上级会被告知，自己决定重启、解雇还是放弃（`fail`）；任何上级设了 `oversees = True` 都可以用 `ctx.failures()` 这样接手。底下是 `ctx.change` 加的两个新操作 `ports` 和 `manage`；节点内部那张图里的节点用路径名拨（`"box/inner"`）。
 
 ```python
 graph = GraphBuilder().add(lead, a, b).manage("lead", "a", "b")...      # lead 里：ctx.control("a", "pause")
