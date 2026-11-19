@@ -1743,6 +1743,7 @@ class Engine:
         with self._lock:
             if self._over or self._sched.stopped:
                 raise NodeError("the run is stopping")
+            self._ending(state, change)
             before = {node.id for node in self.graph.nodes}
             dropped = self._make(change, state.node.id)
             if act is not None:
@@ -1753,6 +1754,23 @@ class Engine:
         if self._observe is not None:
             self._tell("changed", node=state.node.id, round=state.round, added=sorted(now - before),
                        removed=sorted(before - now), dropped=dropped, graph=self.graph.digest)
+
+    def _ending(self, state: State, change: Change, patience: float = 5.0) -> None:
+        """Nodes to be taken out that were stopped and have not yet ended: wait a little for them, holding no
+        worker, so that taking out a member just stopped does not fail. Under the lock."""
+        def stopping() -> bool:
+            return any(other is not None and other.running and other.status == STOPPED
+                       for other in map(self._states.get, change.removed))
+        if state.node.asynchronous or not stopping():
+            return                              # a coroutine would hold the loop they may need
+        until = time.monotonic() + patience
+        self._lend(state)
+        self._lock.notify_all()
+        try:
+            while stopping() and not self._over and time.monotonic() < until:
+                self._lock.wait(0.02)
+        finally:
+            self._take_back(state)
 
     def _remake(self, described: list) -> int:
         """Make again, while the run is being taken up, a change the journal holds."""
