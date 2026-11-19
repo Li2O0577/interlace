@@ -157,7 +157,8 @@ _HIRING = {
              "parameters": {"type": "object", "properties": {
                  "template": {"type": "string"}, "name": {"type": "string", "description": "letters, digits, _"},
                  "task": {"description": "work to send it at once (optional)"}}, "required": ["template", "name"]}},
-    "dismiss": {"description": "Dismiss a member of your team, and those it manages. It is stopped and taken out.",
+    "dismiss": {"description": "Dismiss a member of your team, and those it manages. It is stopped at once "
+                               "and taken out once it has ended.",
                 "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     "control": {"description": "Pause, resume, stop or restart a member of your team (and those it manages).",
                 "parameters": {"type": "object", "properties": {
@@ -312,6 +313,7 @@ class AgentNode(Node):
             raise NodeError(f"{id}: an agent that may hire needs templates to hire from")
         self.hires = 0                      # how many it has hired in this run: hire is the most
         self.hired: dict[str, str] = {}     # the members it has now: name -> node id
+        self.leaving: dict[str, list] = {}  # dismissed, stopped, not yet taken out: name -> the ids to take out
         self._extra: set[str] = set()       # output ports given to it while the run went on (one per member)
         if any(tool.name in ("reject", "explain") for tool in tools):
             raise NodeError(f"{id}: the tools reject and explain are the agent's own")
@@ -363,13 +365,15 @@ class AgentNode(Node):
     def snapshot(self) -> Mapping:
         kept: dict[str, Any] = {"messages": self.messages, "usage": self.usage} if self.memory else {"usage": self.usage}
         if self.hire:
-            kept = {**kept, "hires": self.hires, "hired": dict(self.hired)}
+            kept = {**kept, "hires": self.hires, "hired": dict(self.hired),
+                    **({"leaving": dict(self.leaving)} if self.leaving else {})}
         return {**kept, "board": self.board} if self.resident else kept
 
     def restore(self, state: Mapping) -> None:
         self.messages = list(state.get("messages", []))
         self.usage = dict(state.get("usage", self.usage))
         self.hires, self.hired = int(state.get("hires", self.hires)), dict(state.get("hired", self.hired))
+        self.leaving = {name: list(ids) for name, ids in state.get("leaving", {}).items()}
         if "board" in state:
             self.board = {**self._fresh_board(), **copy.deepcopy(dict(state["board"]))}
 
@@ -411,7 +415,7 @@ class AgentNode(Node):
             return f"error: you have hired all you may ({self.hire})"
         if template not in self.templates:
             return f"error: no template {template!r}; you have {', '.join(sorted(self.templates))}"
-        if not _NAME.fullmatch(name) or name in self.hired or f"to_{name}" in self.outputs:
+        if not _NAME.fullmatch(name) or name in self.hired or name in self.leaving or f"to_{name}" in self.outputs:
             return f"error: {name!r} is taken or is not a name (letters, digits, _)"
         id = f"{self.id}-{name}"
         try:
@@ -449,11 +453,24 @@ class AgentNode(Node):
         below = [member for member in team if self._under(team, member, id)]
         try:
             ctx.control([id], "stop", team=True)
-            ctx.change(Change().remove(*reversed(below), id))
         except (GraphError, NodeError) as exc:
-            return f"it is being stopped and could not be taken out yet ({exc}); dismiss it again in a while"
+            return f"error: {exc}"
         del self.hired[name]
-        return f"dismissed {name}" + (f" and {len(below)} under it" if below else "")
+        told = f"dismissed {name}" + (f" and {len(below)} under it" if below else "")
+        self.leaving[name] = [*reversed(below), id]
+        if self._tidy(ctx):
+            return told + " (it is stopping, and is taken out of the graph once its work has ended)"
+        return told
+
+    def _tidy(self, ctx) -> list:
+        """Take out of the graph the members it dismissed that have stopped working; the names still there."""
+        for name, ids in list(self.leaving.items()):
+            try:
+                ctx.change(Change().remove(*ids))
+            except (GraphError, NodeError):
+                continue                     # one is still running: tried again before the next model call
+            del self.leaving[name]
+        return list(self.leaving)
 
     @staticmethod
     def _under(team: Mapping, member: str, top: str) -> bool:
@@ -484,7 +501,9 @@ class AgentNode(Node):
         if not team:
             return "You have no team." + (f" You may hire {self.hire - self.hires}." if self.hire else "")
         names = {id: name for name, id in self.hired.items()}
-        lines = [f"- {names.get(id, id)}: {about['status']}"
+        leaving = {ids[-1]: name for name, ids in self.leaving.items()}
+        names.update(leaving)
+        lines = [f"- {names.get(id, id)}: {about['status']}" + (" (dismissed, being taken out)" if id in leaving else "")
                  + (", waiting" if about["waiting"] else ", working" if about["running"] else "")
                  + f", {about['rounds']} round{'s' if about['rounds'] != 1 else ''}"
                  + ("" if about["manager"] == self.id else f", under {names.get(about['manager'], about['manager'])}")
@@ -628,6 +647,8 @@ class AgentNode(Node):
             if steps >= self.max_steps:
                 raise NodeError(f"the model went {self.max_steps} steps without waiting or finishing")
             steps += 1
+            if self.leaving:
+                self._tidy(ctx)
             if self.keep is not None:
                 kept = self.keep(messages)
                 if not isinstance(kept, list) or not kept:

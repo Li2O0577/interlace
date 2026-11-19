@@ -104,6 +104,7 @@ import time
 from typing import Any, Callable, Iterable, Mapping
 
 from ..base import Change, Graph, GraphBuilder, GraphError, Invalid, Node, NodeError, Protocols, canonical, waited
+from ..base.envelope import Envelope
 from .aio import Signal, Threads, athrough, through, to_end
 from .checks import Checks
 from .clock import overrun, set_limits
@@ -418,7 +419,9 @@ class Engine:
             state.status = STOPPED
             sched.withdraw(state)
             if state.running:
-                state.halt = "stop"
+                state.halt = "stop"         # what it was asked and did not answer is refused when it ends
+            else:
+                self._unheard(state, "the sender was stopped, and cannot answer")
         elif action == "resume":
             if was == ACTIVE:
                 return False
@@ -712,6 +715,18 @@ class Engine:
             except ValueError:
                 sender.open.pop(rejection.id, None)
 
+    def _unheard(self, state: State, why: str) -> None:
+        """``state`` will not answer the rejections of what it sent: each is refused now. Under the lock."""
+        waiting = [*state.challenged, *state.open.values()]
+        if not waiting:
+            return
+        for rejection in waiting:
+            if rejection.answer is None:
+                rejection.settle("refused", why)
+        state.challenged.clear()
+        state.open.clear()
+        self._lock.notify_all()
+
     def _reject(self, state: State, ctx: RunContext, port: str, reason: str) -> dict:
         """``ctx.reject``: see ``Context.reject``."""
         lock = self._lock
@@ -810,7 +825,11 @@ class Engine:
     def _unanswered(self, state: State, rejection: Rejection, answer: Any) -> None:
         with self._lock:
             state.open.pop(rejection.id, None)
-            if rejection.settle("explained", str(answer) if answer is not None else "no reason was given"):
+            if state.status == STOPPED:         # stopped while it answered: what it returns is not its answer
+                settled = rejection.settle("refused", "the sender was stopped, and cannot answer")
+            else:
+                settled = rejection.settle("explained", str(answer) if answer is not None else "no reason was given")
+            if settled:
                 self._lock.notify_all()
 
     def _unfinished(self) -> dict[str, str]:
@@ -1194,6 +1213,9 @@ class Engine:
             with lock:
                 state.challenged.extendleft(r for r in reversed(list(state.open.values())) if r.answer is None)
                 state.open.clear()
+        if state.challenged and state.status == STOPPED:
+            with lock:
+                self._unheard(state, "the sender was stopped, and cannot answer")
         if failure is not None:
             with lock:
                 if self._over:
@@ -1443,12 +1465,16 @@ class Engine:
         return name
 
     @staticmethod
-    def _reread(receiver: State, old: str, new: str, value: Any) -> None:
-        """What ``receiver`` read as ``old`` is now ``value``, which came as ``new``. Under the lock."""
+    def _reread(receiver: State, feed: Feed, old: str, envelope: Envelope, value: Any) -> None:
+        """What ``receiver`` read as ``old`` is now ``value``, which came in ``envelope``. Under the lock."""
+        new = envelope.id
         reading = receiver.read_log.pop(old, None)
         bounded(receiver.read_log, new, reading)
         if reading is not None:
             port, index = reading.at[old]
+            took = reading.took.get(port)
+            if took is not None and took[1].id == old:
+                reading.took[port] = (feed, envelope)
             if index is None:
                 reading.inputs[port] = value
             else:
@@ -1484,7 +1510,7 @@ class Engine:
             except Exception as exc:   # noqa: BLE001
                 awaiting.settle("refused", f"the correction could not be read: {exc}")
                 return envelope.id
-            self._reread(receiver, old, envelope.id, value)
+            self._reread(receiver, feed, old, envelope, value)
             receiver.took_on[feed.port.port.name] = (feed, envelope)
             awaiting.settle("corrected", value=value)
             if awaiting.feed.source is not None:
@@ -1504,7 +1530,7 @@ class Engine:
             except Exception as exc:   # noqa: BLE001 - a protocol's decode failed: the receiver fails, as it would
                 self._fail(receiver, exc)
                 return envelope.id
-            self._reread(receiver, old, envelope.id, value)
+            self._reread(receiver, feed, old, envelope, value)
             if not reading.queued:
                 reading.queued = True
                 receiver.redo.append(reading)
@@ -1720,6 +1746,7 @@ class Engine:
             del wiring.inputs[name]
         for id in gone:
             state = self._states[id]
+            self._unheard(state, "the sender was taken out of the graph, and cannot answer")
             if state.queued:
                 sched.ready.remove(state)
             wiring.remove_node(id)

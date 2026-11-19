@@ -190,3 +190,63 @@ def test_a_resident_agent_sees_a_rejection_while_it_waits(workers):
     result = Engine(g, workers=workers).run({'in': 'go'})
     assert verdicts == [{'answer': 'corrected', 'value': 'better draft'}] and result.outputs['out'] == ['better draft']
     assert result.rounds == {'s': 1, 'd': 1}
+
+
+# ---- meeting other features ------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('workers', [0, 1, 4])
+def test_a_node_run_again_after_a_correction_may_reject_what_it_reads(workers):
+    seen = []
+
+    def sender(ctx, x):
+        sent = ctx.emit('out', 1)
+        ctx.receive()                          # until the receiver has read it
+        ctx.correct(sent, 2)
+
+    def receiver(ctx, v):
+        seen.append(v)
+        if v == 2:
+            seen.append(ctx.reject('v', 'still wrong'))
+        return v
+    s = FunctionNode('s', sender, inputs=[Port('x')], outputs=[Port('out')], context=True)
+    d = FunctionNode('d', receiver, inputs=[Port('v')], outputs=[Port('out')], context=True)
+    g = (GraphBuilder().add(s, d).connect('s.out', 'd.v', challenges=1).input('in', 's.x')
+         .output('out', 'd.out').compile())
+    result = Engine(g, workers=workers).run({'in': 0})
+    assert seen[:2] == [1, 2] and seen[2]['answer'] == 'explained' and result.outputs['out'] == [2]
+
+
+@pytest.mark.parametrize('stopped', ['answering', 'running'])
+def test_a_sender_stopped_after_it_was_rejected_leaves_the_receiver_refused_at_once(stopped):
+    import threading
+    import time
+    verdicts, began = [], threading.Event()
+
+    def busy(ctx, *_):
+        began.set()
+        while ctx.checkpoint():
+            time.sleep(0.01)
+
+    def talk(ctx, x):
+        ctx.emit('out', x)
+        busy(ctx)
+    if stopped == 'running':
+        sender = FunctionNode('s', talk, inputs=[Port('x')], outputs=[Port('out')], context=True)
+    else:
+        sender = FunctionNode('s', lambda x: x, inputs=[Port('x')], outputs=[Port('out')])
+        sender.challenged = busy
+
+    def run(ctx, v):
+        verdicts.append(ctx.reject('v', 'no'))
+        return v
+    receiver = FunctionNode('d', run, inputs=[Port('v')], outputs=[Port('out')], context=True)
+    engine = Engine(graph(sender, receiver, challenges=1), workers=2)
+    done = {}
+    thread = threading.Thread(target=lambda: done.setdefault('result', engine.run({'in': 1})))
+    thread.start()
+    assert began.wait(5)
+    time.sleep(0.05)
+    engine.control('s', 'stop')
+    thread.join(5)
+    assert not thread.is_alive()
+    assert verdicts[0]['answer'] == 'refused' and 'stopped' in verdicts[0]['why']

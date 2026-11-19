@@ -87,13 +87,14 @@ class Reading:
     """One activation, as it would have to be run again when something it read is corrected: what it read
     and what it sent (the names of the messages, so that running again corrects them)."""
 
-    __slots__ = ("inputs", "at", "emits", "queued")
+    __slots__ = ("inputs", "at", "emits", "queued", "took")
 
     def __init__(self, inputs: dict, at: dict):
         self.inputs = inputs              # what it read, port -> value (a list on a port that takes many)
         self.at = at                      # envelope id -> (port, index in the list or None)
         self.emits: dict[str, list] = {}  # output port -> the names of the messages it sent there, in order
         self.queued = False               # it is waiting to run again
+        self.took: dict[str, tuple] = {}  # port -> (feed, envelope) it took last, so that a rerun may reject it
 
 
 def bounded(log: OrderedDict, key, value) -> None:

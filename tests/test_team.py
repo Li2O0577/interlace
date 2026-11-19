@@ -188,3 +188,34 @@ def test_a_member_works_in_a_directory_inside_that_of_who_hired_it(tmp_path):
     member = lead._member(lead.templates['helper'], 'lead-h1')
     assert member.area.home == tmp_path / 'lead' / 'lead-h1'
     assert member.config()['layer'] == ['lead']          # so that it is made the same way when the run is taken up
+
+
+@pytest.mark.parametrize('workers', [0, 1, 2])
+def test_a_member_that_is_still_working_when_dismissed_is_taken_out_once_it_has_stopped(workers):
+    def member(id):
+        def policy(system, messages, tools):
+            if not told(messages):
+                return ChatResult(tool_calls=[call('send_out', content='hi'), call('wait')])
+            return ChatResult(tool_calls=[call('wait')])
+        return AgentNode(id, FakeProvider(policy), resident=True)
+    answers = []
+
+    def policy(system, messages, tools):
+        said = told(messages)
+        answers.append(said)
+        if not said:
+            return ChatResult(tool_calls=[call('hire', template='m', name='a', task='go'), call('wait')])
+        if '[from_a]' in said:
+            return ChatResult(tool_calls=[call('dismiss', name='a'), call('hire', template='m', name='a'),
+                                          call('wait')])
+        if said.startswith('Nothing more can come'):
+            return ChatResult(tool_calls=[call('team'), call('finish')])
+        return ChatResult(tool_calls=[call('finish')])
+    lead = AgentNode('lead', FakeProvider(policy), resident=True, hire=2, templates={'m': member})
+    engine = Engine(GraphBuilder().add(lead).input('in', 'lead.task').compile(), workers=workers)
+    assert engine.run({'in': 'go'}).complete
+    answers = [m['content'] for m in lead.messages if m['role'] == 'tool']
+    assert any(a.startswith('dismissed a') for a in answers)
+    assert any(a.startswith('error: ') and "'a'" in a for a in answers)     # its name is not free until it is out
+    assert any(a.startswith('You have no team.') for a in answers) and lead.leaving == {} and lead.hires == 1
+    assert {node.id for node in engine.graph.nodes} == {'lead'}
