@@ -369,3 +369,11 @@ def test_an_agent_called_back_corrects_what_else_it_sent_as_well():
     result = Engine(g).run({'in': 'go'})
     assert 'With it you also sent one#1 on one' in shown[0]
     assert result.outputs['one'] == ['ONE'] and result.outputs['out'] == ['TWO']
+
+
+@pytest.mark.parametrize('ask', ['taken', 'challengeable', 'reject'])
+def test_asking_about_a_port_the_node_does_not_have_is_an_error(ask):
+    def judge(ctx, xs):
+        return getattr(ctx, ask)(*(['nope', 'no'] if ask == 'reject' else ['nope']))
+    with pytest.raises(Exception, match='no input port nope'):
+        join_graph(judge)

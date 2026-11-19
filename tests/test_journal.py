@@ -54,8 +54,9 @@ def test_a_journaled_run_gives_the_same_result_and_a_finished_one_is_not_run_aga
     assert result.outputs == plain.outputs == {'out': [8]} and result.complete
     kinds = [r['kind'] for r in records(path)]
     assert kinds == ['run', 'act', 'act', 'end']
-    act = records(path)[1]
-    assert act['node'] == 'a' and act['took'] == ['input:in#1'] and act['sent'] == [['a.y>b.x', 1, 1, ['v', 4], ['input:in#1']]]
+    # a's record may come after b's: b can take what a sent before a's activation is over (see _orphans)
+    act = next(r for r in records(path) if r.get('node') == 'a')
+    assert act['took'] == ['input:in#1'] and act['sent'] == [['a.y>b.x', 1, 1, ['v', 4], ['input:in#1']]]
     calls.clear()
     again = Engine(graph(), DEFAULT, journal=Journal(path)).resume()
     assert again.outputs == {'out': [8]} and again.rounds == {'a': 1, 'b': 1} and again.activations == 2 and again.envelopes == 2
@@ -345,3 +346,17 @@ def test_an_interrupt_inside_a_node_passes_through_and_leaves_the_run_resumable(
     assert [r['kind'] for r in records(path)] == ['run', 'act']          # no end: the run is not over
     second.broken = False
     assert Engine(graph(), DEFAULT, journal=Journal(path)).resume().outputs == {'out': [4]}
+
+
+def test_a_receiver_journaled_before_its_sender_is_not_run_again_when_the_sender_is(tmp_path):
+    """A receiver may finish, and be journaled, before the activation that sent to it is: when the run stops
+    in between, the sender runs again on resume and what it sends again is not delivered a second time."""
+    calls = []
+    graph = lambda: Chain(fn('a', lambda x: (calls.append('a'), x + 1)[1]), fn('b', lambda x: (calls.append('b'), x * 2)[1])).build(DEFAULT)  # noqa: E731
+    path = tmp_path / 'run.jsonl'
+    Engine(graph(), DEFAULT, journal=Journal(path)).run({'in': 3})
+    kept = [r for r in records(path) if r['kind'] == 'run' or r.get('node') == 'b']     # a's record was lost
+    path.write_text(''.join(json.dumps(r) + '\n' for r in kept), encoding='utf-8')
+    calls.clear()
+    again = Engine(graph(), DEFAULT, journal=Journal(path)).resume()
+    assert calls == ['a'] and again.outputs == {'out': [8]} and again.complete

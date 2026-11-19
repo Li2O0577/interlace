@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'graphs'
 def on_path(monkeypatch):
     monkeypatch.syspath_prepend(str(EXAMPLES))
     yield
-    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere', 'corrected_estimate', 'rejected_answer', 'hired_team'):
+    for name in ('chain_with_program', 'review_loop', 'governed_tree', 'camera_to_arm', 'files_checked', 'blocks_joined', 'grown_at_run_time', 'planner_and_arm', 'desks_between_blocks', 'plain_functions', 'folder_as_node', 'changed_while_running', 'served_elsewhere', 'corrected_estimate', 'rejected_answer', 'hired_team', 'directed_rejection'):
         sys.modules.pop(name, None)
 
 
@@ -132,3 +132,11 @@ def test_hired_team(capsys):
     import hired_team
     result, engine, lead = hired_team.main()
     assert result.last('words') == '9' and [node.id for node in engine.graph.nodes] == ['lead'] and lead.hires == 2
+
+
+def test_directed_rejection(capsys):
+    import directed_rejection
+    result = directed_rejection.main()
+    assert result.last('area') == 75.0
+    assert result.last('log') == 'logged: quick: 74 m2, measured after a rejection (50 is far from 76)'
+    assert result.outputs['log'] == [result.last('log')] and result.rounds['merge'] == 1
