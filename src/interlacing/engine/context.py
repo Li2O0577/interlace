@@ -31,14 +31,17 @@ class RunContext(Context):
     def replaces(self, port: str) -> str | None:
         return self._state.replaced.get(port)
 
-    def challengeable(self, port: str) -> bool:
-        return self._engine._challengeable(self._state, port)
+    def challengeable(self, port: str, which: str | None = None) -> bool:
+        return self._engine._challengeable(self._state, port, which)
 
-    def reject(self, port: str, reason: str) -> dict:
-        return self._engine._reject(self._state, self, port, reason)
+    def taken(self, port: str) -> list:
+        return self._engine._taken_on(self._state, port)
 
-    async def areject(self, port: str, reason: str) -> dict:
-        return await self._engine._areject(self._state, self, port, reason)
+    def reject(self, port: str, reason: str, which: str | None = None) -> dict:
+        return self._engine._reject(self._state, self, port, reason, which)
+
+    async def areject(self, port: str, reason: str, which: str | None = None) -> dict:
+        return await self._engine._areject(self._state, self, port, reason, which)
 
     def rejections(self) -> list:
         return self._engine._rejections(self._state, self)

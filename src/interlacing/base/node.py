@@ -69,23 +69,32 @@ class Context(ABC):
         """When the last message this activation took on ``port`` corrects one read earlier: that one's id."""
         return None
 
-    def challengeable(self, port: str) -> bool:
-        """Whether what this activation took last on ``port`` may still be rejected (see ``reject``)."""
+    def challengeable(self, port: str, which: str | None = None) -> bool:
+        """Whether what this activation took on ``port`` (the last, or the one ``which`` names) may still be
+        rejected (see ``reject``)."""
         return False
 
-    def reject(self, port: str, reason: str) -> dict:
-        """Say that what this activation took last on ``port`` is not what was expected, where its edge takes
-        rejections (``challenges``), and wait until the sender answers. Returns ``{"answer": "explained",
-        "text": ...}`` (the value stands), ``{"answer": "corrected", "value": ...}`` (the sender corrected it:
-        this is the new value) or ``{"answer": "refused", "why": ...}`` (the edge has taken all the rejections
-        it may, the sender cannot answer, or nothing more can happen)."""
+    def taken(self, port: str) -> list:
+        """What this activation took on ``port``, in order: each says ``id`` (of the envelope), ``from`` (the
+        node that sent it) and ``edge``. Any of them names the message to ``reject`` on a port fed by several."""
+        return []
+
+    def reject(self, port: str, reason: str, which: str | None = None) -> dict:
+        """Say that what this activation took on ``port`` is not what was expected, where its edge takes
+        rejections (``challenges``), and wait until the sender answers. It is the last message taken there,
+        or the one ``which`` names: its envelope id, its edge, or the node that sent it (see ``taken``).
+        Returns ``{"answer": "explained", "text": ...}`` (the value stands), ``{"answer": "corrected",
+        "value": ...}`` (the sender corrected it: this is the new value) or ``{"answer": "refused", "why":
+        ...}`` (the edge has taken all the rejections it may, the sender cannot answer, or nothing more can
+        happen)."""
         raise NotImplementedError("this context cannot reject what came")
 
     def rejections(self) -> list:
         """Rejections of what this node sent, not yet answered: each says ``id``, ``port``, ``message`` (the
-        name ``emit`` gave), ``content``, ``reason`` and ``by``. Answer each with ``explain`` or ``correct``;
-        one left unanswered when the activation ends is answered by ``Node.challenged``. ``receive`` returns an
-        empty mapping when one comes while it waits."""
+        name ``emit`` gave), ``content``, ``reason``, ``by`` and ``sent`` (output port -> the names of what
+        else the same activation sent, which may be wrong too). Answer each with ``explain`` or ``correct``,
+        and correct those others as well where they need it; one left unanswered when the activation ends is
+        answered by ``Node.challenged``. ``receive`` returns an empty mapping when one comes while it waits."""
         return []
 
     def explain(self, rejection: str, text: str) -> None:

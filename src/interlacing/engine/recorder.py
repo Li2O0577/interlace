@@ -165,7 +165,7 @@ def restore(records: list[dict], wiring: Wiring, scheduler: Scheduler, ledger: L
                     if name not in state.sent_log:
                         count = int(name.rsplit("#", 1)[1])
                         state.emitted[port] = max(state.emitted.get(port, 0), count)
-                    bounded(state.sent_log, name, Sent(port, envelopes, outputs))
+                    bounded(state.sent_log, name, Sent(port, envelopes, outputs, record["round"]))
             for id in record["limited"]:
                 if id in wiring.feeds:
                     limited[id] = None

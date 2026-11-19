@@ -143,12 +143,17 @@ DOUBT = ("Before you use what came on {ports}, judge whether it is what you expe
          "the reject tool and say why: its sender will explain it or correct it.")
 _REJECT = {"name": "reject", "description": "Reject what came on one of your inputs because it is not what you "
                                             "expected, and wait for its sender to explain or correct it.",
-           "parameters": {"type": "object", "properties": {"port": {"type": "string"}, "reason": {"type": "string"}},
-                          "required": ["port", "reason"]}}
+           "parameters": {"type": "object", "properties": {
+               "port": {"type": "string"}, "reason": {"type": "string"},
+               "which": {"type": "string", "description": "on an input fed by several: who sent the one you reject "
+                                                          "(the last one when left out)"}},
+               "required": ["port", "reason"]}}
 _ANSWER = [{"name": "explain", "description": "It is right as it is: say why.",
             "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-           {"name": "correct", "description": "It is wrong: give what is to take its place.",
-            "parameters": {"type": "object", "properties": {"content": {}}, "required": ["content"]}}]
+           {"name": "correct", "description": "It is wrong: give what is to take its place. Give the id of another "
+                                              "message you sent to correct that one too.",
+            "parameters": {"type": "object", "properties": {"content": {}, "id": {"type": "string"}},
+                           "required": ["content"]}}]
 
 
 _HIRING = {
@@ -195,7 +200,17 @@ def _rejected(rejections: list) -> str:
     return "\n\n".join(
         f"[rejected] What you sent as {r['message'] or 'a message'} on {r['port']} was rejected by {r['by']}: "
         f"{r['reason']}\nWhat they got:\n{_text(r['content'])}\nAnswer with explain(id={r['id']!r}, text) if it is "
-        f"right, or correct(id={r['message']!r}, content) if it is not." for r in rejections)
+        f"right, or correct(id={r['message']!r}, content) if it is not." + _siblings(r) for r in rejections)
+
+
+def _siblings(rejection: Mapping) -> str:
+    """What else was sent with the rejected message, which may be wrong for the same reason."""
+    sent = rejection.get("sent") or {}
+    if not sent:
+        return ""
+    listed = "; ".join(f"{', '.join(names)} on {port}" for port, names in sent.items())
+    return (f"\nWith it you also sent {listed}. If any of those is wrong for the same reason, correct it too "
+            f"(correct with its id), before you answer this.")
 
 
 def _corrected(ctx, got: Mapping[str, Any]) -> set:
@@ -610,21 +625,22 @@ class AgentNode(Node):
             if not calls:
                 self.messages = messages if self.memory else []
                 return message.get("content") or "no reason was given"
+            answered: tuple | None = None       # ("explained", text) or ("corrected",), once the rejected one is
             for call in message["tool_calls"]:
                 name, args = call["name"], call["args"]
-                if name == "explain":
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": "answered"})
-                    self.messages = messages if self.memory else []
-                    return str(args.get("text", ""))
-                if name == "correct" and rejection.get("message"):
-                    answer = self._fix(ctx, {"id": rejection["message"], "content": args.get("content")})
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": answer})
-                    if answer.startswith("corrected"):
-                        self.messages = messages if self.memory else []
-                        return None
+                if name == "explain" and answered is None:
+                    answer, answered = "answered", ("explained", str(args.get("text", "")))
+                elif name == "correct" and rejection.get("message"):
+                    id = str(args.get("id") or rejection["message"])
+                    answer = self._fix(ctx, {"id": id, "content": args.get("content")})
+                    if id == rejection["message"] and answer.startswith("corrected"):
+                        answered = ("corrected",)
                 else:
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
-                                     "content": "error: answer with explain or correct"})
+                    answer = "error: answer with explain or correct"
+                messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": answer})
+            if answered is not None:
+                self.messages = messages if self.memory else []
+                return answered[1] if answered[0] == "explained" else None
         raise NodeError(f"the model did not answer the rejection in {self.max_steps} steps")
 
     # ---- a resident agent -------------------------------------------------------------------------------
@@ -756,7 +772,16 @@ class AgentNode(Node):
         doubtful = _doubtful(ctx, got)
         if not doubtful:
             return ""
-        return "\n\n" + (self.doubt if self.doubt is not None else DOUBT).format(ports=", ".join(doubtful))
+        text = "\n\n" + (self.doubt if self.doubt is not None else DOUBT).format(ports=", ".join(doubtful))
+        taken = getattr(ctx, "taken", None)
+        if taken is None:
+            return text
+        for port in doubtful:
+            senders = [one["from"] or one["edge"] for one in taken(port)]
+            if len(senders) > 1:
+                text += (f"\nWhat came on {port} came from {', '.join(senders)}, in that order: to reject one of "
+                         f"them, say which=<who sent it>.")
+        return text
 
     def _tools(self, ctx) -> list:
         """The tools for one request: ``reject`` while something it took may still be rejected."""
@@ -858,9 +883,11 @@ class AgentNode(Node):
                 return "sent"
             if name == "reject":
                 port = str(args.get("port") or (next(iter(self.inputs)) if len(self.inputs) == 1 else ""))
-                if port not in _doubtful(ctx, self.inputs):
-                    return f"error: what came on {port!r} cannot be rejected (now, or any more)"
-                return _verdict(ctx.reject(port, str(args.get("reason", ""))))
+                which = str(args["which"]) if args.get("which") else None
+                if port not in self.inputs or not ctx.challengeable(port, which):
+                    return f"error: what came on {port!r}{f' from {which}' if which else ''} cannot be rejected " \
+                           f"(now, or any more)"
+                return _verdict(ctx.reject(port, str(args.get("reason", "")), which))
             if name in self._own:
                 return _text(self._own[name].run(dict(args), ctx))      # type: ignore[misc]
             if name not in self.outputs or not self.outputs[name].call:

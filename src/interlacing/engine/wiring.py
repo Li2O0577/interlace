@@ -44,10 +44,11 @@ class Feed:
 class Sent:
     """One message a node sent (``emit``), as far as it can still be corrected: where each copy of it went."""
 
-    __slots__ = ("port", "envelopes", "outputs")
+    __slots__ = ("port", "envelopes", "outputs", "round")
 
-    def __init__(self, port: str, envelopes: list, outputs: list):
+    def __init__(self, port: str, envelopes: list, outputs: list, round: int = 0):
         self.port = port
+        self.round = round                # the activation that sent it: what else it sent then goes with a rejection
         self.envelopes = envelopes        # [feed id, envelope id] for each edge it left on: the newest version
         self.outputs = outputs            # [graph output name, index] for each graph output it reached
 
@@ -55,12 +56,14 @@ class Sent:
 class Rejection:
     """A receiver says that what came on an edge is not what it expected: its sender is to explain, or correct."""
 
-    __slots__ = ("id", "feed", "envelope", "port", "message", "content", "reason", "by", "answer", "text", "value")
+    __slots__ = ("id", "feed", "envelope", "port", "message", "content", "reason", "by", "answer", "text", "value",
+                 "sent")
 
     def __init__(self, id: str, feed: "Feed", envelope: str, port: str, message: str | None, content: Any, reason: str,
-                 by: str):
+                 by: str, sent: dict | None = None):
         self.id, self.feed, self.envelope, self.port, self.message = id, feed, envelope, port, message
         self.content, self.reason, self.by = content, reason, by
+        self.sent = sent or {}            # output port -> the names of what the same activation sent there
         self.answer: str | None = None    # "explained", "corrected" or "refused", once there is one
         self.text = ""                    # the explanation, or why there is no answer
         self.value: Any = None            # the corrected value
@@ -80,7 +83,7 @@ class Rejection:
     def shown(self) -> dict:
         """What the sender is shown."""
         return {"id": self.id, "port": self.port, "message": self.message, "content": self.content,
-                "reason": self.reason, "by": self.by}
+                "reason": self.reason, "by": self.by, "sent": {port: list(names) for port, names in self.sent.items()}}
 
 
 class Reading:
@@ -94,7 +97,7 @@ class Reading:
         self.at = at                      # envelope id -> (port, index in the list or None)
         self.emits: dict[str, list] = {}  # output port -> the names of the messages it sent there, in order
         self.queued = False               # it is waiting to run again
-        self.took: dict[str, tuple] = {}  # port -> (feed, envelope) it took last, so that a rerun may reject it
+        self.took: dict[str, list] = {}   # port -> [(feed, envelope), ...] it took, so that a rerun may reject them
 
 
 def bounded(log: OrderedDict, key, value) -> None:
@@ -167,7 +170,7 @@ class State:
         self.shown = 0                            # how many of those its running activation has been woken for
         self.open: dict[str, Rejection] = {}      # rejections taken up and not yet answered
         self.answering: Rejection | None = None   # this activation answers a rejection (Node.challenged)
-        self.took_on: dict[str, tuple] = {}       # this activation: port -> (feed, envelope, value) it took last
+        self.took_on: dict[str, list] = {}        # this activation: port -> [(feed, envelope), ...] it took there
         self.awaiting: Rejection | None = None    # the rejection this activation waits on
 
     def begin(self) -> None:

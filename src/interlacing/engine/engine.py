@@ -121,6 +121,8 @@ from .wiring import ACTIVE, INPUT, PAUSED, STOPPED, Feed, Rejection, Sent, State
 
 __all__ = ["Engine", "OverBudget", "Result", "RunError"]
 
+SIBLINGS = 32       # how many other messages of the same activation a rejection names, and a port keeps to reject
+
 
 class Engine:
     """One run of one graph. Build a new Engine to run again."""
@@ -543,7 +545,10 @@ class Engine:
         state.holding.append((feed, envelope))
         bounded(state.read_log, envelope.id, None)      # read in the middle: a correction of it is told
         port = feed.port.port
-        state.took_on[port.name] = (feed, envelope)
+        took = state.took_on.setdefault(port.name, [])
+        took.append((feed, envelope))
+        if len(took) > SIBLINGS:                # a long activation keeps the newest ones it could still reject
+            del took[0]
         if envelope.replaces:
             state.replaced[port.name] = envelope.replaces
         else:
@@ -649,20 +654,41 @@ class Engine:
         awaiting = state.awaiting
         return len(state.challenged) > state.shown or (awaiting is not None and awaiting.answer is not None)
 
-    def _challengeable(self, state: State, port: str) -> bool:
+    @staticmethod
+    def _chosen(state: State, port: str, which: str | None) -> tuple | None:
+        """Of what this activation took on ``port``, the one ``which`` names (the id of the envelope, the edge
+        or the node that sent it); the last one when it names none."""
+        took = state.took_on.get(port)
+        if not took:
+            return None
+        if which is None:
+            return took[-1]
+        return next((got for got in reversed(took) if which in (got[1].id, got[0].id, got[0].source.node.id
+                                                                if got[0].source is not None else None)), None)
+
+    def _challengeable(self, state: State, port: str, which: str | None = None) -> bool:
         with self._lock:
-            got = state.took_on.get(port)
+            got = self._chosen(state, port, which)
             if got is None:
                 return False
             feed = got[0]
             return feed.challenges is not None and feed.rejected < feed.challenges and not feed.gone
 
-    def _rejection(self, state: State, ctx: RunContext, port: str, reason: str) -> Rejection | dict:
-        """Send a rejection to the sender of what was taken on ``port``. Under the lock. A mapping when it
-        cannot be sent: that is the answer."""
+    def _taken_on(self, state: State, port: str) -> list:
+        """``ctx.taken``: what this activation took on ``port``, in order: its id and who sent it."""
+        with self._lock:
+            return [{"id": envelope.id, "from": feed.source.node.id if feed.source is not None else None,
+                     "edge": feed.id} for feed, envelope in state.took_on.get(port, ())]
+
+    def _rejection(self, state: State, ctx: RunContext, port: str, reason: str,
+                   which: str | None = None) -> Rejection | dict:
+        """Send a rejection to the sender of what was taken on ``port`` (the one ``which`` names). Under the
+        lock. A mapping when it cannot be sent: that is the answer."""
         self._own(state, ctx)
-        got = state.took_on.get(port)
+        got = self._chosen(state, port, which)
         if got is None:
+            if which is not None and state.took_on.get(port):
+                raise NodeError(f"{state.node.id} took nothing on {port!r} in this activation that {which!r} names")
             raise NodeError(f"{state.node.id} has taken nothing on {port!r} in this activation that it could reject")
         feed, envelope = got
         if feed.challenges is None:
@@ -681,8 +707,15 @@ class Engine:
         message = next((name for name, sent in reversed(sender.sent_log.items())
                         if any(id == envelope.id for _, id in sent.envelopes)), None)
         content = self._checks.arrived(state, feed, envelope.body)
+        sent: dict[str, list] = {}
+        if message is not None:                 # what the same activation sent: it may be wrong too
+            round = sender.sent_log[message].round
+            others = [name for name, other in reversed(sender.sent_log.items())
+                      if other.round == round and name != message][:SIBLINGS]
+            for name in reversed(others):
+                sent.setdefault(sender.sent_log[name].port, []).append(name)
         rejection = Rejection(f"{feed.id}!{feed.rejected}", feed, envelope.id, feed.out, message, content, str(reason),
-                              state.node.id)
+                              state.node.id, sent)
         sender.challenged.append(rejection)
         state.awaiting = rejection
         self._sched.consider(sender)
@@ -727,11 +760,11 @@ class Engine:
         state.open.clear()
         self._lock.notify_all()
 
-    def _reject(self, state: State, ctx: RunContext, port: str, reason: str) -> dict:
+    def _reject(self, state: State, ctx: RunContext, port: str, reason: str, which: str | None = None) -> dict:
         """``ctx.reject``: see ``Context.reject``."""
         lock = self._lock
         with lock:
-            rejection = self._rejection(state, ctx, port, reason)
+            rejection = self._rejection(state, ctx, port, reason, which)
             if isinstance(rejection, dict):
                 return rejection
             got = self._settled(state, ctx, rejection)
@@ -748,11 +781,12 @@ class Engine:
                     state.since += time.monotonic() - began
         return self._answered(state, port, rejection, got)
 
-    async def _areject(self, state: State, ctx: RunContext, port: str, reason: str) -> dict:
+    async def _areject(self, state: State, ctx: RunContext, port: str, reason: str,
+                       which: str | None = None) -> dict:
         """``_reject``, awaited."""
         lock = self._lock
         with lock:
-            rejection = self._rejection(state, ctx, port, reason)
+            rejection = self._rejection(state, ctx, port, reason, which)
             if isinstance(rejection, dict):
                 return rejection
             got = self._settled(state, ctx, rejection)
@@ -1381,7 +1415,7 @@ class Engine:
                     envelopes.append([feed.id, envelope.id])
                 self._post(feed, envelope, act)
             if not any(feed.stream for feed, _ in feeds):
-                bounded(state.sent_log, token, Sent(port, envelopes, outputs))
+                bounded(state.sent_log, token, Sent(port, envelopes, outputs, round))
                 if act is not None:
                     act.emits.append([token, port, envelopes, outputs])
             if state.reading is not None:
@@ -1472,14 +1506,19 @@ class Engine:
         bounded(receiver.read_log, new, reading)
         if reading is not None:
             port, index = reading.at[old]
-            took = reading.took.get(port)
-            if took is not None and took[1].id == old:
-                reading.took[port] = (feed, envelope)
+            Engine._retook(reading.took.get(port), feed, old, envelope)
             if index is None:
                 reading.inputs[port] = value
             else:
                 reading.inputs[port][index] = value
             reading.at = {new if id == old else id: where for id, where in reading.at.items()}
+
+    @staticmethod
+    def _retook(took: list | None, feed: Feed, old: str, envelope: Envelope) -> None:
+        """What was taken as ``old`` came again, corrected, as ``envelope``."""
+        for i, (_, was) in enumerate(took or ()):
+            if was.id == old:
+                took[i] = (feed, envelope)    # type: ignore[index]
 
     def _replace(self, feed: Feed, old: str, body: Any, round: int, cause: tuple, act: Act | None) -> str:
         """Correct envelope ``old`` on ``feed`` with ``body``, under the lock. Returns the id of the envelope
@@ -1511,7 +1550,7 @@ class Engine:
                 awaiting.settle("refused", f"the correction could not be read: {exc}")
                 return envelope.id
             self._reread(receiver, feed, old, envelope, value)
-            receiver.took_on[feed.port.port.name] = (feed, envelope)
+            self._retook(receiver.took_on.get(feed.port.port.name), feed, old, envelope)
             awaiting.settle("corrected", value=value)
             if awaiting.feed.source is not None:
                 awaiting.feed.source.open.pop(awaiting.id, None)
