@@ -4,7 +4,7 @@ Versions before 1.0 may change any interface; each change is listed here. From 1
 by `interlacing` and the formats of graph files, run directories and journals change incompatibly only
 with a new major version.
 
-## Unreleased
+## 0.15.0
 
 - `ctx.receive(ports=None, timeout=None)` (and `await ctx.areceive(...)`): a running node waits for its next
   message and takes it, in the order messages came. While it waits it holds none of the run's workers, so
