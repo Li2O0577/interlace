@@ -1,5 +1,7 @@
 # interlacing
 
+<p align="center"><img src="https://raw.githubusercontent.com/Li2O0577/interlacing/main/docs/images/interlacing.jpg" alt="interlacing" width="720"></p>
+
 [English](README.md) · **中文**
 
 把任何东西连成一张图，然后运行它。
@@ -232,7 +234,7 @@ interlacing resume --dir /tmp/run                                               
 
 每一层只使用它下面的层。引擎不认识任何具体的节点、协议或方法，`tests/test_engine.py` 里有一个测试守着这一点。引擎内部由几个各管一件事的小部件组成：图变成的信箱（`wiring`）、节点何时能运行（`scheduler`）、检查什么以及出问题后怎么办（`checks`）、预算（`ledger`）、日志（`recorder`）、时限（`clock`）。
 
-完整说明见 [docs/GRAPH.md](docs/GRAPH.md)。十九个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
+完整说明见 [docs/GRAPH.md](docs/GRAPH.md)（英文版 [docs/GRAPH.en.md](docs/GRAPH.en.md)）。十九个可以直接运行的例子在 [examples/graphs/](examples/graphs/)，写成 JSON 的图在 [examples/data/](examples/data/)。
 
 ## 测试
 
