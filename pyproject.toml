@@ -24,7 +24,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/Li2O0577/interlacing"
-Documentation = "https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.md"
+Documentation = "https://github.com/Li2O0577/interlacing/blob/main/docs/GRAPH.en.md"
 Changelog = "https://github.com/Li2O0577/interlacing/blob/main/CHANGELOG.md"
 Issues = "https://github.com/Li2O0577/interlacing/issues"
 

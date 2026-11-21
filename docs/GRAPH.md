@@ -1,5 +1,7 @@
 # 节点、边、方法
 
+[English](GRAPH.en.md) · **中文**
+
 这个包把任何东西接成一张图并运行它。图里的节点可以是模型、函数、外部程序、设备、人，也可以是另一张图；边是写好的传递协议；方法是把节点接起来的现成结构。
 
 ```python
@@ -145,9 +147,8 @@ run(Chain(plan, far), {"in": task})
 | `signal` | 没有内容，只有到达这件事 |
 | `stream` | 发送方一次激活发出的内容是一个序列，接收方边写边读 |
 | `call` | 请求和回答：发送方等待，接收节点为这次请求运行，返回值是回答 |
-| `artifact` | 内容放进仓库，边上只传哈希引用（`standard(store)`） |
 | `file` | 边上传的是文件的相对路径，文件本身不动（`with_files(DEFAULT, 工作目录)`，见“按路径传文件”） |
-| `artifact` | 内容存进内容库，信封里只有引用（哈希、大小、类型） |
+| `artifact` | 内容存进内容库，信封里只有引用（哈希、大小、类型）（`standard(store)`） |
 
 `DEFAULT` 是前六种的注册表；`standard(store)` 另外带上 `artifact`。自己的协议继承 `Protocol`，实现 `check`、`encode`、`decode`，注册进 `Protocols`。
 
@@ -313,7 +314,7 @@ def run(self, ctx, inputs):
 | `note(text)` | 记下自己做到哪里了，同时存档（`ctx.commit`） |
 | `correct(id, content)` | 更正自己发过的一条消息。`id` 是 `send_<输出>` 回给它的编号（如 `say#2`）；做法见下面的“更正” |
 | `explain(id, text)` | 自己发的东西被驳回、但它是对的：说明理由。见下面的“质疑” |
-| `hire` / `dismiss` / `control` / `team` / `connect` | 只有打开招人（`hire=N`）时才有，见下面的“招人” |
+| `hire` / `dismiss` / `control` / `team` / `connect` / `fail` | 只有打开招人（`hire=N`）时才有，见下面的“招人” |
 | `finish(summary?)` | 宣布做完。还有输出一次都没发过时，第一次调用会先提醒，再调用一次才结束 |
 
 - **任务栏：** 开始时每个输出各占一行（“还没发”/“发了几次”，更正过的还写着更正了几次），下面是 agent 自己用 `plan` 加的事项，最后是它的最后一条笔记。每次 `wait` 的结果里都会附上，它也是节点状态的一部分，会存档。
@@ -604,7 +605,6 @@ again = read("graph.json", Catalog(allow=["mypkg"]))         # again.digest == g
 | `models` | `models(name)` 返回智能体用的模型；不给就建不了智能体 |
 | `ask` | `ask(node_id, round, request)` 替图里没有自带函数的 `human` 节点回答 |
 | `protocols` | 编译图用的协议表 |
-
 | `files` | 描述可以从哪个目录取文字；不给就不读任何文件，目录之外的文件一律拒绝 |
 | `defaults` | 宿主给每种节点的默认设置 |
 
@@ -730,7 +730,6 @@ lock            有进程正在运行这张图时存在，里面写着是哪个�
 ## 示例
 
 [examples/data/](../examples/data/) 是写成 JSON 的图和它们用到的函数，用命令行运行。`release.json`：起草、等编辑同意、发布。`scouts.json`：一个协调者和十个位置的 `Pool`，默认设置写在 `defaults` 里，成员的提示词来自 `prompts/scout.md`，给三个方向就只有三个成员运行。
-
 
 [examples/graphs/](../examples/graphs/) 下有十九个可以直接运行的示例：只用普通函数写的图、一个主控带两个常驻 agent、主控在运行中招人组队、先发粗估再更正、审阅驳回计划、点名驳回几个估计中的一个并连带更正一起发出的说明、放在别的进程里一直开着的节点、运行中给自己加节点的图、把一个文件夹（[examples/apps/word_count](../examples/apps/word_count/)）当作一个节点、在工作区里自由干活并使用工具池的 worker、块门口的收发台、链里接一个外部程序、写作和评审的循环、需要人同意的树、相机到机械臂、按路径传文件并纠正一次缺失的文件、把设计做成块再拼起来用、运行中按任务写出一张图并运行、模型做空间规划而控制器执行。三个更完整的案例（物理智能体、建模助手、并行探索加验证器）在 [CASES.md](CASES.md)。
 

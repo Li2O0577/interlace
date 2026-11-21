@@ -4,6 +4,15 @@ Versions before 1.0 may change any interface; each change is listed here. From 1
 by `interlacing` and the formats of graph files, run directories and journals change incompatibly only
 with a new major version.
 
+## Unreleased
+
+- The README has a banner image (`docs/images/interlacing.jpg`).
+- `docs/GRAPH.en.md` is an English version of the full description; the two versions link to each other.
+- `docs/GRAPH.md`: a duplicated `artifact` row and a broken `Catalog` table were fixed, and the resident agent's
+  tool list now names `fail`.
+- `tests/test_scenario.py` runs one team through a member failure, a rejection, a correction and a resume from
+  the journal, on 0, 1 and 4 workers.
+
 ## 0.15.0
 
 - `ctx.receive(ports=None, timeout=None)` (and `await ctx.areceive(...)`): a running node waits for its next
